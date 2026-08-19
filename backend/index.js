@@ -1,0 +1,72 @@
+import express from "express";
+import cors from "cors";
+import "dotenv/config";
+import "express-async-errors";
+import serverless from "serverless-http";
+import { connectDatabase } from "./config/db.js";
+import authRoutes from "./routes/auth.js";
+import usersRoutes from "./routes/users.js";
+import leadsRoutes from "./routes/leads.js";
+import servicesRoutes from "./routes/services.js";
+import trainingsRoutes from "./routes/trainings.js";
+import stipRoutes from "./routes/stip.js";
+import tasksRoutes from "./routes/tasks.js";
+import leavesRoutes from "./routes/leaves.js";
+import attendanceRoutes from "./routes/attendance.js";
+import employeesRoutes from "./routes/employees.js";
+import uploadRoutes from "./routes/upload.js";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const app = express();
+const port = Number(process.env.PORT) || 4005;
+
+app.use(cors({ origin: true }));
+app.use(express.json({ limit: "5mb" }));
+
+app.use("/api/auth", authRoutes);
+app.use("/api/users", usersRoutes);
+app.use("/api/leads", leadsRoutes);
+app.use("/api/services", servicesRoutes);
+app.use("/api/trainings", trainingsRoutes);
+app.use("/api/stip", stipRoutes);
+app.use("/api/tasks", tasksRoutes);
+app.use("/api/leaves", leavesRoutes);
+app.use("/api/attendance", attendanceRoutes);
+app.use("/api/employees", employeesRoutes);
+app.use("/api/upload", uploadRoutes);
+
+app.get("/", (req, res) => {
+  res.json({ message: "CRM backend is running" });
+});
+
+const handler = serverless(app);
+
+if (!process.env.VERCEL) {
+  connectDatabase().then(() => {
+    let attempts = 0;
+    const maxAttempts = 5;
+    function tryListen(p) {
+      const server = app.listen(p, () => {
+        console.log(`CRM backend listening on http://localhost:${p}`);
+      });
+      server.on("error", (err) => {
+        if (err && err.code === "EADDRINUSE" && attempts < maxAttempts) {
+          attempts += 1;
+          const nextPort = p + 1;
+          console.warn(`Port ${p} in use, retrying on ${nextPort} (attempt ${attempts})`);
+          setTimeout(() => tryListen(nextPort), 200);
+        } else {
+          console.error("Failed to start server:", err);
+          process.exit(1);
+        }
+      });
+    }
+    tryListen(port);
+  });
+}
+
+export default handler;
