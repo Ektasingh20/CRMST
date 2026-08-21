@@ -90,19 +90,20 @@ export async function updateUser(req, res) {
       payload.id = String(id);
     }
 
-    const existing = await User.findOne({ id: String(id) });
-    let targetId = id;
-    if (existing) {
-      targetId = String(existing._id);
-      const existingPublicId = existing.imagePublicId;
-      const newPublicId = payload?.imagePublicId;
-      if (existingPublicId && newPublicId && existingPublicId !== newPublicId) {
-        try {
-          const cloudinary = (await import("../config/cloudinary.js")).default;
-          await cloudinary.uploader.destroy(existingPublicId);
-        } catch (err) {
-          console.warn("Failed to delete old Cloudinary image:", err.message);
-        }
+    const isObjectId = /^[a-fA-F0-9]{24}$/.test(String(id));
+    const existing = (await User.findOne({ id: String(id) })) || (isObjectId ? await User.findById(id) : null);
+    if (!existing) {
+      return res.status(404).json({ error: "User not found" });
+    }
+    const targetId = String(existing._id);
+    const existingPublicId = existing.imagePublicId;
+    const newPublicId = payload?.imagePublicId;
+    if (existingPublicId && newPublicId && existingPublicId !== newPublicId) {
+      try {
+        const cloudinary = (await import("../config/cloudinary.js")).default;
+        await cloudinary.uploader.destroy(existingPublicId);
+      } catch (err) {
+        console.warn("Failed to delete old Cloudinary image:", err.message);
       }
     }
 

@@ -67,7 +67,7 @@ function getEntityId(item) {
     return item._id;
   }
 
-  if (typeof item.id === "string" && item.id.trim() !== "") {
+  if (isMongoObjectId(item.id)) {
     return item.id;
   }
 

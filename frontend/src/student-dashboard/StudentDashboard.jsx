@@ -360,13 +360,13 @@ function CourseModal({ course, onClose, onToast }) {
 /* ============================================================
    PAGE SECTIONS
    ============================================================ */
-function WelcomeBanner() {
+function WelcomeBanner({ name }) {
   return (
     <div style={{
       background: C.card, border: `1px solid ${C.border}`, borderRadius: 18, padding: "18px 22px",
       marginBottom: 20, boxShadow: "0 1px 2px rgba(33,28,46,0.03), 0 4px 14px rgba(33,28,46,0.04)",
     }}>
-      <h2 style={{ margin: "0 0 4px", fontSize: 16, fontWeight: 700 }}>Welcome back, Student!</h2>
+      <h2 style={{ margin: "0 0 4px", fontSize: 16, fontWeight: 700 }}>Welcome back, {name}!</h2>
       <p style={{ margin: 0, fontSize: 12.5, color: C.textSecondary }}>Continue learning and keep track of your progress.</p>
     </div>
   );
@@ -500,18 +500,19 @@ function ActivityList({ items }) {
   );
 }
 
+function initials(name) {
+  return name
+    .split(" ")
+    .map((part) => part[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
+}
+
 /* ============================================================
    MAIN APP
    ============================================================ */
 export default function StudentDashboard({ user, onLogout }) {
-  const studentName = user?.name || "Student";
-  const studentEmail = user?.email || "";
-
-  function initials(name) {
-    return name.split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase();
-  }
-  const studentInitials = initials(studentName);
-
   const [activeNav, setActiveNav] = useState("dashboard");
   const [mobileOpen, setMobileOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -519,6 +520,10 @@ export default function StudentDashboard({ user, onLogout }) {
   const [notifOpen, setNotifOpen] = useState(false);
   const [notifs, setNotifs] = useState(NOTIFICATIONS);
   const [toast, setToast] = useState(null);
+
+  const studentName = user?.name || "Student";
+  const studentInitials = initials(studentName);
+  const studentEmail = user?.email || "";
 
   const showToast = (msg) => {
     setToast(msg);
@@ -691,7 +696,7 @@ export default function StudentDashboard({ user, onLogout }) {
 
             {activeNav === "dashboard" && (
               <>
-                <WelcomeBanner />
+                <WelcomeBanner name={studentName} />
                 <SummaryCards />
                 <ContinueLearning onOpen={setOpenCourse} />
 

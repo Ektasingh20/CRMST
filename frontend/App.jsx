@@ -113,6 +113,7 @@ import {
   logoutUser,
 } from "./backendClient";
 import ErrorBoundary from "./ErrorBoundary";
+import StudentDashboard from "./src/student-dashboard/StudentDashboard";
 import {
   compressImageFile,
   createPreviewUrl,
@@ -121,6 +122,8 @@ import {
   sanitizeImageRecord,
   sanitizeImageReference,
 } from "./imageUpload";
+
+const STUDENT_DASHBOARD_URL = "http://localhost:5175";
 
 const USERS_STORAGE_KEY = "crmst-users.txt";
 const SESSION_STORAGE_KEY = "crmst-current-user";
@@ -190,20 +193,41 @@ const sidebarSections = [
 ];
 
 const trainingCatalog = [
-  "Front End Development",
+  "Front End Development Foundation",
   "Back End Development",
   "Full Stack Development",
   "Video Editing",
-  "VFX & Animation",
+  "AutoCAD (2D & 3D)",
+  "Wordpress Web Design",
+  "Android App Development",
+  "VFX & ANIMATION",
   "Graphics & Visual Designing",
+  "Adobe Photoshop",
+  "CorelDraw",
+  "Digital marketing",
+  "Adobe Illustrator",
+  "3D INTERIOR EXTERIOR DESIGN",
 ];
 
 const serviceCatalog = [
-  "Dynamic Website",
-  "E-commerce Website",
-  "SEO",
-  "Cloud Hosting Setup",
-  "Basic CRM Setup",
+  "Website Development",
+  "Android & iOS App Development",
+  "Graphic Designing",
+  "Branding & Brand Promotion",
+  "Digital Marketing",
+  "VFX & Animation",
+  "CRM Solutions",
+  "Cloud Solutions",
+  "Marketing Tools & Automation",
+  "Content Creation & Copywriting",
+  "UI/UX Design",
+  "Social Media Management",
+  "E-commerce Development & Management",
+  "Performance Marketing",
+  "Influencer Marketing",
+  "Photography & Videography",
+  "Public Relations (PR)",
+  "Bulk Marketing (Highlighted Service)",
 ];
 
 const internshipTracks = ["Front End (React.js)", "Back End (Node.js)", "Full Stack"];
@@ -478,77 +502,143 @@ const initialLogs = [
 ];
 
 const initialServiceRows = [
-  { id: "1", category: "Website Development", name: "Basic Website", details: "5 pages, responsive, basic SEO", price: "Rs 9,999" },
-  { id: "2", category: "Website Development", name: "Dynamic Website", details: "CMS, blog, contact forms, etc.", price: "Rs 22,999" },
-  { id: "3", category: "Website Development", name: "E-commerce Website", details: "Products, payments, admin panel", price: "Rs 45,000-70,000" },
-  { id: "4", category: "Website Development", name: "Annual Maintenance", details: "Regular updates and support", price: "Rs 5,000-10,000" },
-  { id: "5", category: "Android & iOS App Development", name: "Basic Android App", details: "Login, forms, push notifications", price: "Rs 35,000-60,000" },
-  { id: "6", category: "Android & iOS App Development", name: "E-commerce / Service App", details: "Products, cart, payments, admin panel, user accounts", price: "Rs 1,40,000-2,75,000" },
-  { id: "7", category: "Android & iOS App Development", name: "Hybrid / Cross-platform (Android + iOS)", details: "Single codebase for both platforms", price: "Rs 75,000-2,20,000" },
-  { id: "8", category: "Android & iOS App Development", name: "App Maintenance & Updates", details: "Bug fixes, OS updates, minor feature tweaks", price: "15-20% of build cost / year" },
-  { id: "9", category: "Branding & Brand Promotion", name: "Basic Branding", details: "Logo + guidelines + 10 social posts", price: "Rs 9,999" },
-  { id: "10", category: "Branding & Brand Promotion", name: "Standard Branding", details: "Logo + stationery + 15 posts + ads", price: "Rs 17,999" },
-  { id: "11", category: "Branding & Brand Promotion", name: "Premium Branding", details: "Full brand kit + 20 posts + influencers + ads", price: "Rs 29,999/month" },
-  { id: "12", category: "Digital Marketing", name: "SEO", details: "On-page and off-page optimization", price: "Rs 8,000-12,000 / month" },
-  { id: "13", category: "Digital Marketing", name: "SMM", details: "FB, Insta, LinkedIn, Twitter management", price: "Rs 10,000-15,000 / month" },
-  { id: "14", category: "Digital Marketing", name: "Google / Meta Ads", details: "PPC campaigns (ad spend extra)", price: "Rs 6,000-10,000 / month" },
-  { id: "15", category: "Digital Marketing", name: "Email / WhatsApp Marketing", details: "Bulk and automated campaigns", price: "Rs 5,000-8,000 / month" },
-  { id: "16", category: "VFX & Animation", name: "Logo Animation", details: "2D/3D logo motion", price: "Rs 4,999-12,999" },
-  { id: "17", category: "VFX & Animation", name: "Explainer / Product Video", details: "1-2 minute deliverables", price: "Rs 30,000-70,000" },
-  { id: "18", category: "VFX & Animation", name: "3D Animation / VFX", details: "Advanced projects", price: "Rs 55,000-2,20,000" },
-  { id: "19", category: "CRM Solutions", name: "Basic CRM Setup (Small Business)", details: "Setup for small teams", price: "Rs 15,000-30,000 (one-time)" },
-  { id: "20", category: "CRM Solutions", name: "Custom CRM Development", details: "Advanced features", price: "Rs 1,40,000-3,50,000" },
-  { id: "21", category: "CRM Solutions", name: "CRM Maintenance", details: "Regular support", price: "Rs 4,999-12,999 / month" },
-  { id: "22", category: "Cloud Solutions", name: "Cloud Hosting Setup", details: "Server hosting and configuration", price: "Rs 8,000-25,000 (one-time)" },
-  { id: "23", category: "Cloud Solutions", name: "Migration to Cloud", details: "Data migration and deployment", price: "Rs 14,999-44,999" },
-  { id: "24", category: "Cloud Solutions", name: "Cloud Maintenance & Security", details: "Monitoring and protection", price: "Rs 7,999-19,999 / month" },
-  { id: "25", category: "Marketing Tools & Automation", name: "Email Automation Setup", details: "Automated email campaigns", price: "Rs 4,999-12,999" },
-  { id: "26", category: "Marketing Tools & Automation", name: "Analytics Dashboard Setup", details: "Reports and tracking", price: "Rs 8,999-21,999" },
-  { id: "27", category: "Marketing Tools & Automation", name: "Full Marketing Automation", details: "Tools and workflows setup", price: "Rs 22,999-54,999" },
-  { id: "28", category: "Content Creation & Copywriting", name: "Blog Writing", details: "Professional blog posts", price: "1,000-word blog = Rs 3,000-10,000" },
-  { id: "29", category: "Content Creation & Copywriting", name: "Website Content", details: "SEO-friendly content", price: "Rs 1,000-3,000" },
-  { id: "30", category: "Content Creation & Copywriting", name: "Product Descriptions", details: "E-commerce descriptions", price: "Rs 25-150 / product" },
-  { id: "31", category: "UI/UX Design", name: "Wireframe & Prototype", details: "Interactive mockups", price: "Rs 14,999-34,999" },
-  { id: "32", category: "UI/UX Design", name: "App / Website UI Design", details: "Modern and responsive UI", price: "Rs 30,000-80,000" },
-  { id: "33", category: "Social Media Management", name: "Basic Package", details: "10 posts + 1 reel / month", price: "Rs 8,999 / month" },
-  { id: "34", category: "Social Media Management", name: "Standard Package", details: "15 posts + 2 reels / month", price: "Rs 17,999-34,999 / month" },
-  { id: "35", category: "Social Media Management", name: "Premium Package", details: "20 posts + 4 reels + full management", price: "Rs 27,999-64,999 / month" },
-  { id: "36", category: "E-commerce Development & Management", name: "Shopify / WooCommerce", details: "Online store setup", price: "Rs 25,000-75,000" },
-  { id: "37", category: "E-commerce Development & Management", name: "Marketplace Management", details: "Amazon / Flipkart handling", price: "Rs 10,000-25,000 / month" },
-  { id: "38", category: "Performance Marketing", name: "Campaign Setup", details: "PPC and SMM campaigns", price: "Rs 15,000-80,000 / month" },
-  { id: "39", category: "Performance Marketing", name: "Landing Page Creation", details: "Responsive, high-converting pages", price: "Rs 8,000-25,000" },
-  { id: "40", category: "Influencer Marketing", name: "Influencer Campaign", details: "Planning and execution", price: "Rs 8,000-15,000" },
-  { id: "41", category: "Influencer Marketing", name: "Influencer Management", details: "Handling influencers", price: "Rs 12,000-25,000 / month" },
-  { id: "42", category: "Photography & Videography", name: "Product Shoot", details: "Up to 20 products", price: "Rs 6,000-20,000" },
-  { id: "43", category: "Photography & Videography", name: "Lifestyle / Corporate Shoot", details: "Professional team", price: "Rs 15,000-50,000 / day" },
-  { id: "44", category: "Public Relations (PR)", name: "Press Release", details: "Media-ready content", price: "500 words = Rs 1,500-10,000" },
-  { id: "45", category: "Public Relations (PR)", name: "Media Coverage", details: "PR distribution and outreach", price: "Rs 15,000-1,00,000+ / month" },
-  { id: "46", category: "Bulk Marketing", name: "Bulk SMS Marketing", details: "Rs 0.20-Rs 0.35 per SMS (package-based)", price: "Rs 0.10-0.22 per SMS" },
-  { id: "47", category: "Bulk Marketing", name: "Bulk WhatsApp Marketing", details: "Rs 0.30-Rs 0.50 per message", price: "Rs 0.30-0.80 / message" },
-  { id: "48", category: "Bulk Marketing", name: "Email Marketing Campaigns", details: "Monthly campaigns", price: "Rs 5,000-15,000 / month" },
-  { id: "49", category: "Bulk Marketing", name: "Lead Generation Campaigns", details: "Targeted lead generation", price: "Rs 8,000-25,000 / month" },
+  // 1. Website Development
+  { id: "web-dev-1", category: "Website Development", name: "Basic Website", details: "Up to 5 pages responsive design, contact form", price: "₹9,999", status: "Active" },
+  { id: "web-dev-2", category: "Website Development", name: "Dynamic Website", details: "up to 10 pages, CMS, Blog, Contact forms, Basic SEO, Admin Panel, etc.", price: "₹22,999", status: "Active" },
+  { id: "web-dev-3", category: "Website Development", name: "E-commerce Website", details: "Products, Payments, Admin Panel, order management, Basic SEO, Coupan System.", price: "₹50,000 – ₹75,000", status: "Active" },
+  { id: "web-dev-4", category: "Website Development", name: "Annual Maintenance", details: "Regular updates & support, Backup, Bug Fixes, Plugin Updates", price: "₹5,000 – ₹10,000", status: "Active" },
+
+  // 2. Android & iOS App Development
+  { id: "app-dev-1", category: "Android & iOS App Development", name: "Basic Android App", details: "Login, Forms, Push Notifications, Admin Panel, Plays Store Ready.", price: "₹40,000 – ₹70,000", status: "Active" },
+  { id: "app-dev-2", category: "Android & iOS App Development", name: "E-commerce / Service App", details: "Products, cart, payments, admin panel, user accounts, Order Tracking, Push notifications, payment Gateway.", price: "₹1,50,000 – ₹3,00,000", status: "Active" },
+  { id: "app-dev-3", category: "Android & iOS App Development", name: "Hybrid / Cross-platform (Android + iOS)", details: "Single codebase (Flutter/React Native) for both platforms", price: "₹80,000 – ₹2,50,000", status: "Active" },
+  { id: "app-dev-4", category: "Android & iOS App Development", name: "App Maintenance & Updates", details: "Bug fixes, OS updates, minor feature tweaks", price: "15–20% of build cost, per year", status: "Active" },
+
+  // 3. Graphic Designing
+  { id: "graphic-des-1", category: "Graphic Designing", name: "Logo Design", details: "Business logo design", price: "₹4,000 – ₹8,000", status: "Active" },
+  { id: "graphic-des-2", category: "Graphic Designing", name: "Social Media Creatives", details: "Custom post designs", price: "₹500/post – ₹6,000 for 12", status: "Active" },
+  { id: "graphic-des-3", category: "Graphic Designing", name: "Brochure / Flyer / Poster", details: "Print & digital", price: "₹2,000 – 5,000 (single-page flyer/poster); ₹5,000 – 10,000 (multi-page brochure)", status: "Active" },
+
+  // 4. Branding & Brand Promotion
+  { id: "branding-1", category: "Branding & Brand Promotion", name: "Corporate Presentation", details: "Branded PPTs", price: "₹8,000 – ₹12,000", status: "Active" },
+  { id: "branding-2", category: "Branding & Brand Promotion", name: "Basic Branding", details: "Logo + Guidelines + 10 Social Posts", price: "₹11,000", status: "Active" },
+  { id: "branding-3", category: "Branding & Brand Promotion", name: "Standard Branding", details: "Logo + Stationery + 15 Posts + Ads", price: "₹19,000", status: "Active" },
+  { id: "branding-4", category: "Branding & Brand Promotion", name: "Premium Branding", details: "Full Brand Kit + 20 Posts + Influencers + Ads", price: "₹32,000 / month", status: "Active" },
+
+  // 5. Digital Marketing
+  { id: "dig-mkt-1", category: "Digital Marketing", name: "SEO", details: "On-page & Off-page Optimization", price: "₹8,000 – 12,000 /month", status: "Active" },
+  { id: "dig-mkt-2", category: "Digital Marketing", name: "SMM", details: "FB, Insta, LinkedIn, Twitter mgmt", price: "₹10,000 – 15,000 /month", status: "Active" },
+  { id: "dig-mkt-3", category: "Digital Marketing", name: "Google / Meta Ads", details: "PPC Campaigns (Ad spend extra)", price: "₹6,000 – 10,000 /month", status: "Active" },
+  { id: "dig-mkt-4", category: "Digital Marketing", name: "Email / WhatsApp Marketing", details: "Bulk & automated campaigns", price: "₹5,000 – 8,000 /month", status: "Active" },
+
+  // 6. VFX & Animation
+  { id: "vfx-anim-1", category: "VFX & Animation", name: "Logo Animation", details: "2D/3D logo motion", price: "₹5,000 – 15,000", status: "Active" },
+  { id: "vfx-anim-2", category: "VFX & Animation", name: "Explainer / Product Video", details: "1–2 minutes", price: "₹35,000 – 80,000", status: "Active" },
+  { id: "vfx-anim-3", category: "VFX & Animation", name: "3D Animation / VFX", details: "Advanced projects", price: "₹60,000 – 2,50,000", status: "Active" },
+
+  // 7. CRM Solutions
+  { id: "crm-sol-1", category: "CRM Solutions", name: "Basic CRM Setup (Small Business)", details: "Setup for small teams", price: "₹15,000 – 30,000 (one-time)", status: "Active" },
+  { id: "crm-sol-2", category: "CRM Solutions", name: "Custom CRM Development", details: "Advanced features", price: "₹1,50,000 – 4,00,000", status: "Active" },
+  { id: "crm-sol-3", category: "CRM Solutions", name: "CRM Maintenance", details: "Regular support", price: "₹5,000 – 15,000/month", status: "Active" },
+
+  // 8. Cloud Solutions
+  { id: "cloud-sol-1", category: "Cloud Solutions", name: "Cloud Hosting Setup", details: "Server hosting & config", price: "₹8,000–25,000 (one-time)", status: "Active" },
+  { id: "cloud-sol-2", category: "Cloud Solutions", name: "Migration to Cloud", details: "Data migration & deployment", price: "₹15,000–50,000", status: "Active" },
+  { id: "cloud-sol-3", category: "Cloud Solutions", name: "Cloud Maintenance & Security", details: "Monitoring & protection", price: "₹8,000–25,000/mo", status: "Active" },
+
+  // 9. Marketing Tools & Automation
+  { id: "mkt-tools-1", category: "Marketing Tools & Automation", name: "Email Automation Setup", details: "Automated email campaigns", price: "₹5,000–15,000", status: "Active" },
+  { id: "mkt-tools-2", category: "Marketing Tools & Automation", name: "Analytics Dashboard Setup", details: "Reports & tracking", price: "₹10,000–25,000", status: "Active" },
+  { id: "mkt-tools-3", category: "Marketing Tools & Automation", name: "Full Marketing Automation", details: "Tools + workflows setup", price: "₹25,000–60,000", status: "Active" },
+
+  // 10. Content Creation & Copywriting
+  { id: "content-1", category: "Content Creation & Copywriting", name: "Blog Writing", details: "Professional blog posts", price: "1,000-word blog = ₹3,000–10,000", status: "Active" },
+  { id: "content-2", category: "Content Creation & Copywriting", name: "Website Content", details: "SEO-friendly content", price: "₹1,000–3,000", status: "Active" },
+  { id: "content-3", category: "Content Creation & Copywriting", name: "Product Descriptions", details: "E-commerce descriptions", price: "₹25–150 product", status: "Active" },
+
+  // 11. UI/UX Design
+  { id: "uiux-1", category: "UI/UX Design", name: "Wireframe & Prototype", details: "Interactive mockups", price: "₹15,000–40,000", status: "Active" },
+  { id: "uiux-2", category: "UI/UX Design", name: "App / Website UI Design", details: "Modern & responsive UI", price: "₹30,000–80,000", status: "Active" },
+
+  // 12. Social Media Management
+  { id: "smm-pkg-1", category: "Social Media Management", name: "Basic Package", details: "10 posts + 1 reel / month", price: "₹10,000–15,000", status: "Active" },
+  { id: "smm-pkg-2", category: "Social Media Management", name: "Standard Package", details: "15 posts + 2 reels / month", price: "₹20,000–40,000/mo", status: "Active" },
+  { id: "smm-pkg-3", category: "Social Media Management", name: "Premium Package", details: "20 posts + 4 reels + full mgmt", price: "₹30,000–75,000/month", status: "Active" },
+
+  // 13. E-commerce Development & Management
+  { id: "ecom-dev-1", category: "E-commerce Development & Management", name: "Shopify / WooCommerce", details: "Online store setup", price: "₹25,000–75,000", status: "Active" },
+  { id: "ecom-dev-2", category: "E-commerce Development & Management", name: "Marketplace Management", details: "Amazon / Flipkart handling", price: "₹10,000–25,000/mo", status: "Active" },
+
+  // 14. Performance Marketing
+  { id: "perf-mkt-1", category: "Performance Marketing", name: "Campaign Setup", details: "PPC, SMM campaigns", price: "₹15,000–80,000/mo", status: "Active" },
+  { id: "perf-mkt-2", category: "Performance Marketing", name: "Landing Page Creation", details: "Responsive, high-converting", price: "₹8,000–25,000", status: "Active" },
+
+  // 15. Influencer Marketing
+  { id: "infl-mkt-1", category: "Influencer Marketing", name: "Influencer Campaign", details: "Planning & execution", price: "₹8,000–15,000", status: "Active" },
+  { id: "infl-mkt-2", category: "Influencer Marketing", name: "Influencer Management", details: "Handling influencers", price: "₹12,000–25,000/mo", status: "Active" },
+
+  // 16. Photography & Videography
+  { id: "photo-video-1", category: "Photography & Videography", name: "Product Shoot", details: "Up to 20 products", price: "₹6,000–20,000", status: "Active" },
+  { id: "photo-video-2", category: "Photography & Videography", name: "Lifestyle / Corporate Shoot", details: "Professional team", price: "₹15,000–50,000/day", status: "Active" },
+
+  // 17. Public Relations (PR)
+  { id: "pr-1", category: "Public Relations (PR)", name: "Press Release", details: "Media-ready content", price: "500 words = ₹1,500–10,000", status: "Active" },
+  { id: "pr-2", category: "Public Relations (PR)", name: "Media Coverage", details: "PR distribution & outreach", price: "₹15,000–1,00,000+/mo", status: "Active" },
+
+  // 18. Bulk Marketing (Highlighted Service)
+  { id: "bulk-mkt-1", category: "Bulk Marketing (Highlighted Service)", name: "Bulk SMS Marketing", details: "₹0.20 – ₹0.35 per SMS (package-based)", price: "₹0.10–0.22 per SMS", status: "Active" },
+  { id: "bulk-mkt-2", category: "Bulk Marketing (Highlighted Service)", name: "Bulk WhatsApp Marketing", details: "₹0.30 – ₹0.50 per message", price: "₹0.30–0.80/msg (API-based)", status: "Active" },
+  { id: "bulk-mkt-3", category: "Bulk Marketing (Highlighted Service)", name: "Email Marketing Campaigns", details: "Monthly campaigns", price: "₹5,000 – ₹15,000 / month", status: "Active" },
+  { id: "bulk-mkt-4", category: "Bulk Marketing (Highlighted Service)", name: "Lead Generation Campaigns", details: "Targeted lead generation", price: "₹8,000–25,000 / month", status: "Active" },
 ];
 
 const initialTrainingRows = [
-  { id: "1", name: "Front End Development Foundation", duration: "3 months", price: "Rs 9,000", tools: "HTML5, CSS3, Bootstrap, JavaScript, jQuery, Responsive Design, Version Control (Git)" },
-  { id: "2", name: "Front End Development Advanced", duration: "5 months", price: "Rs 13,000", tools: "HTML5, CSS3, Bootstrap, JavaScript, jQuery, Responsive Design, Git, React JS, Next.js, Angular" },
-  { id: "3", name: "Back End Development (PHP)", duration: "6 months", price: "Rs 12,000", tools: "PHP, MySQL, RESTful APIs, Authentication & Security, Git, Deployment & Hosting" },
-  { id: "4", name: "Back End Development (Python)", duration: "6 months", price: "Rs 14,000-16,000", tools: "Python, MongoDB, PostgreSQL, REST APIs, Auth, Git, Deployment" },
-  { id: "5", name: "Back End Development (Node.js)", duration: "6 months", price: "Rs 15,000", tools: "Node.js, PostgreSQL, RESTful APIs, Authentication & Security, Git, Deployment & Hosting" },
-  { id: "6", name: "Full Stack Development (PHP)", duration: "7 months", price: "Rs 18,000", tools: "Front-end basics, PHP, MySQL, REST APIs, Auth & Security, Git, Deployment" },
-  { id: "7", name: "Full Stack Development (Python)", duration: "7 months", price: "Rs 20,000", tools: "Front-end basics, Python, PostgreSQL, REST APIs, Auth & Security, Git, Deployment" },
-  { id: "8", name: "Full Stack Development (Node.js)", duration: "7 months", price: "Rs 22,000", tools: "Front-end basics, Node.js, MongoDB, REST APIs, Auth & Security, Git, Deployment" },
-  { id: "9", name: "Video Editing", duration: "3 months", price: "Rs 14,000", tools: "Sequencing, media import, basic editing, effects, audio, color correction, slow motion, green screen, exporting" },
-  { id: "10", name: "AutoCAD (2D & 3D)", duration: "3 months", price: "Rs 11,000", tools: "Intro to AutoCAD, 2D drafting & design, advanced 2D, 3D modeling, real-world project" },
-  { id: "11", name: "WordPress Web Design", duration: "2 months", price: "Rs 8,000", tools: "WordPress CMS, theme customization, plugins, website optimization, WooCommerce, advanced features" },
-  { id: "12", name: "Android App Development", duration: "6 months", price: "Rs 17,000", tools: "Kotlin/Java, UI design, activities & navigation, data management, networking & APIs, testing, debugging, publishing" },
-  { id: "13", name: "VFX & Animation", duration: "7 months", price: "Rs 30,000", tools: "Adobe After Effects, Blender, Illustrator, Autodesk Maya, 2D & 3D animation, compositing, motion tracking, lighting, texturing, rendering" },
-  { id: "14", name: "Graphics & Visual Designing", duration: "4 months", price: "Rs 16,000", tools: "Photoshop, Illustrator, InDesign, Canva, Figma, typography, color theory, layout, composition, branding, portfolio" },
-  { id: "15", name: "Adobe Photoshop", duration: "2 months", price: "Rs 7,000", tools: "Intro, layers, text & shapes, filters & effects, masks & selections, exporting" },
-  { id: "16", name: "CorelDraw", duration: "1.5 months", price: "Rs 6,000", tools: "Basic shapes & lines, text, effects & styles, layers & object management, exporting & printing" },
-  { id: "17", name: "Digital Marketing", duration: "6 months", price: "Rs 22,000", tools: "SEO, SMO, Google Analytics 4, GTM, content marketing, YouTube marketing, ASO, GMB, Google Ads, Facebook Ads, email marketing, WordPress" },
-  { id: "18", name: "Adobe Illustrator", duration: "2 months", price: "Rs 8,000", tools: "Illustrator UI, basic shapes & tools, pen tool, typography, text effects, layers, artboards, brushes, logo design, branding, exporting" },
-  { id: "19", name: "3D Interior Exterior Design", duration: "6 months", price: "Rs 26,000", tools: "Design principles, interior fundamentals, design tools & software, residential & commercial interior, exterior design" },
+  // 1. Front End Development Foundation (2 options)
+  { id: "training-fe-1", name: "Front End Development Foundation (Option 1 - 3 Months)", duration: "3 MONTHS", price: "₹9,000", tools: "HTML5 • CSS3 • Bootstrap • JavaScript • jQuery • Responsive Design • Version Control (Git)" },
+  { id: "training-fe-2", name: "Front End Development Foundation (Option 2 - 5 Months)", duration: "5 MONTHS", price: "₹13,000", tools: "HTHTML5 • CSS3 • Bootstrap • JavaScript • jQuery • Responsive Design • Version Control (Git) + Frameworks: React JS • Next.js • Angular" },
+
+  // 2. Back End Development (3 options)
+  { id: "training-be-1", name: "Back End Development (Option 1 - PHP & MySQL)", duration: "6 MONTHS", price: "₹12,000", tools: "PHP • MySQL • RESTful APIs • Authentication & Security • Version Control (Git) • Deployment & Hosting" },
+  { id: "training-be-2", name: "Back End Development (Option 2 - Python & DBs)", duration: "6 MONTHS", price: "₹14,000-1DB / ₹16,000-2DB", tools: "Python + MongoDB + PostgreSQL (two DBs), REST APIs, Auth, Git, Deployment" },
+  { id: "training-be-3", name: "Back End Development (Option 3 - Node.js & PostgreSQL)", duration: "6 MONTHS", price: "₹15,000", tools: "Node.js • PostgreSQL • RESTful APIs • Authentication & Security • Version Control (Git) • Deployment & Hosting" },
+
+  // 3. Full Stack Development (3 options)
+  { id: "training-fs-1", name: "Full Stack Development (Option 1 - PHP Stack)", duration: "7 MONTHS", price: "₹18,000", tools: "Front-End Basics + PHP • MySQL • REST APIs • Auth & Security • Git • Deployment" },
+  { id: "training-fs-2", name: "Full Stack Development (Option 2 - Python Stack)", duration: "7 MONTHS", price: "₹22,000", tools: "Front-End Basics + Python • PostgreSQL • REST APIs • Auth & Security • Git • Deployment" },
+  { id: "training-fs-3", name: "Full Stack Development (Option 3 - MERN/Node.js Stack)", duration: "7 MONTHS", price: "₹28,000", tools: "Front-End Basics + Node.js • MongoDB • REST APIs • Auth & Security • Git • Deployment" },
+
+  // 4. Video Editing
+  { id: "training-ve-1", name: "Video Editing", duration: "3 MONTHS", price: "₹14,000", tools: "Sequencing & Media Import • Basic Editing • Effects • Audio • Color Correction • Slow Motion • Green Screen • Exporting" },
+
+  // 5. AutoCAD (2D & 3D)
+  { id: "training-cad-1", name: "AutoCAD (2D & 3D)", duration: "3 MONTHS", price: "₹11,000", tools: "Intro to AutoCAD • 2D Drafting & Design • Advanced 2D • 3D Modeling (Intro + Advanced) • Real-World Project" },
+
+  // 6. Wordpress Web Design
+  { id: "training-wp-1", name: "Wordpress Web Design", duration: "2 MONTHS", price: "₹8,000", tools: "Intro to WordPress • Content Management • Theme Customization • Plugins • Website Optimization • WooCommerce (E-Commerce) • Advanced Features" },
+
+  // 7. Android App Development
+  { id: "training-android-1", name: "Android App Development", duration: "6 MONTHS", price: "₹17,000", tools: "KOTLIN/JAVA • UI DESIGN • ACTIVITIES & NAVIGATION • DATA MANAGEMENT • NETWORKING & APIS • TESTING & DEBUGGING • PUBLISHING" },
+
+  // 8. VFX & ANIMATION
+  { id: "training-vfx-1", name: "VFX & ANIMATION", duration: "7 MONTHS", price: "₹30,000", tools: "Adobe After Effects • Blender • Illustrator • Autodesk Maya • 2D & 3D Animation • Compositing & Motion Tracking • Lighting/Texturing/Rendering • Portfolio" },
+
+  // 9. Graphics & Visual Designing
+  { id: "training-gvd-1", name: "Graphics & Visual Designing", duration: "4 MONTHS", price: "₹16,000", tools: "Photoshop • Illustrator • InDesign • Canva • Figma • Typography • Color Theory • Layout & Composition • Branding • Portfolio" },
+
+  // 10. Adobe Photoshop
+  { id: "training-ps-1", name: "Adobe Photoshop", duration: "2 MONTHS", price: "₹6,000", tools: "Intro • Layers • Text & Shapes • Filters & Effects • Layer Masks & Selections • Exporting" },
+
+  // 11. CorelDraw
+  { id: "training-cd-1", name: "CorelDraw", duration: "1.5 MONTHS", price: "₹5,500", tools: "Intro • Basic Shapes & Lines • Text • Effects & Styles • Layers & Object Management • Exporting & Printing" },
+
+  // 12. Digital marketing
+  { id: "training-dm-1", name: "Digital marketing", duration: "6 MONTHS", price: "₹22,000", tools: "SEO • SMO • GOOGLE ANALYTICS 4 • GTM • CONTENT MARKETING • YOUTUBE MARKETING • ASO • GMB • GOOGLE ADS • FACEBOOK ADS • EMAIL MARKETING • WORDPRESS" },
+
+  // 13. Adobe Illustrator
+  { id: "training-ai-1", name: "Adobe Illustrator", duration: "2 MONTHS", price: "₹8,000", tools: "INTRO TO ILLUSTRATOR & UI • BASIC SHAPES & TOOLS • PEN TOOL ILLUSTRATIONS • TYPOGRAPHY & TEXT EFFECTS • LAYERS & ARTBOARDS • ADVANCED TECHNIQUES • BRUSHES • LOGO DESIGN & BRANDING • EXPORTING (PRINT/WEB/SOCIAL)" },
+
+  // 14. 3D INTERIOR EXTERIOR DESIGN
+  { id: "training-3d-1", name: "3D INTERIOR EXTERIOR DESIGN", duration: "6 MONTHS", price: "₹26,000", tools: "Design Principles • Interior Fundamentals • Design Tools & Software • Residential & Commercial Interior • Exterior Design" },
 ];
 
 const initialStipPrograms = [
@@ -841,7 +931,16 @@ function App() {
   const [loginForm, setLoginForm] = useState({ username: "", password: "" });
   const [signupForm, setSignupForm] = useState({ name: "", username: "", password: "" });
   const [showSignupPassword, setShowSignupPassword] = useState(false);
-  const [currentUser, setCurrentUser] = useState(getCurrentUser());
+  const [currentUser, setCurrentUser] = useState(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("studentLogout") === "1") {
+        logoutUser();
+        return null;
+      }
+    } catch {}
+    return getCurrentUser();
+  });
   const [dashboardTab, setDashboardTab] = useState("overview");
   const [createUser, setCreateUser] = useState({
     name: "",
@@ -898,7 +997,12 @@ function App() {
     setInterns(savedInterns);
     if (savedSession) {
       setCurrentUser(savedSession);
-      setAppView("dashboard");
+      if (String(savedSession.role || "").toLowerCase() === "student") {
+        localStorage.setItem("crmst-student-session", JSON.stringify(savedSession));
+        setAppView("student-dashboard");
+      } else {
+        setAppView("dashboard");
+      }
     }
 
     const session = savedSession || getCurrentUser();
@@ -976,6 +1080,20 @@ function App() {
       safeStorageRemove(SESSION_STORAGE_KEY);
     }
   }, [currentUser]);
+
+  useEffect(() => {
+    if (currentUser && String(currentUser.role || "").toLowerCase() === "student") {
+      localStorage.setItem("crmst-student-session", JSON.stringify(currentUser));
+      setAppView("student-dashboard");
+    }
+  }, [currentUser]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("studentLogout") === "1") {
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  }, []);
 
   useEffect(() => {
     const handleAuthRequired = (event) => {
@@ -1635,6 +1753,13 @@ function App() {
     try {
       const user = await authLogin(loginForm.username, loginForm.password);
       setCurrentUser(user);
+      if (String(user.role || "").toLowerCase() === "student") {
+        localStorage.setItem("crmst-student-session", JSON.stringify(user));
+        setAppView("student-dashboard");
+        setLoginForm({ username: "", password: "" });
+        notify(`Welcome back, ${user.name}.`);
+        return;
+      }
       setAppView("dashboard");
       setLoginForm({ username: "", password: "" });
       notify(`Welcome back, ${user.name}.`);
@@ -1685,6 +1810,7 @@ function App() {
     setCurrentUser(null);
     setAppView("home");
     setActivePage("dashboard");
+    localStorage.removeItem("crmst-student-session");
     notify("You have been signed out.");
   }
 
@@ -1747,8 +1873,7 @@ function App() {
       }
     }
 
-    const newUser = {
-      id: String(Date.now()),
+    const newUserPayload = {
       name,
       email,
       phone,
@@ -1771,31 +1896,37 @@ function App() {
       type: "Current",
     };
 
-    setUsers((current) => [newUser, ...current]);
-    setCreateUser({
-      name: "",
-      email: "",
-      phone: "",
-      emergencyContact: "",
-      maritalStatus: "",
-      education: "",
-      username: "",
-      password: "",
-      role: "CRM Executive",
-      dept: "CRM",
-      position: "",
-      joined: "",
-      state: "",
-      branch: "",
-      branchCode: "",
-      address: "",
-      imageUrl: "",
-      imagePublicId: "",
-    });
-    setCreateUserPreview("");
-    setCreateUserFile(null);
-    notify("New user created successfully.");
-    setActivePage("user-view");
+    try {
+      const createdUser = await createUser(newUserPayload);
+      setUsers((current) => [createdUser, ...current]);
+      setCreateUser({
+        name: "",
+        email: "",
+        phone: "",
+        emergencyContact: "",
+        maritalStatus: "",
+        education: "",
+        username: "",
+        password: "",
+        role: "CRM Executive",
+        dept: "CRM",
+        position: "",
+        joined: "",
+        state: "",
+        branch: "",
+        branchCode: "",
+        address: "",
+        imageUrl: "",
+        imagePublicId: "",
+      });
+      setCreateUserPreview("");
+      setCreateUserFile(null);
+      notify("New user created successfully.");
+      setActivePage("user-view");
+    } catch (err) {
+      console.error("Failed to create user:", err);
+      notify(err.message || "Failed to create user.");
+    }
   }
 
   function addLead(event) {
@@ -2128,6 +2259,15 @@ function App() {
         </div>
         {toast ? <div className="toast">{toast}</div> : null}
       </div>
+    );
+  }
+
+  if (appView === "student-dashboard" || (currentUser && String(currentUser.role || "").toLowerCase() === "student")) {
+    return (
+      <ErrorBoundary>
+        <StudentDashboard user={currentUser} onLogout={logout} courses={trainingRows} />
+        {toast ? <div className="toast">{toast}</div> : null}
+      </ErrorBoundary>
     );
   }
 
@@ -2802,7 +2942,7 @@ function App() {
                       setCreateUser((current) => ({ ...current, role: event.target.value }))
                     }
                   >
-                    {["CRM Executive", "Sales Executive", "HR", "Manager", "Admin", "Trainer"].map(
+                    {["CRM Executive", "Sales Executive", "HR", "Manager", "Admin", "Trainer", "Student"].map(
                       (role) => (
                         <option key={role} value={role}>{role}</option>
                       ),
@@ -3861,7 +4001,7 @@ function App() {
                       </Field>
                       <Field label="Role">
                         <select value={settingsForm.role} onChange={(event) => setSettingsForm((current) => ({ ...current, role: event.target.value }))}>
-                          {["CRM Executive", "Sales Executive", "HR", "Manager", "Admin", "Trainer"].map((role) => (
+                          {["CRM Executive", "Sales Executive", "HR", "Manager", "Admin", "Trainer", "Student"].map((role) => (
                             <option key={role} value={role}>{role}</option>
                           ))}
                         </select>
