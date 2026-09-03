@@ -1,0 +1,17 @@
+.crm-executive-add-lead {
+  display: grid;
+  gap: 14px;
+  margin: 16px 0 2px;
+  padding: 20px;
+  border: 1px solid rgba(178, 147, 118, 0.18);
+  border-radius: 18px;
+  background: #fff;
+}
+.crm-executive-add-lead > div { display: flex; align-items: center; justify-content: space-between; }
+.crm-executive-add-lead > div button { border: 0; background: transparent; cursor: pointer; }
+.crm-executive-add-lead section { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.crm-executive-add-lead input, .crm-executive-add-lead select { width: 100%; padding: 11px; border: 1px solid rgba(178, 147, 118, 0.25); border-radius: 10px; background: #fff; font-size: .76rem; }
+.crm-executive-add-lead > button { justify-self: start; border: 0; border-radius: 10px; padding: 10px 14px; background: #8d5e38; color: #fff; font-weight: 800; cursor: pointer; }
+.crm-executive-form-error { margin: 0; color: #a74539; font-size: .74rem; }
+.crm-executive-form-success { margin: 12px 0 0; color: #1f6f58; font-size: .78rem; font-weight: 700; }
+@media (max-width: 760px) { .crm-executive-add-lead section { grid-template-columns: 1fr; } }

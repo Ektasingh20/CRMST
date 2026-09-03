@@ -22,6 +22,7 @@ const C = {
 
   badgeBg: "#f3ddba",
   badgeIcon: "#7a4a1e",
+  
 
   accent: "#5c3a2e",
   accentDark: "#472c22",
@@ -130,26 +131,309 @@ const Icon = {
    DUMMY DATA
    ============================================================ */
 const COURSES = [
-  { id: "mern", title: "MERN Stack Development", desc: "Build full-stack apps using MongoDB, Express, React and Node.js.", duration: "12 weeks", lessons: 48, enrolled: true, progress: 72, currentLesson: "Building REST APIs with Express", lastWatched: "Connecting MongoDB with Mongoose · 2 days ago" },
-  { id: "python", title: "Python Programming", desc: "Learn Python fundamentals, OOP concepts and real-world scripting.", duration: "8 weeks", lessons: 36, enrolled: true, progress: 45, currentLesson: "Working with Classes & Objects", lastWatched: "Exception Handling in Python · 4 days ago" },
-  { id: "data", title: "Data Analytics", desc: "Analyze and visualize data using Excel, SQL and Power BI.", duration: "10 weeks", lessons: 30, enrolled: false },
-  { id: "web", title: "Web Development", desc: "Master HTML, CSS and JavaScript to build modern websites.", duration: "9 weeks", lessons: 40, enrolled: false },
-  { id: "ai", title: "Artificial Intelligence", desc: "Understand core AI concepts, ML basics and practical use cases.", duration: "14 weeks", lessons: 52, enrolled: false },
-  { id: "marketing", title: "Digital Marketing", desc: "Learn SEO, social media and campaign strategy fundamentals.", duration: "6 weeks", lessons: 24, enrolled: false },
+  {
+    id: "frontend-foundation",
+    title: "Front End Development Foundation",
+    desc: "Build a strong foundation in front-end web development.",
+    duration: "3 months",
+    price: "₹9,000",
+    software: ["HTML5", "CSS3", "Bootstrap", "JavaScript", "jQuery", "Responsive Design", "Git"],
+    enrolled: true,
+    progress: 72,
+    currentLesson: "Front End Development Foundation",
+    lastWatched: "Continue your front-end training"
+  },
+
+  {
+    id: "frontend-development",
+    title: "Front End Development",
+    desc: "Learn modern front-end development and popular frameworks.",
+    duration: "5 months",
+    price: "₹13,000",
+    software: ["HTML5", "CSS3", "Bootstrap", "JavaScript", "jQuery", "React JS", "Next.js", "Angular", "Git"],
+    enrolled: false
+  },
+
+  {
+    id: "backend-php",
+    title: "Back End Development",
+    desc: "Learn backend development, APIs, authentication and deployment.",
+    duration: "6 months",
+    price: "₹12,000",
+    software: ["PHP", "MySQL", "RESTful APIs", "Authentication & Security", "Git", "Deployment & Hosting"],
+    enrolled: false
+  },
+
+  {
+    id: "backend-python",
+    title: "Back End Development",
+    desc: "Develop backend applications using Python and databases.",
+    duration: "6 months",
+    price: "₹14,000 - 1 DB / ₹16,000 - 2 DB",
+    software: ["Python", "MongoDB", "PostgreSQL", "REST APIs", "Authentication", "Git", "Deployment"],
+    enrolled: false
+  },
+
+  {
+    id: "backend-node",
+    title: "Back End Development",
+    desc: "Build scalable backend applications using Node.js.",
+    duration: "6 months",
+    price: "₹15,000",
+    software: ["Node.js", "PostgreSQL", "RESTful APIs", "Authentication & Security", "Git", "Deployment & Hosting"],
+    enrolled: false
+  },
+
+  {
+    id: "fullstack-php",
+    title: "Full Stack Development",
+    desc: "Learn complete web development from frontend to backend.",
+    duration: "7 months",
+    price: "₹18,000",
+    software: ["Front-End Basics", "PHP", "MySQL", "REST APIs", "Authentication & Security", "Git", "Deployment"],
+    enrolled: false
+  },
+
+  {
+    id: "fullstack-python",
+    title: "Full Stack Development",
+    desc: "Build full-stack applications using Python and PostgreSQL.",
+    duration: "7 months",
+    price: "₹22,000",
+    software: ["Front-End Basics", "Python", "PostgreSQL", "REST APIs", "Authentication & Security", "Git", "Deployment"],
+    enrolled: false
+  },
+
+  {
+    id: "fullstack-node",
+    title: "Full Stack Development",
+    desc: "Build modern full-stack applications using Node.js and MongoDB.",
+    duration: "7 months",
+    price: "₹28,000",
+    software: ["Front-End Basics", "Node.js", "MongoDB", "REST APIs", "Authentication & Security", "Git", "Deployment"],
+    enrolled: false
+  },
+
+  {
+    id: "video-editing",
+    title: "Video Editing",
+    desc: "Learn professional video editing, effects, audio and color correction.",
+    duration: "3 months",
+    price: "₹14,000",
+    software: [
+      "Sequencing & Media Import",
+      "Basic Editing",
+      "Effects",
+      "Audio",
+      "Color Correction",
+      "Slow Motion",
+      "Green Screen",
+      "Exporting"
+    ],
+    enrolled: false
+  },
+
+  {
+    id: "autocad",
+    title: "AutoCAD (2D & 3D)",
+    desc: "Learn 2D drafting, advanced design and 3D modeling with AutoCAD.",
+    duration: "3 months",
+    price: "₹11,000",
+    software: [
+      "Introduction to AutoCAD",
+      "2D Drafting & Design",
+      "Advanced 2D",
+      "3D Modeling",
+      "Real-World Project"
+    ],
+    enrolled: false
+  },
+
+  {
+    id: "wordpress",
+    title: "WordPress Web Design",
+    desc: "Create and customize professional WordPress websites.",
+    duration: "2 months",
+    price: "₹8,000",
+    software: [
+      "WordPress",
+      "Content Management",
+      "Theme Customization",
+      "Plugins",
+      "Website Optimization",
+      "WooCommerce",
+      "Advanced Features"
+    ],
+    enrolled: false
+  },
+
+  {
+    id: "android",
+    title: "Android App Development",
+    desc: "Learn Android application development from UI to publishing.",
+    duration: "6 months",
+    price: "₹17,000",
+    software: [
+      "Kotlin / Java",
+      "UI Design",
+      "Activities & Navigation",
+      "Data Management",
+      "Networking & APIs",
+      "Testing & Debugging",
+      "Publishing"
+    ],
+    enrolled: false
+  },
+
+  {
+    id: "vfx-animation",
+    title: "VFX & Animation",
+    desc: "Learn 2D and 3D animation, VFX, compositing and rendering.",
+    duration: "7 months",
+    price: "₹30,000",
+    software: [
+      "Adobe After Effects",
+      "Blender",
+      "Illustrator",
+      "Autodesk Maya",
+      "2D & 3D Animation",
+      "Compositing",
+      "Motion Tracking",
+      "Lighting",
+      "Texturing",
+      "Rendering",
+      "Portfolio"
+    ],
+    enrolled: false
+  },
+
+  {
+    id: "graphics-design",
+    title: "Graphics & Visual Designing",
+    desc: "Learn graphic design, visual design, branding and portfolio creation.",
+    duration: "4 months",
+    price: "₹16,000",
+    software: [
+      "Photoshop",
+      "Illustrator",
+      "InDesign",
+      "Canva",
+      "Figma",
+      "Typography",
+      "Color Theory",
+      "Layout & Composition",
+      "Branding",
+      "Portfolio"
+    ],
+    enrolled: false
+  },
+
+  {
+    id: "photoshop",
+    title: "Adobe Photoshop",
+    desc: "Learn Photoshop fundamentals, effects, selections, masks and exporting.",
+    duration: "2 months",
+    price: "₹6,000",
+    software: [
+      "Introduction",
+      "Layers",
+      "Text & Shapes",
+      "Filters & Effects",
+      "Layer Masks & Selections",
+      "Exporting"
+    ],
+    enrolled: false
+  },
+
+  {
+    id: "coreldraw",
+    title: "CorelDraw",
+    desc: "Learn vector graphics, typography, effects and professional printing.",
+    duration: "1.5 months",
+    price: "₹5,500",
+    software: [
+      "Basic Shapes & Lines",
+      "Text",
+      "Effects & Styles",
+      "Layers & Object Management",
+      "Exporting & Printing"
+    ],
+    enrolled: false
+  },
+
+  {
+    id: "digital-marketing",
+    title: "Digital Marketing",
+    desc: "Learn SEO, social media, analytics, advertising and content marketing.",
+    duration: "6 months",
+    price: "₹22,000",
+    software: [
+      "SEO",
+      "SMO",
+      "Google Analytics 4",
+      "GTM",
+      "Content Marketing",
+      "YouTube Marketing",
+      "ASO",
+      "GMB",
+      "Google Ads",
+      "Facebook Ads",
+      "Email Marketing",
+      "WordPress"
+    ],
+    enrolled: false
+  },
+
+  {
+    id: "illustrator",
+    title: "Adobe Illustrator",
+    desc: "Learn illustration, typography, branding, logo design and advanced Illustrator techniques.",
+    duration: "2 months",
+    price: "₹8,000",
+    software: [
+      "Illustrator & UI",
+      "Basic Shapes & Tools",
+      "Pen Tool Illustrations",
+      "Typography & Text Effects",
+      "Layers & Artboards",
+      "Advanced Techniques",
+      "Brushes",
+      "Logo Design & Branding",
+      "Exporting"
+    ],
+    enrolled: false
+  },
+
+  {
+    id: "3d-design",
+    title: "3D Interior & Exterior Design",
+    desc: "Learn interior and exterior design for residential and commercial spaces.",
+    duration: "6 months",
+    price: "₹26,000",
+    software: [
+      "Design Principles",
+      "Interior Fundamentals",
+      "Design Tools & Software",
+      "Residential Interior",
+      "Commercial Interior",
+      "Exterior Design"
+    ],
+    enrolled: false
+  }
 ];
 
 const ASSIGNMENTS = [
-  { id: 1, name: "Build a REST API", course: "MERN Stack Development", due: "Aug 22, 2026", status: "Pending" },
-  { id: 2, name: "Data Structures Quiz", course: "Python Programming", due: "Aug 18, 2026", status: "Submitted" },
-  { id: 3, name: "Mongoose Schema Design", course: "MERN Stack Development", due: "Aug 12, 2026", status: "Evaluated" },
-  { id: 4, name: "Python OOP Assignment", course: "Python Programming", due: "Aug 25, 2026", status: "Pending" },
+  { id: 1, name: "Responsive Landing Page", course: "Front End Development Foundation", due: "Aug 28, 2026", status: "Pending" },
+  { id: 2, name: "HTML & CSS Practical", course: "Front End Development Foundation", due: "Aug 24, 2026", status: "Submitted" },
+  { id: 3, name: "JavaScript Fundamentals", course: "Front End Development", due: "Sep 2, 2026", status: "Evaluated" },
+  { id: 4, name: "Git & Version Control Task", course: "Front End Development Foundation", due: "Sep 5, 2026", status: "Pending" },
 ];
 
 const ACTIVITY = [
-  { id: 1, text: "Completed a lesson", detail: "Building REST APIs with Express", time: "2 hours ago" },
-  { id: 2, text: "Watched a video", detail: "Connecting MongoDB with Mongoose", time: "2 days ago" },
-  { id: 3, text: "Downloaded notes", detail: "Python OOP Cheat Sheet", time: "3 days ago" },
-  { id: 4, text: "Submitted an assignment", detail: "Data Structures Quiz", time: "5 days ago" },
+  { id: 1, text: "Completed a lesson", detail: "HTML5 & CSS3 Fundamentals", time: "2 hours ago" },
+  { id: 2, text: "Watched a video", detail: "Responsive Web Design", time: "2 days ago" },
+  { id: 3, text: "Downloaded notes", detail: "JavaScript Fundamentals", time: "3 days ago" },
+  { id: 4, text: "Submitted an assignment", detail: "HTML & CSS Practical", time: "5 days ago" },
 ];
 
 const NOTIFICATIONS = [
@@ -255,10 +539,21 @@ function CourseCard({ course, onOpen }) {
       <h4 style={{ margin: "0 0 6px", fontSize: 15.5, fontWeight: 700 }}>{course.title}</h4>
       <p style={{ margin: "0 0 14px", fontSize: 12.5, color: C.textSecondary, minHeight: 34 }}>{course.desc}</p>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 16 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 12 }}>
         <Stat label="Duration" value={course.duration} />
-        <Stat label="Lessons" value={course.lessons} />
+        <Stat label="Price" value={course.price} />
         <Stat label="Status" value={course.enrolled ? "Active" : "Locked"} />
+      </div>
+
+      <div style={{
+        marginBottom: 16,
+        fontSize: 11.5,
+        lineHeight: 1.55,
+        color: C.textSecondary,
+        minHeight: 34,
+      }}>
+        <span style={{ fontWeight: 700, color: C.text }}>Software & Tools:</span>{" "}
+        {course.software?.join(" • ")}
       </div>
 
       <div style={{ display: "flex", gap: 8, marginTop: "auto" }}>
@@ -325,8 +620,23 @@ function CourseModal({ course, onClose, onToast }) {
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12, marginBottom: 18, padding: 14, background: C.pillBg, borderRadius: 12 }}>
           <Stat label="Duration" value={course.duration} />
-          <Stat label="Lessons" value={course.lessons} />
+          <Stat label="Price" value={course.price} />
           <Stat label="Status" value={course.enrolled ? "Enrolled" : "Not Enrolled"} />
+        </div>
+
+        <div style={{
+          marginBottom: 18,
+          padding: 14,
+          background: C.pillBg,
+          border: `1px solid ${C.pillBorder}`,
+          borderRadius: 12,
+        }}>
+          <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em", color: C.textMuted, fontWeight: 700, marginBottom: 7 }}>
+            Software & Tools
+          </div>
+          <div style={{ fontSize: 12.5, color: C.textSecondary, lineHeight: 1.65 }}>
+            {course.software?.join(" • ")}
+          </div>
         </div>
 
         {course.enrolled ? (
@@ -401,7 +711,7 @@ function SummaryCards() {
 }
 
 function ContinueLearning({ onOpen }) {
-  const course = COURSES.find(c => c.id === "mern");
+  const course = COURSES.find(c => c.enrolled) || COURSES[0];
   return (
     <div style={{ marginBottom: 24 }}>
       <SectionHead title="Continue Learning" />
@@ -746,7 +1056,7 @@ export default function StudentDashboard({ user, onLogout }) {
                       </div>
                       <div style={{ flex: 1 }}>
                         <div style={{ fontSize: 13, fontWeight: 700 }}>{c.title}</div>
-                        <div style={{ fontSize: 11.5, color: C.textMuted }}>{c.enrolled ? `${c.lessons} video lessons unlocked` : "Enroll to unlock video lessons"}</div>
+                        <div style={{ fontSize: 11.5, color: C.textMuted }}>{c.enrolled ? "Video lessons unlocked" : "Enroll to unlock video lessons"}</div>
                       </div>
                       {c.enrolled
                         ? <Btn variant="primary" onClick={() => setOpenCourse(c)}>Watch</Btn>
@@ -788,12 +1098,12 @@ export default function StudentDashboard({ user, onLogout }) {
                   <div key={c.id} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 18, padding: 20, boxShadow: "0 1px 2px rgba(33,28,46,0.03), 0 4px 14px rgba(33,28,46,0.04)" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
                       <h4 style={{ margin: 0, fontSize: 14.5, fontWeight: 700 }}>{c.title}</h4>
-                      <span style={{ fontSize: 13, fontWeight: 700, color: C.accent }}>{c.progress}%</span>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: C.accent }}>{c.progress || 0}%</span>
                     </div>
                     <div style={{ height: 8, background: "#f0ece2", borderRadius: 20, overflow: "hidden", marginBottom: 8 }}>
-                      <div style={{ width: `${c.progress}%`, height: "100%", background: C.accent, borderRadius: 20 }} />
+                      <div style={{ width: `${c.progress || 0}%`, height: "100%", background: C.accent, borderRadius: 20 }} />
                     </div>
-                    <div style={{ fontSize: 12, color: C.textSecondary }}>Current lesson: {c.currentLesson}</div>
+                    <div style={{ fontSize: 12, color: C.textSecondary }}>Current lesson: {c.currentLesson || "Course not started yet"}</div>
                   </div>
                 ))}
               </div>

@@ -7,6 +7,7 @@ import { connectDatabase } from "./config/db.js";
 import authRoutes from "./routes/auth.js";
 import usersRoutes from "./routes/users.js";
 import leadsRoutes from "./routes/leads.js";
+import callingRoutes from "./routes/calling.js";
 import servicesRoutes from "./routes/services.js";
 import trainingsRoutes from "./routes/trainings.js";
 import stipRoutes from "./routes/stip.js";
@@ -30,6 +31,7 @@ app.use(express.json({ limit: "5mb" }));
 app.use("/api/auth", authRoutes);
 app.use("/api/users", usersRoutes);
 app.use("/api/leads", leadsRoutes);
+app.use("/api/calling", callingRoutes);
 app.use("/api/services", servicesRoutes);
 app.use("/api/trainings", trainingsRoutes);
 app.use("/api/stip", stipRoutes);
@@ -45,10 +47,12 @@ app.get("/", (req, res) => {
 
 const handler = serverless(app);
 
-if (!process.env.VERCEL) {
-  connectDatabase().then(() => {
+async function startServer() {
+  try {
+    await connectDatabase();
     let attempts = 0;
     const maxAttempts = 5;
+
     function tryListen(p) {
       const server = app.listen(p, () => {
         console.log(`CRM backend listening on http://localhost:${p}`);
@@ -65,8 +69,17 @@ if (!process.env.VERCEL) {
         }
       });
     }
+
     tryListen(port);
-  });
+  } catch (error) {
+    console.error("CRM backend startup aborted because MongoDB is unavailable.");
+    console.error(error.message || "Unknown database startup error.");
+    process.exit(1);
+  }
+}
+
+if (!process.env.VERCEL) {
+  startServer();
 }
 
 export default handler;

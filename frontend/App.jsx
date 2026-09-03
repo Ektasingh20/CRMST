@@ -93,7 +93,7 @@ import {
   createUser,
   updateUser,
   deleteUser,
-  createLead,
+  createLead as createLeadApi,
   updateLead,
   deleteLead,
   createService,
@@ -114,6 +114,7 @@ import {
 } from "./backendClient";
 import ErrorBoundary from "./ErrorBoundary";
 import StudentDashboard from "./src/student-dashboard/StudentDashboard";
+import CrmExecutiveDashboard from "./src/crm-executive/CrmExecutiveDashboard";
 import {
   compressImageFile,
   createPreviewUrl,
@@ -131,6 +132,10 @@ const SERVICES_STORAGE_KEY = "crmst-services.txt";
 const TRAININGS_STORAGE_KEY = "crmst-trainings.txt";
 const STIP_PROGRAMS_STORAGE_KEY = "crmst-stip-programs.txt";
 const STIP_APPLICATIONS_STORAGE_KEY = "crmst-stip-applications.txt";
+
+function isCrmExecutive(role) {
+  return ["crm executive", "crm_executive"].includes(String(role || "").trim().toLowerCase());
+}
 
 const sidebarSections = [
   {
@@ -942,7 +947,7 @@ function App() {
     return getCurrentUser();
   });
   const [dashboardTab, setDashboardTab] = useState("overview");
-  const [createUser, setCreateUser] = useState({
+  const [createUserForm, setCreateUserForm] = useState({
     name: "",
     email: "",
     phone: "",
@@ -964,6 +969,7 @@ function App() {
   });
   const [createUserPreview, setCreateUserPreview] = useState("");
   const [createUserFile, setCreateUserFile] = useState(null);
+  const [isCreatingUser, setIsCreatingUser] = useState(false);
   const [createLead, setCreateLead] = useState({
     name: "",
     phone: "",
@@ -1000,6 +1006,8 @@ function App() {
       if (String(savedSession.role || "").toLowerCase() === "student") {
         localStorage.setItem("crmst-student-session", JSON.stringify(savedSession));
         setAppView("student-dashboard");
+      } else if (isCrmExecutive(savedSession.role)) {
+        setAppView("crm-executive");
       } else {
         setAppView("dashboard");
       }
@@ -1010,14 +1018,21 @@ function App() {
 
     (async () => {
       try {
-        const [remoteUsers, remoteServices, remoteTrainings, remoteStip, remoteInterns] = await Promise.all([
+        if (isCrmExecutive(session.role)) {
+          const remoteLeads = await loadLeads();
+          if (remoteLeads.length) setLeads(remoteLeads);
+          return;
+        }
+        const [remoteUsers, remoteLeads, remoteServices, remoteTrainings, remoteStip, remoteInterns] = await Promise.all([
           loadUsers(),
+          loadLeads(),
           loadServices(),
           loadTrainings(),
           loadStipPrograms(),
           loadStipApplications(),
         ]);
         if (remoteUsers.length) setUsers(remoteUsers);
+        if (remoteLeads.length) setLeads(remoteLeads);
         if (remoteServices.length) setServiceRows(remoteServices);
         else if (savedServices.length) saveServicesToBackend(savedServices).catch(() => {});
         if (remoteTrainings.length) setTrainingRows(remoteTrainings);
@@ -1033,12 +1048,13 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (isCrmExecutive(currentUser?.role)) return;
     const sanitizedUsers = sanitizeImageCollection(users);
     if (!safeStorageSet(USERS_STORAGE_KEY, JSON.stringify(sanitizedUsers))) {
       notify("Browser storage is full. Continuing without caching large local data.");
     }
     saveUsersToBackend(sanitizedUsers);
-  }, [users]);
+  }, [users, currentUser?.role]);
 
   useEffect(() => {
     const sanitizedServices = sanitizeImageCollection(serviceRows);
@@ -1082,9 +1098,12 @@ function App() {
   }, [currentUser]);
 
   useEffect(() => {
-    if (currentUser && String(currentUser.role || "").toLowerCase() === "student") {
+    if (!currentUser) return;
+    if (String(currentUser.role || "").toLowerCase() === "student") {
       localStorage.setItem("crmst-student-session", JSON.stringify(currentUser));
       setAppView("student-dashboard");
+    } else if (isCrmExecutive(currentUser.role)) {
+      setAppView("crm-executive");
     }
   }, [currentUser]);
 
@@ -1760,7 +1779,7 @@ function App() {
         notify(`Welcome back, ${user.name}.`);
         return;
       }
-      setAppView("dashboard");
+      setAppView(isCrmExecutive(user.role) ? "crm-executive" : "dashboard");
       setLoginForm({ username: "", password: "" });
       notify(`Welcome back, ${user.name}.`);
     } catch (err) {
@@ -1814,23 +1833,35 @@ function App() {
     notify("You have been signed out.");
   }
 
-  async function addMember(event) {
-    event.preventDefault();
-    const name = createUser.name.trim();
-    const email = createUser.email.trim();
-    const phone = createUser.phone.trim();
-    const emergencyContact = createUser.emergencyContact.trim();
-    const education = createUser.education.trim();
-    const username = createUser.username.trim();
-    const password = createUser.password.trim();
-    const dept = createUser.dept.trim();
-    const position = createUser.position.trim();
-    const role = createUser.role.trim();
-    const joined = createUser.joined.trim();
-    const state = createUser.state.trim();
-    const branch = createUser.branch.trim();
-    const branchCode = createUser.branchCode.trim();
-    const address = createUser.address.trim();
+  async function updateCrmLead(lead) {
+    const savedLead = await updateLead(lead.id, lead);
+    setLeads((current) => current.map((item) => String(item.id) === String(lead.id) ? savedLead : item));
+  }
+
+  async function createCrmLead(lead) {
+    const savedLead = await createLeadApi(lead);
+    setLeads((current) => [savedLead, ...current]);
+  }
+
+ async function addMember(event) {
+  event.preventDefault();
+  if (isCreatingUser) return;
+
+  const name = createUserForm.name.trim();
+  const email = createUserForm.email.trim();
+  const phone = createUserForm.phone.trim();
+  const emergencyContact = createUserForm.emergencyContact.trim();
+  const education = createUserForm.education.trim();
+  const username = createUserForm.username.trim();
+  const password = createUserForm.password.trim();
+  const dept = createUserForm.dept.trim();
+  const position = createUserForm.position.trim();
+  const role = createUserForm.role.trim();
+  const joined = createUserForm.joined.trim();
+  const state = createUserForm.state.trim();
+  const branch = createUserForm.branch.trim();
+  const branchCode = createUserForm.branchCode.trim();
+  const address = createUserForm.address.trim();
 
     if (!name) { notify("Full name is required."); return; }
     if (!email) { notify("Email is required."); return; }
@@ -1854,12 +1885,13 @@ function App() {
     if (!address) { notify("Address is required."); return; }
 
     if (users.some((entry) => entry.username.toLowerCase() === username.toLowerCase())) {
-      notify("That username already exists.");
+      notify("Username already exists. Please choose another username.");
       return;
     }
 
-    let imageUrl = createUser.imageUrl || "";
-    let imagePublicId = createUser.imagePublicId || "";
+    setIsCreatingUser(true);
+    let imageUrl = createUserForm.imageUrl || "";
+    let imagePublicId = createUserForm.imagePublicId || "";
 
     if (createUserFile) {
       try {
@@ -1869,6 +1901,7 @@ function App() {
         imagePublicId = uploadResult.publicId || "";
       } catch (err) {
         notify(err.message || "Image upload failed.");
+        setIsCreatingUser(false);
         return;
       }
     }
@@ -1878,7 +1911,7 @@ function App() {
       email,
       phone,
       emergencyContact,
-      maritalStatus: createUser.maritalStatus || "",
+      maritalStatus: createUserForm.maritalStatus || "",
       education,
       username,
       password,
@@ -1899,7 +1932,7 @@ function App() {
     try {
       const createdUser = await createUser(newUserPayload);
       setUsers((current) => [createdUser, ...current]);
-      setCreateUser({
+      setCreateUserForm({
         name: "",
         email: "",
         phone: "",
@@ -1924,8 +1957,14 @@ function App() {
       notify("New user created successfully.");
       setActivePage("user-view");
     } catch (err) {
+      if (err.status === 409 && /username already exists/i.test(err.message)) {
+        notify("Username already exists. Please choose another username.");
+        return;
+      }
       console.error("Failed to create user:", err);
       notify(err.message || "Failed to create user.");
+    } finally {
+      setIsCreatingUser(false);
     }
   }
 
@@ -1976,17 +2015,18 @@ function App() {
       return;
     }
 
-    setLeads((current) => [
-      {
-        id: current.length + 1,
-        ...createLead,
-        value: Number(createLead.value || 0),
-        assignedTo: String(createLead.assignedTo),
-        assignedDate: createLead.assignedDate || new Date().toISOString().slice(0, 10),
-        createdAt: new Date().toISOString().slice(0, 10),
-      },
-      ...current,
-    ]);
+    const newLead = {
+      id: String(Date.now()),
+      ...createLead,
+      value: Number(createLead.value || 0),
+      assignedTo: String(createLead.assignedTo),
+      assignedDate: createLead.assignedDate || new Date().toISOString().slice(0, 10),
+      createdAt: new Date().toISOString().slice(0, 10),
+    };
+    setLeads((current) => [newLead, ...current]);
+    createLeadApi(newLead)
+      .then((savedLead) => setLeads((current) => current.map((lead) => String(lead.id) === newLead.id ? savedLead : lead)))
+      .catch((err) => console.warn("Lead was saved locally but could not be synced", err));
     setCreateLead({
       name: "",
       phone: "",
@@ -2266,6 +2306,21 @@ function App() {
     return (
       <ErrorBoundary>
         <StudentDashboard user={currentUser} onLogout={logout} courses={trainingRows} />
+        {toast ? <div className="toast">{toast}</div> : null}
+      </ErrorBoundary>
+    );
+  }
+
+  if (appView === "crm-executive" || (currentUser && isCrmExecutive(currentUser.role))) {
+    return (
+      <ErrorBoundary>
+        <CrmExecutiveDashboard
+          user={currentUser}
+          leads={leads.filter((lead) => lead?._id)}
+          onUpdateLead={updateCrmLead}
+          onCreateLead={createCrmLead}
+          onLogout={logout}
+        />
         {toast ? <div className="toast">{toast}</div> : null}
       </ErrorBoundary>
     );
@@ -2853,9 +2908,9 @@ function App() {
                 <p className="form-section-title">Personal Information</p>
                 <Field label="Full Name *">
                   <input
-                    value={createUser.name}
+                    value={createUserForm.name}
                     onChange={(event) =>
-                      setCreateUser((current) => ({ ...current, name: event.target.value }))
+                      setCreateUserForm((current) => ({ ...current, name: event.target.value }))
                     }
                     placeholder="Ravi Sharma"
                   />
@@ -2863,18 +2918,18 @@ function App() {
                 <Field label="Email *">
                   <input
                     type="email"
-                    value={createUser.email}
+                    value={createUserForm.email}
                     onChange={(event) =>
-                      setCreateUser((current) => ({ ...current, email: event.target.value }))
+                      setCreateUserForm((current) => ({ ...current, email: event.target.value }))
                     }
                     placeholder="rahul@systemtechnologies.in"
                   />
                 </Field>
                 <Field label="Contact Number *">
                   <input
-                    value={createUser.phone}
+                    value={createUserForm.phone}
                     onChange={(event) =>
-                      setCreateUser((current) => ({ ...current, phone: event.target.value.replace(/\D/g, "") }))
+                      setCreateUserForm((current) => ({ ...current, phone: event.target.value.replace(/\D/g, "") }))
                     }
                     placeholder="9876543210"
                     maxLength={10}
@@ -2882,9 +2937,9 @@ function App() {
                 </Field>
                 <Field label="Emergency Contact *">
                   <input
-                    value={createUser.emergencyContact}
+                    value={createUserForm.emergencyContact}
                     onChange={(event) =>
-                      setCreateUser((current) => ({ ...current, emergencyContact: event.target.value.replace(/\D/g, "") }))
+                      setCreateUserForm((current) => ({ ...current, emergencyContact: event.target.value.replace(/\D/g, "") }))
                     }
                     placeholder="9876543210"
                     maxLength={10}
@@ -2892,9 +2947,9 @@ function App() {
                 </Field>
                 <Field label="Marital Status">
                   <select
-                    value={createUser.maritalStatus}
+                    value={createUserForm.maritalStatus}
                     onChange={(event) =>
-                      setCreateUser((current) => ({ ...current, maritalStatus: event.target.value }))
+                      setCreateUserForm((current) => ({ ...current, maritalStatus: event.target.value }))
                     }
                   >
                     <option value="">Select</option>
@@ -2905,9 +2960,9 @@ function App() {
                 </Field>
                 <Field label="Education *">
                   <input
-                    value={createUser.education}
+                    value={createUserForm.education}
                     onChange={(event) =>
-                      setCreateUser((current) => ({ ...current, education: event.target.value }))
+                      setCreateUserForm((current) => ({ ...current, education: event.target.value }))
                     }
                     placeholder="B.Tech, MBA, B.Com"
                   />
@@ -2916,9 +2971,9 @@ function App() {
                 <p className="form-section-title">Employment Information</p>
                 <Field label="Department *">
                   <select
-                    value={createUser.dept}
+                    value={createUserForm.dept}
                     onChange={(event) =>
-                      setCreateUser((current) => ({ ...current, dept: event.target.value }))
+                      setCreateUserForm((current) => ({ ...current, dept: event.target.value }))
                     }
                   >
                     {["CRM", "Sales", "HR", "Technical", "Design", "Marketing"].map((dept) => (
@@ -2928,18 +2983,18 @@ function App() {
                 </Field>
                 <Field label="Position *">
                   <input
-                    value={createUser.position}
+                    value={createUserForm.position}
                     onChange={(event) =>
-                      setCreateUser((current) => ({ ...current, position: event.target.value }))
+                      setCreateUserForm((current) => ({ ...current, position: event.target.value }))
                     }
                     placeholder="CRM Executive"
                   />
                 </Field>
                 <Field label="Role *">
                   <select
-                    value={createUser.role}
+                    value={createUserForm.role}
                     onChange={(event) =>
-                      setCreateUser((current) => ({ ...current, role: event.target.value }))
+                      setCreateUserForm((current) => ({ ...current, role: event.target.value }))
                     }
                   >
                     {["CRM Executive", "Sales Executive", "HR", "Manager", "Admin", "Trainer", "Student"].map(
@@ -2954,9 +3009,9 @@ function App() {
                 <Field label="Date of Joining *">
                   <input
                     type="date"
-                    value={createUser.joined}
+                    value={createUserForm.joined}
                     onChange={(event) =>
-                      setCreateUser((current) => ({ ...current, joined: event.target.value }))
+                      setCreateUserForm((current) => ({ ...current, joined: event.target.value }))
                     }
                   />
                 </Field>
@@ -2973,7 +3028,7 @@ function App() {
                         reader.onload = (e) => {
                           setCreateUserPreview(e.target.result);
                           setCreateUserFile(file);
-                          setCreateUser((current) => ({ ...current, imageUrl: e.target.result }));
+                          setCreateUserForm((current) => ({ ...current, imageUrl: e.target.result }));
                         };
                         reader.readAsDataURL(file);
                       }}
@@ -2982,16 +3037,16 @@ function App() {
                     />
                     <label htmlFor="create-user-photo" className="avatar-upload-label">
                       <Upload size={16} />
-                      {createUser.imageUrl ? "Change photo" : "Upload photo"}
+                      {createUserForm.imageUrl ? "Change photo" : "Upload photo"}
                     </label>
                     {createUserPreview && (
                       <div className="avatar-preview">
                         <img src={createUserPreview} alt="Preview" />
                       </div>
                     )}
-                    {!createUserPreview && createUser.imageUrl && (
+                    {!createUserPreview && createUserForm.imageUrl && (
                       <div className="avatar-preview">
-                        <img src={createUser.imageUrl} alt="Preview" />
+                        <img src={createUserForm.imageUrl} alt="Preview" />
                       </div>
                     )}
                   </div>
@@ -3000,9 +3055,9 @@ function App() {
                 <p className="form-section-title">Login Information</p>
                 <Field label="Username *">
                   <input
-                    value={createUser.username}
+                    value={createUserForm.username}
                     onChange={(event) =>
-                      setCreateUser((current) => ({ ...current, username: event.target.value }))
+                      setCreateUserForm((current) => ({ ...current, username: event.target.value }))
                     }
                     placeholder="ravi"
                   />
@@ -3010,9 +3065,9 @@ function App() {
                 <Field label="Password *">
                   <input
                     type="password"
-                    value={createUser.password}
+                    value={createUserForm.password}
                     onChange={(event) =>
-                      setCreateUser((current) => ({ ...current, password: event.target.value }))
+                      setCreateUserForm((current) => ({ ...current, password: event.target.value }))
                     }
                     placeholder="Create password"
                   />
@@ -3021,27 +3076,27 @@ function App() {
                 <p className="form-section-title">Organization / Location</p>
                 <Field label="State *">
                   <input
-                    value={createUser.state}
+                    value={createUserForm.state}
                     onChange={(event) =>
-                      setCreateUser((current) => ({ ...current, state: event.target.value }))
+                      setCreateUserForm((current) => ({ ...current, state: event.target.value }))
                     }
                     placeholder="Rajasthan"
                   />
                 </Field>
                 <Field label="Branch *">
                   <input
-                    value={createUser.branch}
+                    value={createUserForm.branch}
                     onChange={(event) =>
-                      setCreateUser((current) => ({ ...current, branch: event.target.value }))
+                      setCreateUserForm((current) => ({ ...current, branch: event.target.value }))
                     }
                     placeholder="Ajmer"
                   />
                 </Field>
                 <Field label="Branch Code *">
                   <input
-                    value={createUser.branchCode}
+                    value={createUserForm.branchCode}
                     onChange={(event) =>
-                      setCreateUser((current) => ({ ...current, branchCode: event.target.value }))
+                      setCreateUserForm((current) => ({ ...current, branchCode: event.target.value }))
                     }
                     placeholder="AJ-01"
                   />
@@ -3050,9 +3105,9 @@ function App() {
                 <p className="form-section-title">Address</p>
                 <Field label="Address *">
                   <textarea
-                    value={createUser.address}
+                    value={createUserForm.address}
                     onChange={(event) =>
-                      setCreateUser((current) => ({ ...current, address: event.target.value }))
+                      setCreateUserForm((current) => ({ ...current, address: event.target.value }))
                     }
                     placeholder="123 Main Road, Ajmer, Rajasthan"
                     rows={3}
@@ -3060,8 +3115,8 @@ function App() {
                 </Field>
 
                 <div className="form-actions span-full">
-                  <button className="primary-button" type="submit">
-                    Create User
+                  <button className="primary-button" type="submit" disabled={isCreatingUser}>
+                    {isCreatingUser ? "Creating User..." : "Create User"}
                   </button>
                 </div>
               </form>
