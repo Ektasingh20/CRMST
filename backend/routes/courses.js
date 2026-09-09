@@ -1,0 +1,20 @@
+import express from "express";
+import { authenticate } from "../middleware/auth.js";
+import { getCourseById, getCourses, getStudentTaskSubmissions, gradeCourseAssignment, imageKitAuth, postCourse, postCourseLesson, putCourse, putCourseLesson, removeCourse, removeCourseLesson, saveCourseLessonProgress, submitCourseTask } from "../controllers/coursesController.js";
+
+const router = express.Router();
+router.use(authenticate);
+router.get("/", getCourses);
+router.get("/task-submissions", getStudentTaskSubmissions);
+router.get("/upload-auth", imageKitAuth);
+router.get("/:id", getCourseById);
+router.post("/", postCourse);
+router.put("/:id", putCourse);
+router.post("/:id/lessons", postCourseLesson);
+router.put("/:id/lessons/:lessonId", putCourseLesson);
+router.delete("/:id/lessons/:lessonId", removeCourseLesson);
+router.post("/:courseId/lessons/:lessonId/tasks/:taskId/grade", gradeCourseAssignment);
+router.post("/:courseId/lessons/:lessonId/tasks/:taskId/submission", submitCourseTask);
+router.post("/:courseId/lessons/:lessonId/progress", saveCourseLessonProgress);
+router.delete("/:id", removeCourse);
+export default router;

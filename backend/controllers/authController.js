@@ -36,7 +36,12 @@ export async function login(req, res) {
     });
   } catch (err) {
     console.error("Login error:", err);
-    return res.status(500).json({ error: err.message || "Login failed" });
+    const quotaExceeded = err?.code === 8 || String(err?.code || "").toUpperCase() === "RESOURCE_EXHAUSTED" || /resource exhausted|quota exceeded/i.test(String(err?.message || ""));
+    return res.status(quotaExceeded ? 429 : 500).json({
+      error: quotaExceeded
+        ? "Firebase Firestore quota is exhausted. Please wait for the quota reset or increase the Firebase database quota, then try again."
+        : (err.message || "Login failed"),
+    });
   }
 }
 
@@ -79,44 +84,5 @@ export async function changePassword(req, res) {
 }
 
 export async function signup(req, res) {
-  if (!isMongoConnected) {
-    return res.status(503).json({ error: "Database is unavailable. Please try again later." });
-  }
-  try {
-    const { name, username, password } = req.body;
-    if (!name || !username || !password) {
-      return res.status(400).json({ error: "Name, username, and password are required" });
-    }
-
-    const usernameLower = String(username).trim().toLowerCase();
-    const existing = await User.findOne({ username: usernameLower });
-    if (existing) {
-      return res.status(409).json({ error: "Username already exists" });
-    }
-
-    const hash = await bcrypt.hash(password, 10);
-    const generatedId = `${username}-${Date.now()}`;
-    const user = await User.create({
-      id: generatedId,
-      name,
-      username,
-      password: hash,
-      email: `${username}@systemtechnologies.local`,
-      phone: "",
-      role: "Member",
-      dept: "CRM",
-      status: "Active",
-      joined: new Date().toISOString().slice(0, 10),
-      type: "Current",
-    });
-
-    const token = jwt.sign({ uid: String(user._id), username: user.username, role: user.role }, secret, { expiresIn: "12h" });
-    return res.status(201).json({
-      token,
-      user: { id: String(user._id), username, name, email: user.email, phone: user.phone, emergencyContact: user.emergencyContact, maritalStatus: user.maritalStatus, education: user.education, role: user.role, dept: user.dept, position: user.position, joined: user.joined, state: user.state, branch: user.branch, branchCode: user.branchCode, address: user.address, imageUrl: user.imageUrl || "", imagePublicId: user.imagePublicId || "" },
-    });
-  } catch (err) {
-    console.error("Signup error:", err);
-    return res.status(500).json({ error: err.message || "Signup failed" });
-  }
+  return res.status(403).json({ error: "Accounts are created by an Admin." });
 }

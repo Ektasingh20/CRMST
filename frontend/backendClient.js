@@ -18,6 +18,21 @@ import {
   createTraining,
   updateTraining,
   deleteTraining,
+  fetchCourses,
+  fetchNotifications,
+  markNotificationRead,
+  markAllNotificationsRead,
+  createCourse as createCourseApi,
+  deleteCourse as deleteCourseApi,
+  updateCourse as updateCourseApi,
+  addCourseLesson as addCourseLessonApi,
+  deleteCourseLesson as deleteCourseLessonApi,
+  updateCourseLesson as updateCourseLessonApi,
+  gradeCourseAssignment as gradeCourseAssignmentApi,
+  fetchStudentTaskSubmissions,
+  submitCourseTask as submitCourseTaskApi,
+  saveCourseLessonProgress as saveCourseLessonProgressApi,
+  fetchCourseUploadAuth,
   fetchStipPrograms,
   createStipProgram,
   updateStipProgram,
@@ -29,6 +44,7 @@ import {
   fetchTasks,
   createTask,
   updateTask,
+  gradeTask as gradeTaskApi,
   deleteTask,
   fetchLeaves,
   createLeave,
@@ -42,8 +58,6 @@ import {
   createEmployee,
   updateEmployee,
   deleteEmployee,
-  uploadImage,
-  deleteImage,
   getSavedUser,
   saveUserSession,
   clearUserSession,
@@ -108,6 +122,38 @@ function normalizeEntity(item) {
     _id: mongoId,
     id: item.id || mongoId,
   };
+}
+
+const COURSES_CACHE_KEY = "crmst-courses-cache";
+const COURSES_CACHE_TTL_MS = 5 * 60 * 1000;
+
+function readCoursesCache() {
+  try {
+    const raw = window.localStorage.getItem(COURSES_CACHE_KEY);
+    if (!raw) return { items: [], fetchedAt: 0 };
+    const parsed = JSON.parse(raw);
+    return {
+      items: Array.isArray(parsed?.items) ? parsed.items : [],
+      fetchedAt: Number(parsed?.fetchedAt || 0),
+    };
+  } catch {
+    return { items: [], fetchedAt: 0 };
+  }
+}
+
+function writeCoursesCache(items) {
+  try {
+    window.localStorage.setItem(COURSES_CACHE_KEY, JSON.stringify({ items, fetchedAt: Date.now() }));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function invalidateCoursesCache() {
+  try {
+    window.localStorage.removeItem(COURSES_CACHE_KEY);
+  } catch {}
 }
 
 function normalizeCollection(result) {
@@ -229,7 +275,7 @@ export async function loadLeads() {
     return normalizeCollection(result);
   } catch (err) {
     console.warn("Failed loading leads", err);
-    return [];
+    return null;
   }
 }
 
@@ -269,6 +315,178 @@ export async function loadTrainings() {
     console.warn("Failed loading trainings", err);
     return [];
   }
+}
+
+export async function loadCourses(force = false) {
+  try {
+    const cached = readCoursesCache();
+    if (!force && Array.isArray(cached.items) && cached.items.length && Date.now() - cached.fetchedAt < COURSES_CACHE_TTL_MS) {
+      return normalizeCollection(cached.items);
+    }
+
+    const result = normalizeCollection(await fetchCourses());
+    writeCoursesCache(result);
+    return result;
+  } catch (err) {
+    console.warn("Failed loading courses", err);
+    return [];
+  }
+}
+
+export async function loadNotifications(studentId) {
+  return fetchNotifications(studentId);
+}
+
+export async function readNotification(studentId, notificationId) {
+  return markNotificationRead(studentId, notificationId);
+}
+
+export async function readAllNotifications(studentId) {
+  return markAllNotificationsRead(studentId);
+}
+
+export async function gradeTask(id, grade) {
+  return gradeTaskApi(id, grade);
+}
+
+const TASK_SUBMISSIONS_CACHE_KEY = "crmst-task-submissions-v1";
+const TASK_SUBMISSIONS_CACHE_TTL_MS = 5 * 60 * 1000;
+
+export async function loadTaskSubmissions(force = false) {
+  if (!force) {
+    try {
+      const cached = JSON.parse(window.localStorage.getItem(TASK_SUBMISSIONS_CACHE_KEY) || "null");
+      if (Array.isArray(cached?.items) && cached.items.length > 0 && Date.now() - Number(cached.fetchedAt || 0) < TASK_SUBMISSIONS_CACHE_TTL_MS) return cached.items;
+      if (Array.isArray(cached?.items) && cached.items.length === 0) window.localStorage.removeItem(TASK_SUBMISSIONS_CACHE_KEY);
+    } catch {}
+  }
+  const items = await fetchStudentTaskSubmissions();
+  if (Array.isArray(items) && items.length > 0) {
+    try { window.localStorage.setItem(TASK_SUBMISSIONS_CACHE_KEY, JSON.stringify({ items, fetchedAt: Date.now() })); } catch {}
+  }
+  return items;
+}
+
+export async function gradeStudentTask(courseId, lessonId, taskId, payload) {
+  const result = await gradeCourseAssignmentApi(courseId, lessonId, taskId, payload);
+  try { window.localStorage.removeItem(TASK_SUBMISSIONS_CACHE_KEY); } catch {}
+  return result;
+}
+
+export async function createCourse(course) {
+  const created = normalizeEntity(await createCourseApi(course));
+  invalidateCoursesCache();
+  return created;
+}
+
+export async function deleteCourse(id) {
+  const result = await deleteCourseApi(id);
+  invalidateCoursesCache();
+  return result;
+}
+
+export async function updateCourse(id, course) {
+  const updated = normalizeEntity(await updateCourseApi(id, course));
+  invalidateCoursesCache();
+  return updated;
+}
+
+export async function addCourseLesson(id, lesson) {
+  const updated = normalizeEntity(await addCourseLessonApi(id, lesson));
+  invalidateCoursesCache();
+  return updated;
+}
+
+export async function deleteCourseLesson(courseId, lessonId) {
+  const updated = normalizeEntity(await deleteCourseLessonApi(courseId, lessonId));
+  invalidateCoursesCache();
+  return updated;
+}
+
+export async function updateCourseLesson(courseId, lessonId, lesson) {
+  const updated = normalizeEntity(await updateCourseLessonApi(courseId, lessonId, lesson));
+  invalidateCoursesCache();
+  return updated;
+}
+
+export async function gradeCourseAssignment(courseId, lessonId, taskId, grade) {
+  return gradeCourseAssignmentApi(courseId, lessonId, taskId, grade);
+}
+
+export async function uploadStudentCourseResource(file, courseId, lessonId, taskId, kind, studentId, section) {
+  const auth = await fetchCourseUploadAuth();
+  const form = new FormData();
+  form.append("file", file);
+  form.append("fileName", file.name);
+  form.append("publicKey", auth.publicKey);
+  form.append("signature", auth.signature);
+  form.append("expire", String(auth.expire));
+  form.append("token", auth.token);
+  form.append("useUniqueFileName", "true");
+  const response = await fetch("https://upload.imagekit.io/api/v1/files/upload", { method: "POST", body: form });
+  if (!response.ok) throw new Error("Student PDF upload failed.");
+  const uploaded = await response.json();
+  await submitCourseTaskApi(courseId, lessonId, taskId, { studentId, kind, section, url: uploaded.url });
+  return uploaded.url;
+}
+
+export async function saveStudentLessonProgress(courseId, lessonId, videoCompleted, studentId, section) {
+  return saveCourseLessonProgressApi(courseId, lessonId, { studentId, videoCompleted, section });
+}
+
+export async function uploadCourseAsset(file) {
+  const auth = await fetchCourseUploadAuth();
+  const form = new FormData();
+  form.append("file", file);
+  form.append("fileName", file.name);
+  form.append("publicKey", auth.publicKey);
+  form.append("signature", auth.signature);
+  form.append("expire", String(auth.expire));
+  form.append("token", auth.token);
+  form.append("useUniqueFileName", "true");
+  const response = await fetch("https://upload.imagekit.io/api/v1/files/upload", { method: "POST", body: form });
+  if (!response.ok) throw new Error((await response.json().catch(() => null))?.message || "ImageKit upload failed");
+  return response.json();
+}
+
+export async function uploadImage(file) {
+  if (!(file instanceof File)) {
+    throw new Error("Please choose an image file");
+  }
+
+  const auth = await fetchCourseUploadAuth();
+  const form = new FormData();
+  form.append("file", file);
+  form.append("fileName", file.name);
+  form.append("publicKey", auth.publicKey);
+  form.append("signature", auth.signature);
+  form.append("expire", String(auth.expire));
+  form.append("token", auth.token);
+  form.append("useUniqueFileName", "true");
+
+  const response = await fetch("https://upload.imagekit.io/api/v1/files/upload", {
+    method: "POST",
+    body: form,
+  });
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null);
+    throw new Error(payload?.message || "Image upload failed");
+  }
+
+  const uploaded = await response.json();
+  return {
+    imageUrl: uploaded.url || uploaded.filePath || "",
+    publicId: uploaded.fileId || uploaded.publicId || uploaded.id || "",
+  };
+}
+
+export async function deleteImage(publicId) {
+  if (!publicId) {
+    return null;
+  }
+
+  return null;
 }
 
 export async function saveTrainingsToBackend(trainings) {
@@ -453,7 +671,4 @@ export {
   createEmployee,
   updateEmployee,
   deleteEmployee,
-
-  uploadImage,
-  deleteImage,
 };

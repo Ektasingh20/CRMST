@@ -1,17 +1,168 @@
-.crm-executive-add-lead {
-  display: grid;
-  gap: 14px;
-  margin: 16px 0 2px;
-  padding: 20px;
-  border: 1px solid rgba(178, 147, 118, 0.18);
-  border-radius: 18px;
-  background: #fff;
+/* Form primitives shared across CRM Executive modals (Call List, Leads, Tasks,
+   Attendance, Leave Request, Settings). Matches the Admin Dashboard .field /
+   .form-grid / .catalog-editor patterns exactly. */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
-.crm-executive-add-lead > div { display: flex; align-items: center; justify-content: space-between; }
-.crm-executive-add-lead > div button { border: 0; background: transparent; cursor: pointer; }
-.crm-executive-add-lead section { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
-.crm-executive-add-lead input, .crm-executive-add-lead select { width: 100%; padding: 11px; border: 1px solid rgba(178, 147, 118, 0.25); border-radius: 10px; background: #fff; font-size: .76rem; }
-.crm-executive-add-lead > button { justify-self: start; border: 0; border-radius: 10px; padding: 10px 14px; background: #8d5e38; color: #fff; font-weight: 800; cursor: pointer; }
-.crm-executive-form-error { margin: 0; color: #a74539; font-size: .74rem; }
-.crm-executive-form-success { margin: 12px 0 0; color: #1f6f58; font-size: .78rem; font-weight: 700; }
-@media (max-width: 760px) { .crm-executive-add-lead section { grid-template-columns: 1fr; } }
+
+.field span {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-soft);
+}
+
+.field input,
+.field select,
+.field textarea {
+  min-height: 48px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  padding: 12px 14px;
+  background: rgba(255, 255, 255, 0.88);
+  color: var(--text);
+  outline: none;
+  width: 100%;
+}
+
+.field textarea {
+  min-height: 92px;
+  resize: vertical;
+}
+
+.field input:focus,
+.field select:focus,
+.field textarea:focus {
+  border-color: rgba(207, 98, 57, 0.55);
+  box-shadow: 0 0 0 4px rgba(207, 98, 57, 0.12);
+}
+
+.field-error {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.78rem;
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.form-grid .span-full {
+  grid-column: 1 / -1;
+}
+
+.form-section-title {
+  grid-column: 1 / -1;
+  margin: 8px 0 4px;
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: var(--text-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.form-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+/* Inline "quick-add" bar used above tables (Call List / Leads / Tasks) */
+
+.quick-add-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  padding: 0 20px 16px;
+}
+
+.quick-add-bar .field {
+  flex: 1;
+  min-width: 160px;
+}
+
+/* Remark / notes inline editor cell */
+
+.remark-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 220px;
+}
+
+.remark-cell input {
+  min-height: 38px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--text);
+  outline: none;
+  width: 100%;
+  font-size: 0.86rem;
+}
+
+/* Priority / interest / status pill selects rendered inline in tables */
+
+.inline-select {
+  min-height: 36px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  padding: 4px 10px;
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--text);
+  font-size: 0.82rem;
+  font-weight: 700;
+  outline: none;
+}
+
+/* Checkbox / radio rows (settings preferences) */
+
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.check-row:last-child {
+  border-bottom: 0;
+}
+
+.check-row input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--brand);
+}
+
+.check-row-copy strong {
+  display: block;
+  font-size: 0.9rem;
+  color: var(--text);
+}
+
+.check-row-copy span {
+  font-size: 0.8rem;
+  color: var(--text-soft);
+}
+
+@media (max-width: 760px) {
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .quick-add-bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}

@@ -263,6 +263,69 @@ export async function deleteTraining(id) {
   });
 }
 
+export async function fetchCourses() {
+  return request("/courses");
+}
+
+export async function fetchNotifications(studentId) {
+  return request(`/notifications/${encodeURIComponent(studentId)}`);
+}
+
+export async function markNotificationRead(studentId, notificationId) {
+  return request(`/notifications/${encodeURIComponent(studentId)}/${encodeURIComponent(notificationId)}/read`, { method: "PATCH" });
+}
+
+export async function markAllNotificationsRead(studentId) {
+  return request(`/notifications/${encodeURIComponent(studentId)}/read-all`, { method: "PATCH" });
+}
+
+export async function createCourse(course) {
+  return request("/courses", { method: "POST", body: JSON.stringify(course) });
+}
+
+export async function deleteCourse(id) {
+  return request(`/courses/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export async function updateCourse(id, course) {
+  return request(`/courses/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(course) });
+}
+
+export async function addCourseLesson(id, lesson) {
+  return request(`/courses/${encodeURIComponent(id)}/lessons`, { method: "POST", body: JSON.stringify(lesson) });
+}
+
+export async function deleteCourseLesson(courseId, lessonId) {
+  return request(`/courses/${encodeURIComponent(courseId)}/lessons/${encodeURIComponent(lessonId)}`, { method: "DELETE" });
+}
+
+export async function updateCourseLesson(courseId, lessonId, lesson) {
+  return request(`/courses/${encodeURIComponent(courseId)}/lessons/${encodeURIComponent(lessonId)}`, { method: "PUT", body: JSON.stringify(lesson) });
+}
+
+export async function gradeCourseAssignment(courseId, lessonId, taskId, grade) {
+  return request(`/courses/${encodeURIComponent(courseId)}/lessons/${encodeURIComponent(lessonId)}/tasks/${encodeURIComponent(taskId)}/grade`, {
+    method: "POST",
+    body: JSON.stringify(grade),
+  });
+}
+
+export async function fetchStudentTaskSubmissions() {
+  return request("/courses/task-submissions");
+}
+
+export async function submitCourseTask(courseId, lessonId, taskId, submission) {
+  return request(`/courses/${encodeURIComponent(courseId)}/lessons/${encodeURIComponent(lessonId)}/tasks/${encodeURIComponent(taskId)}/submission`, { method: "POST", body: JSON.stringify(submission) });
+}
+
+export async function saveCourseLessonProgress(courseId, lessonId, progress) {
+  return request(`/courses/${encodeURIComponent(courseId)}/lessons/${encodeURIComponent(lessonId)}/progress`, { method: "POST", body: JSON.stringify(progress) });
+}
+
+export async function fetchCourseUploadAuth() {
+  return request("/courses/upload-auth");
+}
+
 export async function fetchStipPrograms() {
   return request("/stip/programs");
 }
@@ -326,6 +389,13 @@ export async function updateTask(id, task) {
   return request(`/tasks/${encodeURIComponent(id)}`, {
     method: "PUT",
     body: JSON.stringify(task),
+  });
+}
+
+export async function gradeTask(id, grade) {
+  return request(`/tasks/${encodeURIComponent(id)}/grade`, {
+    method: "POST",
+    body: JSON.stringify(grade),
   });
 }
 
@@ -407,42 +477,6 @@ export async function deleteEmployee(id) {
   });
 }
 
-export async function uploadImage(file) {
-  const formData = new FormData();
-  formData.append("image", file);
-  const response = await fetch(`${API_BASE}/upload`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${getToken()}`,
-    },
-    body: formData,
-  });
-  if (!response.ok) {
-    const body = await response.json().catch(() => null);
-    const error = body?.error || response.statusText || "Upload failed";
-    const err = new Error(error);
-    err.status = response.status;
-    throw err;
-  }
-  return response.json();
-}
-
-export async function deleteImage(publicId) {
-  const response = await fetch(`${API_BASE}/upload/${encodeURIComponent(publicId)}`, {
-    method: "DELETE",
-    headers: {
-      Authorization: `Bearer ${getToken()}`,
-    },
-  });
-  if (!response.ok) {
-    const body = await response.json().catch(() => null);
-    const error = body?.error || response.statusText || "Delete failed";
-    const err = new Error(error);
-    err.status = response.status;
-    throw err;
-  }
-  return response.json();
-}
 
 export function isAuthenticated() {
   return Boolean(getToken());

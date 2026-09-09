@@ -1,33 +1,33 @@
-import React, { useState, useMemo } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 
 /* ============================================================
    THEME TOKENS — pulled from the reference CRM screenshot
    ============================================================ */
 const C = {
-  sidebarBg: "#211c2e",
-  sidebarBg2: "#2a2438",
-  sidebarLabel: "#8b8494",
-  sidebarText: "#c9c4d1",
-  sidebarTextBright: "#f3f1f6",
+  sidebarBg: "#121214",
+  sidebarBg2: "#1c1c1f",
+  sidebarLabel: "rgba(255,255,255,0.52)",
+  sidebarText: "rgba(255,255,255,0.88)",
+  sidebarTextBright: "#ffffff",
   sidebarHover: "rgba(255,255,255,0.06)",
   sidebarActive: "rgba(255,255,255,0.09)",
   sidebarBorder: "rgba(255,255,255,0.08)",
 
-  bg: "#f5f1e9",
+  bg: "#ebe7e2",
   card: "#ffffff",
   border: "#eee8dc",
-  text: "#211c2e",
-  textSecondary: "#736b62",
-  textMuted: "#a49b8f",
+  text: "#1f1a17",
+  textSecondary: "#675d55",
+  textMuted: "#9c8f86",
 
   badgeBg: "#f3ddba",
   badgeIcon: "#7a4a1e",
 
-  accent: "#5c3a2e",
-  accentDark: "#472c22",
+  accent: "#8d5e38",
+  accentDark: "#643e23",
 
-  pillBg: "#faf7f0",
-  pillBorder: "#ece4d3",
+  pillBg: "#f5efe8",
+  pillBorder: "rgba(178,147,118,0.18)",
 
   deleteBg: "#fbeae8",
   deleteText: "#c0392b",
@@ -98,6 +98,11 @@ const Icon = {
   ),
   chevronDown: (p) => (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" {...p}><path d="M6 9l6 6 6-6" /></svg>
+  ),
+  pointer: (p) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" {...p}>
+      <path d="M5 3l5.5 17 3-6 6 3L5 3z" /><path d="M13.5 14l3.5 5" />
+    </svg>
   ),
   search: (p) => (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" {...p}>
@@ -253,12 +258,12 @@ function CourseCard({ course, onOpen }) {
       </div>
 
       <h4 style={{ margin: "0 0 6px", fontSize: 15.5, fontWeight: 700 }}>{course.title}</h4>
-      <p style={{ margin: "0 0 14px", fontSize: 12.5, color: C.textSecondary, minHeight: 34 }}>{course.desc}</p>
+      <p style={{ margin: "0 0 16px", fontSize: 12.5, color: C.textSecondary, minHeight: 34 }}>{course.desc}</p>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 16 }}>
         <Stat label="Duration" value={course.duration} />
         <Stat label="Lessons" value={course.lessons} />
-        <Stat label="Status" value={course.enrolled ? "Active" : "Locked"} />
+        <Stat label="Status" value={course.enrolled ? "Active" : "Available"} />
       </div>
 
       <div style={{ display: "flex", gap: 8, marginTop: "auto" }}>
@@ -294,8 +299,52 @@ function Panel({ title, children, right }) {
 /* ============================================================
    MODAL — course detail
    ============================================================ */
-function CourseModal({ course, onClose, onToast }) {
+function getLessonCompletion(courseId, lesson, lessonProgress) {
+  const key = getLessonProgressKey(courseId, lesson);
+  const progress = lessonProgress[key] || {};
+  return {
+    completed: Boolean(progress.videoCompleted && progress.taskCompleted),
+    videoCompleted: Boolean(progress.videoCompleted),
+    taskCompleted: Boolean(progress.taskCompleted),
+  };
+}
+
+function getLessonProgressKey(courseId, lesson = {}) {
+  const section = String(lesson.section || "General").trim().toLowerCase() || "general";
+  return `${courseId}:${section}:${lesson.id || lesson.lessonId || ""}`;
+}
+
+function getNotificationEvaluation(notifications, courseId, lesson, task) {
+  const taskName = String(task?.title || lesson?.title || "").trim().toLowerCase();
+  const notification = (notifications || []).find((item) => item.type === "assignment_evaluated"
+    && String(item.courseId || "") === String(courseId)
+    && (!taskName || String(item.message || "").toLowerCase().includes(`"${taskName}"`)));
+  if (!notification) return null;
+  const match = String(notification.message || "").match(/Grade:\s*([^/.]+)\/100(?:\.\s*Feedback:\s*(.*))?$/i);
+  return { grade: match?.[1]?.trim() || null, feedback: match?.[2]?.trim() || "" };
+}
+
+function getCourseSectionGroups(course = {}, lessonProgress = {}) {
+  const lessons = Array.isArray(course.lessonsData) ? course.lessonsData : Array.isArray(course.lessons) ? course.lessons : [];
+  const groups = new Map();
+
+  lessons.forEach((lesson) => {
+    const sectionName = String(lesson.section || "General").trim() || "General";
+    if (!groups.has(sectionName)) groups.set(sectionName, []);
+    const state = getLessonCompletion(course.id || course._id, lesson, lessonProgress);
+    groups.get(sectionName).push({ ...lesson, ...state });
+  });
+
+  return [...groups.entries()].map(([name, list]) => ({
+    name,
+    lessons: list.sort((a, b) => Number(a.order || 0) - Number(b.order || 0)),
+  }));
+}
+
+function CourseModal({ course, onClose, onToast, onContinue, lessonProgress, onSelectSection }) {
   if (!course) return null;
+  const groups = getCourseSectionGroups(course, lessonProgress);
+
   return (
     <div
       onClick={onClose}
@@ -305,7 +354,7 @@ function CourseModal({ course, onClose, onToast }) {
       }}
     >
       <div onClick={(e) => e.stopPropagation()} style={{
-        background: C.card, borderRadius: 20, maxWidth: 480, width: "100%",
+        background: C.card, borderRadius: 20, maxWidth: 760, width: "100%",
         padding: 26, boxShadow: "0 20px 60px rgba(0,0,0,0.25)",
       }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 }}>
@@ -320,7 +369,10 @@ function CourseModal({ course, onClose, onToast }) {
           </button>
         </div>
 
-        <h3 style={{ margin: "0 0 6px", fontSize: 18, fontWeight: 700 }}>{course.title}</h3>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 8 }}>
+          <h3 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>{course.title}</h3>
+          {course.enrolled ? <Badge tone="green">✓ Enrolled</Badge> : <Badge>Not Enrolled</Badge>}
+        </div>
         <p style={{ margin: "0 0 16px", fontSize: 13, color: C.textSecondary }}>{course.desc}</p>
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12, marginBottom: 18, padding: 14, background: C.pillBg, borderRadius: 12 }}>
@@ -331,27 +383,92 @@ function CourseModal({ course, onClose, onToast }) {
 
         {course.enrolled ? (
           <>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
               <div style={{ flex: 1, height: 7, background: "#f0ece2", borderRadius: 20, overflow: "hidden" }}>
                 <div style={{ width: `${course.progress}%`, height: "100%", background: C.accent, borderRadius: 20 }} />
               </div>
               <div style={{ fontSize: 12, fontWeight: 700, color: C.accent }}>{course.progress}%</div>
             </div>
-            <p style={{ fontSize: 12, color: C.textMuted, margin: "0 0 18px" }}>Current lesson: {course.currentLesson}</p>
-            <Btn variant="primary" style={{ width: "100%" }} onClick={() => { onToast("Resuming \u201c" + course.currentLesson + "\u201d\u2026"); onClose(); }}>
-              Continue Learning
-            </Btn>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <div style={{ fontSize: 12.5, color: C.textSecondary, marginBottom: 2 }}>Choose a section to begin.</div>
+                {groups.length ? groups.map((section) => (
+                  <button
+                    key={section.name}
+                    type="button"
+                    onClick={() => onSelectSection?.(course, section.name)}
+                    style={{
+                      width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
+                      background: C.pillBg, border: `1px solid ${C.pillBorder}`, borderRadius: 12,
+                      padding: "15px 16px", cursor: "pointer", textAlign: "left", color: C.text,
+                    }}
+                  >
+                    <span style={{ display: "flex", alignItems: "center", gap: 11, fontSize: 15, fontWeight: 700 }}>
+                      <Icon.pointer style={{ width: 19, height: 19, color: C.accent }} />
+                      {section.name}
+                    </span>
+                    <span style={{ display: "flex", alignItems: "center", gap: 8, color: C.textMuted, fontSize: 11.5 }}>
+                      {section.lessons.length} lesson{section.lessons.length === 1 ? "" : "s"}
+                      <Icon.chevronRight style={{ width: 15, height: 15 }} />
+                    </span>
+                  </button>
+                )) : (
+                  <div style={{ fontSize: 12.5, color: C.textSecondary }}>No sections are available for this course yet.</div>
+                )}
+            </div>
           </>
         ) : (
           <>
             <p style={{ fontSize: 12.5, color: C.textSecondary, marginBottom: 18 }}>
               Enroll in this course to unlock its videos, notes and assignments.
             </p>
-            <Btn variant="primary" style={{ width: "100%" }} onClick={() => { onToast("Enrollment request sent for \u201c" + course.title + "\u201d."); onClose(); }}>
+            <Btn variant="primary" style={{ width: "100%" }} onClick={() => { onToast(`Enrollment request sent for “${course.title}”.`); onClose(); }}>
               Request Enrollment
             </Btn>
           </>
         )}
+      </div>
+    </div>
+  );
+}
+
+function VideoModal({ video, onClose }) {
+  if (!video) return null;
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(33,28,46,0.62)", zIndex: 220, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div onClick={(event) => event.stopPropagation()} style={{ background: C.card, borderRadius: 20, maxWidth: 860, width: "100%", padding: 20, boxShadow: "0 20px 60px rgba(0,0,0,0.28)" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 14 }}>
+          <div><h3 style={{ margin: 0, fontSize: 17 }}>{video.title}</h3><p style={{ margin: "4px 0 0", color: C.textSecondary, fontSize: 12 }}>{video.courseTitle}</p></div>
+          <button onClick={onClose} aria-label="Close video" style={{ background: C.pillBg, border: `1px solid ${C.pillBorder}`, borderRadius: 9, width: 32, height: 32, cursor: "pointer" }}><Icon.x style={{ width: 15, height: 15, color: C.textSecondary }} /></button>
+        </div>
+        <video src={video.videoUrl} controls autoPlay onEnded={video.onEnded} style={{ display: "block", width: "100%", maxHeight: "70vh", borderRadius: 12, background: "#111" }} />
+      </div>
+    </div>
+  );
+}
+
+function ResourceModal({ resource, onClose, onUpload }) {
+  const [file, setFile] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  if (!resource) return null;
+  const chooseFile = (event) => setFile(event.target.files?.[0] || null);
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(33,28,46,0.62)", zIndex: 220, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div onClick={(event) => event.stopPropagation()} style={{ background: C.card, borderRadius: 20, maxWidth: 480, width: "100%", padding: 24, boxShadow: "0 20px 60px rgba(0,0,0,0.28)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 18 }}>
+          <div><h3 style={{ margin: 0, fontSize: 17 }}>{resource.title}</h3><p style={{ margin: "4px 0 0", color: C.textSecondary, fontSize: 12 }}>{resource.courseTitle}</p></div>
+          <button onClick={onClose} aria-label="Close" style={{ background: C.pillBg, border: `1px solid ${C.pillBorder}`, borderRadius: 9, width: 32, height: 32, cursor: "pointer" }}><Icon.x style={{ width: 15, height: 15 }} /></button>
+        </div>
+        {resource.adminUrl ? <Btn variant="outline" style={{ width: "100%", marginBottom: 12 }} onClick={() => window.open(resource.adminUrl, "_blank", "noopener,noreferrer")}>View PDF</Btn> : <p style={{ fontSize: 12, color: C.textMuted }}>Admin PDF is not available yet.</p>}
+        {resource.kind === "assignment" ? (
+          <>
+            <label style={{ display: "block", padding: 14, border: `1px dashed ${C.pillBorder}`, borderRadius: 12, fontSize: 12, color: C.textSecondary, cursor: "pointer" }}>
+              Upload your PDF
+              <input type="file" accept="application/pdf" onChange={chooseFile} style={{ display: "block", marginTop: 8, width: "100%" }} />
+            </label>
+            <Btn variant="primary" disabled={!file || uploading} style={{ width: "100%", marginTop: 14 }} onClick={async () => { setUploading(true); try { await onUpload(file, resource.kind); onClose(); } finally { setUploading(false); } }}>{uploading ? "Uploading..." : "Submit PDF"}</Btn>
+          </>
+        ) : null}
       </div>
     </div>
   );
@@ -372,12 +489,12 @@ function WelcomeBanner({ name }) {
   );
 }
 
-function SummaryCards() {
+function SummaryCards({ courses, assignments }) {
   const items = [
-    { label: "Total Courses", value: COURSES.length, icon: Icon.courses },
-    { label: "Enrolled Courses", value: COURSES.filter(c => c.enrolled).length, icon: Icon.myCourses },
-    { label: "Completed Courses", value: 1, icon: Icon.check },
-    { label: "Pending Assignments", value: ASSIGNMENTS.filter(a => a.status === "Pending").length, icon: Icon.assignments },
+    { label: "Total Courses", value: courses.length, icon: Icon.courses },
+    { label: "Enrolled Courses", value: courses.filter(c => c.enrolled).length, icon: Icon.myCourses },
+    { label: "Completed Courses", value: courses.filter((course) => course.progress >= 100).length, icon: Icon.check },
+    { label: "Pending Assignments", value: assignments.length, icon: Icon.assignments },
   ];
   return (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 20 }} className="summary-grid">
@@ -400,8 +517,8 @@ function SummaryCards() {
   );
 }
 
-function ContinueLearning({ onOpen }) {
-  const course = COURSES.find(c => c.id === "mern");
+function ContinueLearning({ course, onOpen }) {
+  if (!course) return null;
   return (
     <div style={{ marginBottom: 24 }}>
       <SectionHead title="Continue Learning" />
@@ -446,8 +563,8 @@ function SectionHead({ title, right }) {
   );
 }
 
-function AssignmentsTable({ rows }) {
-  const badgeTone = { Pending: "amber", Submitted: "neutral", Evaluated: "green" };
+function AssignmentsTable({ rows, onOpen }) {
+  const badgeTone = { Pending: "amber", Locked: "neutral", Open: "amber", "Open after video": "neutral", Ready: "green", Completed: "green", Submitted: "neutral", Evaluated: "green" };
   return (
     <table style={{ width: "100%", borderCollapse: "collapse" }}>
       <thead>
@@ -459,7 +576,7 @@ function AssignmentsTable({ rows }) {
       </thead>
       <tbody>
         {rows.map((a, i) => (
-          <tr key={a.id}>
+          <tr key={`${a.courseId || "course"}:${String(a.section || "General").trim().toLowerCase()}:${a.lessonId || "lesson"}:${a.id || i}`}>
             <td style={cellStyle(i, rows.length)}>
               <div style={{ fontWeight: 700 }}>{a.name}</div>
             </td>
@@ -467,8 +584,8 @@ function AssignmentsTable({ rows }) {
             <td style={cellStyle(i, rows.length)}>{a.due}</td>
             <td style={cellStyle(i, rows.length)}><Badge tone={badgeTone[a.status]}>{a.status}</Badge></td>
             <td style={cellStyle(i, rows.length)}>
-              <a href="#" onClick={(e) => e.preventDefault()} style={{ fontSize: 12, fontWeight: 700, color: C.accent }}>
-                {a.status === "Pending" ? "Start" : "View"}
+              <a href={onOpen ? "#" : a.pdfUrl || "#"} target={!onOpen && a.pdfUrl ? "_blank" : undefined} rel={!onOpen && a.pdfUrl ? "noreferrer" : undefined} onClick={(e) => { e.preventDefault(); if (onOpen) onOpen(a); }} style={{ fontSize: 12, fontWeight: 700, color: C.accent }}>
+                {a.status === "Pending" ? "Open" : "View"}
               </a>
             </td>
           </tr>
@@ -512,18 +629,46 @@ function initials(name) {
 /* ============================================================
    MAIN APP
    ============================================================ */
-export default function StudentDashboard({ user, onLogout }) {
+export default function StudentDashboard({ user, onLogout, courses = [], notifications = [], onRefreshNotifications, onReadNotification, onReadAllNotifications, uploadStudentResource, saveLessonProgress }) {
   const [activeNav, setActiveNav] = useState("dashboard");
   const [mobileOpen, setMobileOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const [sidebarQuery, setSidebarQuery] = useState("");
   const [openCourse, setOpenCourse] = useState(null);
+  const [selectedLearningSection, setSelectedLearningSection] = useState(null);
+  const [openVideo, setOpenVideo] = useState(null);
+  const [openResource, setOpenResource] = useState(null);
   const [notifOpen, setNotifOpen] = useState(false);
-  const [notifs, setNotifs] = useState(NOTIFICATIONS);
+  const notifs = notifications;
   const [toast, setToast] = useState(null);
+  const [lessonProgress, setLessonProgress] = useState(() => {
+    try { return JSON.parse(window.localStorage.getItem(`crmst-progress-${user?.id || user?._id}`) || "{}"); } catch { return {}; }
+  });
+  const [uploadedResources, setUploadedResources] = useState({});
 
   const studentName = user?.name || "Student";
   const studentInitials = initials(studentName);
   const studentEmail = user?.email || "";
+  const studentId = String(user?.id || user?._id || "");
+
+  const catalogCourses = useMemo(() => courses.map((course) => {
+    const studentIds = Array.isArray(course.studentIds) ? course.studentIds.map(String) : [];
+    const lessons = Array.isArray(course.lessons) ? course.lessons : [];
+    return {
+      ...course,
+      id: course.id || course._id,
+      title: course.title || "Untitled course",
+      desc: course.syllabus || `${course.mode || "Online"} course covering ${course.tools || "practical skills"}.`,
+      duration: course.duration || "-",
+      lessons: course.totalLessons || lessons.length,
+      lessonsData: lessons,
+      enrolled: Boolean(studentId && studentIds.includes(studentId)),
+      progress: lessons.length ? Math.round((lessons.reduce((total, lesson) => {
+        const progress = { ...(lesson.studentProgress || {}), ...(lessonProgress[getLessonProgressKey(course.id, lesson)] || {}) };
+        return total + [progress.videoCompleted, progress.taskCompleted].filter(Boolean).length;
+      }, 0) / (lessons.length * 3)) * 100) : 0,
+    };
+  }), [courses, studentId, lessonProgress]);
 
   const showToast = (msg) => {
     setToast(msg);
@@ -533,14 +678,95 @@ export default function StudentDashboard({ user, onLogout }) {
 
   const filteredCourses = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return COURSES;
-    return COURSES.filter(c => c.title.toLowerCase().includes(q) || c.desc.toLowerCase().includes(q));
-  }, [query]);
+    if (!q) return catalogCourses;
+    return catalogCourses.filter(c => c.title.toLowerCase().includes(q) || c.desc.toLowerCase().includes(q));
+  }, [catalogCourses, query]);
 
-  const enrolledCourses = COURSES.filter(c => c.enrolled);
-  const unreadCount = notifs.filter(n => n.unread).length;
+  const enrolledCourses = catalogCourses.filter(c => c.enrolled);
+  const enrolledLessons = enrolledCourses.flatMap((course) => course.lessonsData.map((lesson) => {
+    const progress = { ...(lesson.studentProgress || {}), ...(lessonProgress[getLessonProgressKey(course.id, lesson)] || {}) };
+    const videoCompleted = Boolean(progress.videoCompleted);
+    const assignmentCompleted = Boolean(progress.taskCompleted);
+    const completed = Boolean(videoCompleted && assignmentCompleted);
+    return { ...lesson, courseTitle: course.title, courseId: course.id, completed, locked: false, videoCompleted, assignmentCompleted, studentProgress: progress };
+  }));
+  const visibleLessons = selectedLearningSection
+    ? enrolledLessons.filter((lesson) => String(lesson.section || "General").trim() === selectedLearningSection)
+    : [];
+  const allAssignments = enrolledLessons.flatMap((lesson) => (lesson.tasks || []).map((task) => ({
+    ...task,
+    lessonTitle: lesson.title,
+    courseTitle: lesson.courseTitle,
+    courseId: lesson.courseId,
+    lessonId: lesson.id,
+    section: lesson.section,
+    videoCompleted: lesson.videoCompleted,
+    taskCompleted: lesson.assignmentCompleted,
+    completed: lesson.completed,
+  })));
+  const assignments = selectedLearningSection
+    ? allAssignments.filter((task) => String(task.section || "General").trim() === selectedLearningSection)
+    : allAssignments;
+  const visibleAssignments = selectedLearningSection ? assignments : [];
+  const markLessonComplete = (video) => {
+    const key = getLessonProgressKey(video.courseId, video);
+    Promise.resolve(saveLessonProgress?.(video.courseId, video.id, true, studentId, video.section))
+      .then((savedProgress) => {
+        if (!savedProgress) return;
+        setLessonProgress((current) => ({
+          ...current,
+          [key]: { ...(current[key] || {}), ...savedProgress, videoCompleted: true },
+        }));
+      })
+      .catch(() => {});
+    setLessonProgress((current) => {
+      const next = {
+        ...current,
+        [key]: { ...(current[key] || {}), videoCompleted: true },
+      };
+      window.localStorage.setItem(`crmst-progress-${studentId}`, JSON.stringify(next));
+      return next;
+    });
+    showToast("Video completed. Notes and assignment unlocked.");
+  };
+  const continueCourse = (course) => {
+    setOpenCourse(course);
+  };
 
-  const markAllRead = () => setNotifs(notifs.map(n => ({ ...n, unread: false })));
+  const openLessonInModal = (course, lesson) => {
+    if (!lesson) return;
+    setOpenCourse(null);
+    if (lesson.videoUrl) {
+      setOpenVideo({ ...lesson, courseTitle: course.title, courseId: course.id, onEnded: () => { markLessonComplete({ ...lesson, courseId: course.id }); setOpenVideo(null); } });
+      return;
+    }
+    if (lesson.notesUrl) {
+      setOpenResource({ title: `${lesson.title} — Notes`, courseTitle: course.title, adminUrl: lesson.notesUrl, kind: "notes", courseId: course.id, lessonId: lesson.id });
+      return;
+    }
+    if (Array.isArray(lesson.tasks) && lesson.tasks.length) {
+      const task = lesson.tasks[0];
+      setOpenResource({ title: task.title || lesson.title, courseTitle: course.title, adminUrl: task.pdfUrl, kind: "assignment", progressKey: getLessonProgressKey(course.id, lesson), courseId: course.id, lessonId: lesson.id, taskId: task.id, section: lesson.section });
+      return;
+    }
+    showToast("This lesson has no video, notes, or assignment yet.");
+  };
+  const goToNextLearningSection = (course) => {
+    setOpenCourse(course);
+  };
+  const selectCourseSection = (course, sectionName) => {
+    setSelectedLearningSection(sectionName);
+    setOpenCourse(null);
+    handleNav("videos");
+  };
+  const unreadCount = notifs.filter(n => !n.read).length;
+  useEffect(() => {
+    if (!onRefreshNotifications) return undefined;
+    const interval = window.setInterval(onRefreshNotifications, 15000);
+    return () => window.clearInterval(interval);
+  }, [onRefreshNotifications]);
+
+  const markAllRead = () => onReadAllNotifications?.();
 
   const meta = PAGE_META[activeNav] || PAGE_META.dashboard;
 
@@ -554,7 +780,7 @@ export default function StudentDashboard({ user, onLogout }) {
   };
 
   return (
-    <div style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif", background: C.bg, color: C.text, minHeight: "100vh", fontSize: 13.5, position: "relative" }}>
+    <div style={{ fontFamily: "Manrope, sans-serif", background: C.bg, color: C.text, minHeight: "100vh", fontSize: 13.5, position: "relative" }}>
       <style>{`
         * { box-sizing: border-box; }
         @media (max-width: 1180px) {
@@ -563,8 +789,9 @@ export default function StudentDashboard({ user, onLogout }) {
           .two-col { grid-template-columns: 1fr !important; }
         }
         @media (max-width: 860px) {
-          .sd-sidebar { transform: translateX(-100%); }
+          .sd-sidebar { position: fixed !important; top: 12px !important; bottom: 12px !important; left: 12px !important; width: min(320px, calc(100vw - 24px)) !important; min-height: 0 !important; transform: translateX(-110%); }
           .sd-sidebar.open { transform: translateX(0); }
+          .sd-shell { grid-template-columns: 1fr !important; padding: 12px !important; }
           .sd-main { margin-left: 0 !important; }
           .sd-menu-toggle { display: flex !important; }
           .sd-overlay.show { display: block !important; }
@@ -573,45 +800,121 @@ export default function StudentDashboard({ user, onLogout }) {
           .summary-grid { grid-template-columns: 1fr 1fr !important; }
           .courses-grid { grid-template-columns: 1fr !important; }
         }
+        .sd-shell {
+          min-height: 100vh;
+          display: grid !important;
+          grid-template-columns: 302px 1fr;
+          padding: 16px;
+          gap: 16px;
+        }
+        .sd-sidebar {
+          position: static !important;
+          width: auto !important;
+          min-height: calc(100vh - 32px);
+          border-radius: 30px !important;
+          padding: 18px 14px 14px !important;
+          box-shadow: 0 24px 50px rgba(8, 9, 10, 0.22) !important;
+        }
+        .sd-main {
+          margin-left: 0 !important;
+          min-width: 0;
+          background: rgba(255, 255, 255, 0.58);
+          border: 1px solid rgba(255, 255, 255, 0.72);
+          border-radius: 32px;
+          overflow: hidden;
+          display: flex;
+          flex-direction: column;
+        }
+        .sd-topbar {
+          padding: 24px 26px !important;
+          min-height: 88px;
+          border-bottom: 1px solid rgba(178, 147, 118, 0.14) !important;
+          background: rgba(255, 255, 255, 0.94) !important;
+        }
+        .sd-content {
+          padding: 24px !important;
+          overflow: auto;
+        }
+        .sd-logo-badge {
+          width: 42px;
+          height: 42px;
+          border-radius: 14px;
+          background: #050607;
+          color: #fff;
+          display: grid;
+          place-items: center;
+          position: relative;
+          flex-shrink: 0;
+          overflow: hidden;
+          box-shadow: 0 12px 24px rgba(0,0,0,0.22);
+        }
+        .sd-logo-badge span {
+          position: absolute;
+          font-weight: 800;
+          font-size: 1.25rem;
+          line-height: 1;
+        }
+        .sd-logo-badge span:first-child { left: 6px; top: 6px; }
+        .sd-logo-badge span:last-child { right: 7px; bottom: 5px; }
+        .sd-logo-badge i {
+          position: absolute;
+          width: 7px;
+          height: 120%;
+          background: #fff;
+          transform: rotate(24deg);
+          border-radius: 999px;
+        }
       `}</style>
 
       {mobileOpen && (
         <div className="sd-overlay show" onClick={() => setMobileOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(20,17,28,0.5)", zIndex: 90 }} />
       )}
 
-      <div style={{ display: "flex" }}>
+      <div className="sd-shell" style={{ display: "flex", padding: 16, gap: 16 }}>
         {/* SIDEBAR */}
         <aside className={`sd-sidebar${mobileOpen ? " open" : ""}`} style={{
-          width: 254, background: C.sidebarBg, position: "fixed", top: 0, left: 0, bottom: 0,
+          width: 302, background: `linear-gradient(180deg, ${C.sidebarBg}, #0c0c0e)`, border: "1px solid rgba(208,72,50,0.42)", borderRadius: 30, position: "fixed", top: 16, left: 16, bottom: 16,
           display: "flex", flexDirection: "column", zIndex: 100, transition: "transform .2s ease",
+          boxShadow: "0 24px 50px rgba(8,9,10,0.22)",
         }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "20px 20px 18px" }}>
-            <div style={{ width: 30, height: 30, borderRadius: 8, background: C.accent, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, color: "#fff", fontSize: 13 }}>ED</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "4px 8px 16px", margin: "18px 14px 0", borderBottom: "1px solid rgba(178,147,118,0.12)" }}>
+            <div className="sd-logo-badge"><span>S</span><i /><span>T</span></div>
             <div>
-              <div style={{ fontWeight: 700, fontSize: 14.5, color: C.sidebarTextBright }}>EduCRM</div>
-              <div style={{ fontSize: 10.5, color: "#6c637a", marginTop: 1 }}>Learning Portal</div>
+              <div style={{ fontWeight: 700, fontSize: 14.5, color: C.sidebarTextBright }}>SYSTEM TECHNOLOGIES</div>
+              <div style={{ fontSize: 10.5, color: "rgba(255,255,255,0.66)", marginTop: 1 }}>Ajmer Student Portal</div>
             </div>
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: "16px 8px 8px" }}>
+            <div style={{ width: 56, height: 56, borderRadius: 16, background: "linear-gradient(135deg, #f5e5d3, #e8cda9)", color: C.accentDark, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 16 }}>{studentInitials}</div>
+            <strong style={{ fontSize: 14, color: C.sidebarTextBright, textAlign: "center" }}>{studentName}</strong>
+          </div>
+
+          <div style={{ margin: "14px 20px 8px", height: 42, borderRadius: 14, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(225,86,54,0.4)", display: "flex", alignItems: "center", gap: 10, padding: "0 14px", color: "rgba(255,255,255,0.62)" }}>
+            <Icon.search style={{ width: 16, height: 16, flexShrink: 0 }} />
+            <input value={sidebarQuery} onChange={(event) => setSidebarQuery(event.target.value)} placeholder="Search modules..." style={{ width: "100%", background: "transparent", border: 0, color: "#fff", outline: "none", fontSize: 13 }} />
           </div>
 
           <nav style={{ flex: 1, overflowY: "auto", padding: "4px 12px 10px" }}>
             {NAV_SECTIONS.map(section => (
               <div key={section.label}>
-                <div style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.09em", color: C.sidebarLabel, fontWeight: 700, padding: "16px 10px 8px" }}>{section.label}</div>
-                {section.items.map(item => {
+                <div style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.16em", color: C.sidebarLabel, fontWeight: 800, padding: "16px 10px 8px" }}>{section.label}</div>
+                {section.items.filter((item) => item.label.toLowerCase().includes(sidebarQuery.trim().toLowerCase())).map(item => {
                   const active = activeNav === item.id;
                   return (
                     <div
                       key={item.id}
                       onClick={() => handleNav(item.id)}
                       style={{
-                        display: "flex", alignItems: "center", gap: 11, padding: "9px 10px", borderRadius: 8,
-                        color: active ? "#fff" : C.sidebarText, background: active ? C.sidebarActive : "transparent",
-                        fontSize: 13, fontWeight: 500, marginBottom: 1, cursor: "pointer", position: "relative",
+                        display: "flex", alignItems: "center", gap: 11, padding: "11px 12px", borderRadius: 14,
+                        color: active ? "#fff" : C.sidebarText, background: active ? "linear-gradient(135deg, rgba(41,41,44,0.92), rgba(28,28,31,0.95))" : "transparent",
+                        border: active ? "1px solid rgba(215,86,56,0.48)" : "1px solid transparent", fontSize: 13, fontWeight: 700, marginBottom: 1, cursor: "pointer", position: "relative",
+                        boxShadow: active ? "inset 3px 0 0 #d55c41" : "none",
                       }}
                       onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = C.sidebarHover; }}
                       onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = "transparent"; }}
                     >
-                      {active && <span style={{ position: "absolute", left: -12, top: "50%", transform: "translateY(-50%)", width: 3, height: 18, background: "#e2b97e", borderRadius: "0 3px 3px 0" }} />}
+                      {active && <span style={{ position: "absolute", left: 0, top: 8, width: 3, height: 18, background: "#d55c41", borderRadius: "0 3px 3px 0" }} />}
                       <item.icon style={{ width: 16, height: 16, opacity: 0.9, flexShrink: 0 }} />
                       <span>{item.label}</span>
                       {item.id === "notifications" && unreadCount > 0 && (
@@ -627,20 +930,20 @@ export default function StudentDashboard({ user, onLogout }) {
             ))}
           </nav>
 
-          <div style={{ borderTop: `1px solid ${C.sidebarBorder}`, padding: "14px 16px 16px", display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }} onClick={() => handleNav("profile")}>
-            <div style={{ width: 34, height: 34, borderRadius: "50%", background: C.accent, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 12.5, flexShrink: 0 }}>{studentInitials}</div>
+          <div style={{ borderTop: "1px solid rgba(216,82,53,0.28)", padding: "14px 16px 16px", display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }} onClick={() => handleNav("profile")}>
+            <div style={{ width: 38, height: 38, borderRadius: 14, background: "linear-gradient(135deg, #e0694d, #b73e28)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 12.5, flexShrink: 0 }}>{studentInitials}</div>
             <div style={{ minWidth: 0 }}>
               <div style={{ fontSize: 12.8, fontWeight: 700, color: C.sidebarTextBright, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{studentName}</div>
-              <div style={{ fontSize: 11, color: "#6c637a" }}>Student</div>
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.66)" }}>Student</div>
             </div>
-            <Icon.chevronDown style={{ width: 14, height: 14, color: "#6c637a", marginLeft: "auto", flexShrink: 0 }} />
+            <Icon.chevronDown style={{ width: 14, height: 14, color: "rgba(255,255,255,0.52)", marginLeft: "auto", flexShrink: 0 }} />
           </div>
         </aside>
 
         {/* MAIN */}
-        <div className="sd-main" style={{ marginLeft: 254, flex: 1, minWidth: 0 }}>
+        <div className="sd-main" style={{ marginLeft: 318, flex: 1, minWidth: 0 }}>
           {/* TOPBAR */}
-          <header style={{ background: C.card, borderBottom: `1px solid ${C.border}`, padding: "14px 28px", display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, zIndex: 50 }}>
+          <header className="sd-topbar" style={{ background: C.card, borderBottom: `1px solid ${C.border}`, padding: "14px 28px", display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, zIndex: 50 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
               <button className="sd-menu-toggle" onClick={() => setMobileOpen(true)} style={{ display: "none", background: "none", border: `1px solid ${C.border}`, borderRadius: 8, width: 34, height: 34, alignItems: "center", justifyContent: "center", color: C.textSecondary, cursor: "pointer" }}>
                 <Icon.menu style={{ width: 16, height: 16 }} />
@@ -668,11 +971,11 @@ export default function StudentDashboard({ user, onLogout }) {
                   </div>
                   <div style={{ maxHeight: 260, overflowY: "auto" }}>
                     {notifs.map(n => (
-                      <div key={n.id} style={{ padding: "11px 16px", borderBottom: `1px solid ${C.border}`, display: "flex", gap: 8 }}>
-                        {n.unread && <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#e2734a", marginTop: 5, flexShrink: 0 }} />}
+                       <div key={n.id} onClick={() => onReadNotification?.(n.id)} style={{ padding: "11px 16px", borderBottom: `1px solid ${C.border}`, display: "flex", gap: 8, cursor: "pointer" }}>
+                        {!n.read && <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#e2734a", marginTop: 5, flexShrink: 0 }} />}
                         <div>
-                          <div style={{ fontSize: 12, color: C.text, lineHeight: 1.4 }}>{n.text}</div>
-                          <div style={{ fontSize: 10.5, color: C.textMuted, marginTop: 2 }}>{n.time}</div>
+                          <div style={{ fontSize: 12, color: C.text, lineHeight: 1.4 }}>{n.message}</div>
+                          <div style={{ fontSize: 10.5, color: C.textMuted, marginTop: 2 }}>{formatNotificationTime(n.createdAt)}</div>
                         </div>
                       </div>
                     ))}
@@ -692,22 +995,22 @@ export default function StudentDashboard({ user, onLogout }) {
           </header>
 
           {/* CONTENT */}
-          <div style={{ padding: "22px 28px 46px" }} onClick={() => notifOpen && setNotifOpen(false)}>
+          <div className="sd-content" style={{ padding: "22px 28px 46px" }} onClick={() => notifOpen && setNotifOpen(false)}>
 
             {activeNav === "dashboard" && (
               <>
                 <WelcomeBanner name={studentName} />
-                <SummaryCards />
-                <ContinueLearning onOpen={setOpenCourse} />
+                <SummaryCards courses={catalogCourses} assignments={assignments} />
+                <ContinueLearning course={enrolledCourses[0]} onOpen={continueCourse} />
 
                 <SectionHead title="All Courses" right={<a href="#" onClick={(e) => { e.preventDefault(); handleNav("all-courses"); }} style={{ fontSize: 12, color: C.accent, fontWeight: 700 }}>View all</a>} />
                 <div className="courses-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16, marginBottom: 26 }}>
-                  {COURSES.map(c => <CourseCard key={c.id} course={c} onOpen={setOpenCourse} />)}
+                  {catalogCourses.map(c => <CourseCard key={c.id} course={c} onOpen={setOpenCourse} />)}
                 </div>
 
                 <SectionHead title="Recent Assignments & Activity" />
                 <div className="two-col" style={{ display: "grid", gridTemplateColumns: "1.6fr 1fr", gap: 16 }}>
-                  <Panel title="Recent Assignments"><AssignmentsTable rows={ASSIGNMENTS} /></Panel>
+                  <Panel title="Recent Assignments"><AssignmentsTable rows={assignments.slice(0, 5).map((task) => ({ ...task, name: task.title, course: task.courseTitle, due: "-", status: "Pending" }))} /></Panel>
                   <Panel title="Recent Learning Activity"><ActivityList items={ACTIVITY} /></Panel>
                 </div>
               </>
@@ -742,65 +1045,103 @@ export default function StudentDashboard({ user, onLogout }) {
             )}
 
             {activeNav === "videos" && (
-              <Panel title="Course Videos">
+              <Panel title={selectedLearningSection ? `${selectedLearningSection} Videos` : "Course Videos"}>
                 <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
-                  {COURSES.map((c, i) => (
-                    <li key={c.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 20px", borderBottom: i === COURSES.length - 1 ? "none" : `1px solid ${C.border}` }}>
-                      <div style={{ width: 34, height: 34, borderRadius: 9, background: c.enrolled ? C.badgeBg : "#f1ede4", color: c.enrolled ? C.badgeIcon : C.textMuted, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                        {c.enrolled ? <Icon.play style={{ width: 15, height: 15 }} /> : <Icon.lock style={{ width: 14, height: 14 }} />}
+                  {visibleLessons.map((lesson, i) => (
+                    <li key={`${lesson.courseId}:${String(lesson.section || "General").trim().toLowerCase()}:${lesson.id || i}`} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 20px", borderBottom: i === visibleLessons.length - 1 ? "none" : `1px solid ${C.border}` }}>
+                      <div style={{ width: 34, height: 34, borderRadius: 9, background: lesson.videoUrl ? C.badgeBg : "#f1ede4", color: lesson.videoUrl ? C.badgeIcon : C.textMuted, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                        {lesson.videoUrl ? <Icon.play style={{ width: 15, height: 15 }} /> : <Icon.lock style={{ width: 14, height: 14 }} />}
                       </div>
                       <div style={{ flex: 1 }}>
-                        <div style={{ fontSize: 13, fontWeight: 700 }}>{c.title}</div>
-                        <div style={{ fontSize: 11.5, color: C.textMuted }}>{c.enrolled ? `${c.lessons} video lessons unlocked` : "Enroll to unlock video lessons"}</div>
+                        <div style={{ fontSize: 13, fontWeight: 700 }}>{lesson.title}</div>
+                        <div style={{ fontSize: 11.5, color: C.textMuted }}>{lesson.courseTitle}</div>
                       </div>
-                      {c.enrolled
-                        ? <Btn variant="primary" onClick={() => setOpenCourse(c)}>Watch</Btn>
-                        : <Btn variant="outline" onClick={() => setOpenCourse(c)} disabled={false}>Locked</Btn>}
+                      {lesson.videoUrl ? <Btn variant="primary" onClick={() => setOpenVideo({ ...lesson, onEnded: () => { markLessonComplete(lesson); setOpenVideo(null); } })}>{lesson.videoCompleted ? "Completed" : "Watch"}</Btn> : <Btn variant="outline" disabled>Unavailable</Btn>}
                     </li>
                   ))}
                 </ul>
+                {!visibleLessons.length && <div style={{ padding: 24, color: C.textSecondary }}>No videos are available for this section.</div>}
               </Panel>
             )}
 
             {activeNav === "notes" && (
-              <Panel title="Course Notes">
+              <Panel title={selectedLearningSection ? `${selectedLearningSection} Notes` : "Course Notes"}>
                 <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
-                  {COURSES.map((c, i) => (
-                    <li key={c.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 20px", borderBottom: i === COURSES.length - 1 ? "none" : `1px solid ${C.border}` }}>
-                      <div style={{ width: 34, height: 34, borderRadius: 9, background: c.enrolled ? C.badgeBg : "#f1ede4", color: c.enrolled ? C.badgeIcon : C.textMuted, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                        {c.enrolled ? <Icon.notes style={{ width: 15, height: 15 }} /> : <Icon.lock style={{ width: 14, height: 14 }} />}
+                  {visibleLessons.map((lesson, i) => (
+                    <li key={`${lesson.courseId}:${String(lesson.section || "General").trim().toLowerCase()}:${lesson.id || i}`} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 20px", borderBottom: i === visibleLessons.length - 1 ? "none" : `1px solid ${C.border}`, opacity: lesson.videoCompleted ? 1 : 0.62 }}>
+                      <div style={{ width: 34, height: 34, borderRadius: 9, background: lesson.videoCompleted ? C.badgeBg : "#f1ede4", color: lesson.videoCompleted ? C.badgeIcon : C.textMuted, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                        <Icon.notes style={{ width: 15, height: 15 }} />
                       </div>
                       <div style={{ flex: 1 }}>
-                        <div style={{ fontSize: 13, fontWeight: 700 }}>{c.title} — Notes</div>
-                        <div style={{ fontSize: 11.5, color: C.textMuted }}>{c.enrolled ? "PDF & slide notes available" : "Enroll to unlock notes"}</div>
+                        <div style={{ fontSize: 13, fontWeight: 700 }}>{lesson.title} — Notes</div>
+                        <div style={{ fontSize: 11.5, color: C.textMuted }}>{lesson.videoCompleted ? "Notes unlocked" : "Watch the video to unlock notes"}</div>
                       </div>
-                      {c.enrolled
-                        ? <Btn variant="outline" onClick={() => showToast(`Downloading notes for "${c.title}"…`)}>Download</Btn>
-                        : <Btn variant="outline" onClick={() => setOpenCourse(c)}>Locked</Btn>}
+                      <Btn variant="outline" disabled={!lesson.videoCompleted} onClick={() => setOpenResource({ title: `${lesson.title} — Notes`, courseTitle: lesson.courseTitle, adminUrl: lesson.notesUrl, kind: "notes", courseId: lesson.courseId, lessonId: lesson.id })}>View PDF</Btn>
                     </li>
                   ))}
                 </ul>
+                {!visibleLessons.length && <div style={{ padding: 24, color: C.textSecondary }}>No notes are available for this section.</div>}
               </Panel>
             )}
 
             {activeNav === "assignments" && (
-              <Panel title="All Assignments"><AssignmentsTable rows={ASSIGNMENTS} /></Panel>
+              <Panel title={selectedLearningSection ? `${selectedLearningSection} Assignments` : "Assignments"}>
+                {selectedLearningSection ? <AssignmentsTable rows={visibleAssignments.map((task) => ({ ...task, name: task.title, course: task.courseTitle, due: "-", status: !task.videoCompleted ? "Open after video" : (task.taskCompleted ? "Completed" : "Open") }))} onOpen={(task) => task.videoCompleted && setOpenResource({ title: task.title, courseTitle: task.courseTitle, adminUrl: task.pdfUrl, kind: "assignment", progressKey: `${task.courseId}:${String(task.section || "General").trim().toLowerCase()}:${task.lessonId}`, courseId: task.courseId, lessonId: task.lessonId, taskId: task.id, section: task.section })} /> : <div style={{ padding: 24, color: C.textSecondary }}>Choose a section to view its assignments.</div>}
+              </Panel>
             )}
 
             {activeNav === "progress" && (
               <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-                {enrolledCourses.map(c => (
+                {enrolledCourses.filter((c) => !selectedLearningSection || c.lessonsData.some((lesson) => String(lesson.section || "General").trim() === selectedLearningSection)).map(c => {
+                  const progressLessons = selectedLearningSection
+                    ? enrolledLessons.filter((lesson) => lesson.courseId === c.id && String(lesson.section || "General").trim() === selectedLearningSection)
+                    : enrolledLessons.filter((lesson) => lesson.courseId === c.id);
+                  const progressUnits = progressLessons.reduce((total, lesson) => total + [lesson.videoCompleted, lesson.assignmentCompleted].filter(Boolean).length, 0);
+                  const progressPercent = progressLessons.length ? Math.round((progressUnits / (progressLessons.length * 3)) * 100) : 0;
+                  return (
                   <div key={c.id} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 18, padding: 20, boxShadow: "0 1px 2px rgba(33,28,46,0.03), 0 4px 14px rgba(33,28,46,0.04)" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
-                      <h4 style={{ margin: 0, fontSize: 14.5, fontWeight: 700 }}>{c.title}</h4>
-                      <span style={{ fontSize: 13, fontWeight: 700, color: C.accent }}>{c.progress}%</span>
+                      <div>
+                        <h4 style={{ margin: 0, fontSize: 14.5, fontWeight: 700 }}>{selectedLearningSection || c.title}</h4>
+                        {selectedLearningSection && <div style={{ marginTop: 3, fontSize: 11.5, color: C.textMuted }}>{c.title}</div>}
+                      </div>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: C.accent }}>{progressPercent}%</span>
                     </div>
                     <div style={{ height: 8, background: "#f0ece2", borderRadius: 20, overflow: "hidden", marginBottom: 8 }}>
-                      <div style={{ width: `${c.progress}%`, height: "100%", background: C.accent, borderRadius: 20 }} />
+                      <div style={{ width: `${progressPercent}%`, height: "100%", background: C.accent, borderRadius: 20 }} />
                     </div>
-                    <div style={{ fontSize: 12, color: C.textSecondary }}>Current lesson: {c.currentLesson}</div>
+                    <div style={{ fontSize: 12, color: C.textSecondary }}>
+                      {selectedLearningSection ? `${selectedLearningSection} lessons: ${progressLessons.length}` : `Lessons available: ${c.lessons}`}
+                    </div>
+                    {selectedLearningSection ? (
+                      <div style={{ marginTop: 18, paddingTop: 16, borderTop: `1px solid ${C.border}` }}>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                          <strong style={{ fontSize: 13.5 }}>Assignment evaluations</strong>
+                          <span style={{ fontSize: 11, color: C.textMuted }}>{progressLessons.reduce((count, lesson) => count + (lesson.tasks || []).length, 0)} task(s)</span>
+                        </div>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 10 }}>
+                          {progressLessons.flatMap((lesson) => (lesson.tasks || []).map((task, taskIndex) => ({ lesson, task, taskIndex }))).map(({ lesson, task, taskIndex }) => {
+                            const notificationEvaluation = getNotificationEvaluation(notifications, c.id, lesson, task);
+                            const grade = lesson.studentProgress?.grade ?? notificationEvaluation?.grade;
+                            const feedback = lesson.studentProgress?.feedback || notificationEvaluation?.feedback || "";
+                            const evaluated = grade !== null && grade !== undefined || Boolean(feedback);
+                            return (
+                              <div key={`${c.id}:${String(lesson.section || "General").toLowerCase()}:${lesson.id}:${task.id || taskIndex}`} style={{ minHeight: 132, display: "flex", flexDirection: "column", justifyContent: "space-between", padding: "13px 14px", background: evaluated ? C.greenBg : C.pillBg, border: `1px solid ${evaluated ? "rgba(63,122,82,0.22)" : C.pillBorder}`, borderRadius: 11 }}>
+                                <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+                                  <div><div style={{ fontSize: 10.5, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.04em" }}>{selectedLearningSection} · {lesson.title}</div><div style={{ marginTop: 3, fontSize: 13, fontWeight: 700 }}>{task.title || `Task ${taskIndex + 1}`}</div></div>
+                                  <span style={{ flexShrink: 0, padding: "5px 9px", borderRadius: 999, background: evaluated ? "rgba(63,122,82,0.12)" : "rgba(168,113,10,0.12)", color: evaluated ? C.green : C.amber, fontSize: 10.5, fontWeight: 700 }}>{evaluated ? `${grade ?? "-"}/100` : "Waiting for grade"}</span>
+                                </div>
+                                <div style={{ marginTop: 8, fontSize: 11.5, color: C.textSecondary }}>{feedback || (lesson.assignmentCompleted ? "Submitted. Your admin evaluation will appear here." : "Complete and submit this task to receive feedback.")}</div>
+                              </div>
+                            );
+                          })}
+                          {!progressLessons.some((lesson) => (lesson.tasks || []).length) && <div style={{ fontSize: 11.5, color: C.textMuted }}>No assignments are available in this section.</div>}
+                        </div>
+                      </div>
+                    ) : <div style={{ marginTop: 14, fontSize: 11.5, color: C.textMuted }}>Choose a section from My Courses to view its assignment evaluations.</div>}
                   </div>
-                ))}
+                  );
+                })}
               </div>
             )}
 
@@ -808,11 +1149,11 @@ export default function StudentDashboard({ user, onLogout }) {
               <Panel title="All Notifications" right={<button onClick={markAllRead} style={{ background: "none", border: "none", color: C.accent, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Mark all read</button>}>
                 <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
                   {notifs.map((n, i) => (
-                    <li key={n.id} style={{ display: "flex", gap: 10, padding: "14px 20px", borderBottom: i === notifs.length - 1 ? "none" : `1px solid ${C.border}` }}>
-                      {n.unread && <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#e2734a", marginTop: 5, flexShrink: 0 }} />}
+                    <li key={n.id} onClick={() => onReadNotification?.(n.id)} style={{ display: "flex", gap: 10, padding: "14px 20px", borderBottom: i === notifs.length - 1 ? "none" : `1px solid ${C.border}`, cursor: "pointer" }}>
+                      {!n.read && <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#e2734a", marginTop: 5, flexShrink: 0 }} />}
                       <div>
-                        <div style={{ fontSize: 13 }}>{n.text}</div>
-                        <div style={{ fontSize: 11, color: C.textMuted, marginTop: 3 }}>{n.time}</div>
+                        <div style={{ fontSize: 13 }}>{n.message}</div>
+                        <div style={{ fontSize: 11, color: C.textMuted, marginTop: 3 }}>{formatNotificationTime(n.createdAt)}</div>
                       </div>
                     </li>
                   ))}
@@ -852,7 +1193,46 @@ export default function StudentDashboard({ user, onLogout }) {
         </div>
       )}
 
-      <CourseModal course={openCourse} onClose={() => setOpenCourse(null)} onToast={showToast} />
+      <CourseModal
+        course={openCourse}
+        onClose={() => setOpenCourse(null)}
+        onToast={showToast}
+        onContinue={goToNextLearningSection}
+        lessonProgress={lessonProgress}
+        onSelectSection={selectCourseSection}
+      />
+      <VideoModal video={openVideo} onClose={() => setOpenVideo(null)} />
+      <ResourceModal resource={openResource} onClose={() => setOpenResource(null)} onUpload={async (file, kind) => {
+        if (uploadStudentResource && openResource?.courseId && openResource?.lessonId && openResource?.taskId) {
+          await uploadStudentResource(file, openResource.courseId, openResource.lessonId, openResource.taskId, kind, studentId, openResource.section);
+        }
+        const key = openResource?.progressKey;
+        if (key && kind === "assignment") setLessonProgress((current) => {
+          const next = {
+            ...current,
+            [key]: {
+              ...(current[key] || {}),
+              taskCompleted: true,
+            },
+          };
+          window.localStorage.setItem(`crmst-progress-${studentId}`, JSON.stringify(next));
+          return next;
+        });
+        setUploadedResources((current) => ({ ...current, [openResource?.title]: file.name }));
+        showToast(`${file.name} uploaded successfully.`);
+      }} />
     </div>
   );
+}
+
+function formatNotificationTime(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const minutes = Math.max(0, Math.floor((Date.now() - date.getTime()) / 60000));
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  const days = Math.floor(hours / 24);
+  return `${days} day${days === 1 ? "" : "s"} ago`;
 }

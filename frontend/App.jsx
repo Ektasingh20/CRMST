@@ -1,4 +1,4 @@
-import { useDeferredValue, useEffect, useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   ArrowRight,
@@ -71,13 +71,21 @@ import {
   authLogin,
   authSignup,
   loadUsers,
-  saveUsersToBackend,
   loadLeads,
-  saveLeadsToBackend,
   loadServices,
   saveServicesToBackend,
   loadTrainings,
   saveTrainingsToBackend,
+  loadCourses,
+  loadNotifications,
+  readNotification,
+  readAllNotifications,
+  createCourse,
+  updateCourse,
+  deleteCourse,
+  addCourseLesson,
+  deleteCourseLesson,
+  updateCourseLesson,
   loadStipPrograms,
   saveStipProgramsToBackend,
   loadStipApplications,
@@ -109,6 +117,12 @@ import {
   updateStipApplication,
   deleteStipApplication,
   uploadImage,
+  uploadCourseAsset,
+  uploadStudentCourseResource,
+  saveStudentLessonProgress,
+  loadTaskSubmissions,
+  gradeStudentTask,
+  invalidateCoursesCache,
   getCurrentUser,
   logoutUser,
 } from "./backendClient";
@@ -127,14 +141,150 @@ import {
 const STUDENT_DASHBOARD_URL = "http://localhost:5175";
 
 const USERS_STORAGE_KEY = "crmst-users.txt";
+const LEADS_STORAGE_KEY = "crmst-leads.txt";
+const LEADS_CACHE_VERSION = 2;
 const SESSION_STORAGE_KEY = "crmst-current-user";
+const SAVED_LOGIN_STORAGE_KEY = "crmst-saved-login";
 const SERVICES_STORAGE_KEY = "crmst-services.txt";
 const TRAININGS_STORAGE_KEY = "crmst-trainings.txt";
 const STIP_PROGRAMS_STORAGE_KEY = "crmst-stip-programs.txt";
 const STIP_APPLICATIONS_STORAGE_KEY = "crmst-stip-applications.txt";
+const STUDENT_COURSES_STORAGE_KEY = "crmst-student-courses-v2.txt";
+const STUDENT_COURSES_CACHE_TTL_MS = 5 * 60 * 1000;
+const STUDENT_NOTIFICATIONS_STORAGE_KEY = "crmst-student-notifications-v2.txt";
+const STUDENT_NOTIFICATIONS_CACHE_TTL_MS = 5 * 60 * 1000;
 
 function isCrmExecutive(role) {
   return ["crm executive", "crm_executive"].includes(String(role || "").trim().toLowerCase());
+}
+
+function isAdminUser(user) {
+  const role = String(user?.role || "").trim().toLowerCase();
+  const department = String(user?.dept || user?.department || "").trim().toLowerCase();
+  const username = String(user?.username || "").trim().toLowerCase();
+  return ["admin", "administrator", "super admin", "superadmin"].includes(role)
+    || department === "admin"
+    || username === "admin";
+}
+
+function getStudentCacheUserKey(user) {
+  return String(user?.id || user?._id || user?.username || user?.email || "").trim().toLowerCase();
+}
+
+function readStudentCoursesFromStorage(user) {
+  const userKey = getStudentCacheUserKey(user);
+  if (!userKey) return { courses: [], fetchedAt: 0 };
+  try {
+    const raw = localStorage.getItem(STUDENT_COURSES_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    if (parsed?.userKey !== userKey || !Array.isArray(parsed.courses)) return { courses: [], fetchedAt: 0 };
+    return { courses: parsed.courses, fetchedAt: Number(parsed.fetchedAt || 0) };
+  } catch {
+    return { courses: [], fetchedAt: 0 };
+  }
+}
+
+function writeStudentCoursesToStorage(user, courses) {
+  const userKey = getStudentCacheUserKey(user);
+  if (!userKey || !Array.isArray(courses) || courses.length === 0) return;
+  safeStorageSet(STUDENT_COURSES_STORAGE_KEY, JSON.stringify({ userKey, courses, fetchedAt: Date.now() }));
+}
+
+function readStudentNotificationsFromStorage(user) {
+  const userKey = getStudentCacheUserKey(user);
+  if (!userKey) return { items: [], fetchedAt: 0 };
+  try {
+    const raw = localStorage.getItem(STUDENT_NOTIFICATIONS_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    if (parsed?.userKey !== userKey || !Array.isArray(parsed.items)) return { items: [], fetchedAt: 0 };
+    return { items: parsed.items, fetchedAt: Number(parsed.fetchedAt || 0) };
+  } catch {
+    return { items: [], fetchedAt: 0 };
+  }
+}
+
+function writeStudentNotificationsToStorage(user, items) {
+  const userKey = getStudentCacheUserKey(user);
+  if (!userKey || !Array.isArray(items)) return;
+  safeStorageSet(STUDENT_NOTIFICATIONS_STORAGE_KEY, JSON.stringify({ userKey, items, fetchedAt: Date.now() }));
+}
+
+const backendDepartments = ["CRM", "HR", "IT", "Operation", "Student"];
+const departmentRoleMap = {
+  CRM: "CRM Executive",
+  HR: "HR",
+  IT: "IT",
+  Operation: "Operation",
+  Student: "Student",
+  Admin: "Admin",
+};
+
+function normalizeCourseToTraining(course) {
+  const id = course?.id || course?._id || "course-unknown";
+  const firstLesson = Array.isArray(course?.lessons) ? course.lessons[0] : null;
+  const firstTask = Array.isArray(firstLesson?.tasks) ? firstLesson.tasks[0] : null;
+  return {
+    ...course,
+    id,
+    name: course?.title || course?.name || "Untitled course",
+    section: course?.section || "General",
+    duration: course?.duration || "N/A",
+    price: course?.fees || course?.price || "₹0",
+    tools: course?.tools || "",
+    trainer: "System Technologies Team",
+    mode: course?.mode || "Hybrid",
+    level: course?.level || "Advanced",
+    seats: Array.isArray(course?.studentIds) ? String(course.studentIds.length || 24) : "24",
+    batchTiming: course?.batchTiming || "Mon-Fri • 6PM-8PM",
+    projects: Array.isArray(course?.lessons) ? `${course.lessons.length} lessons` : "3 capstone projects",
+    certification: course?.certification || "Industry certificate",
+    placement: course?.placement || "100% interview prep",
+    imageUrl: course?.thumbnail || course?.imageUrl || "",
+    syllabus: course?.syllabus || "",
+    sections: Array.isArray(course?.sections) && course.sections.length
+      ? course.sections
+      : [...new Set((Array.isArray(course?.lessons) ? course.lessons : []).map((lesson) => String(lesson.section || "General").trim() || "General"))].map((name) => ({ name })),
+    lessons: Array.isArray(course?.lessons) ? course.lessons : [],
+    lessonTitle: firstLesson?.title || "",
+    videoUrl: firstLesson?.videoUrl || "",
+    notesUrl: firstLesson?.notesUrl || "",
+    assignmentTitle: firstTask?.title || "",
+    assignmentTime: firstTask?.timeLimit || "",
+    assignmentUrl: firstTask?.pdfUrl || firstTask?.url || "",
+    assignment: firstTask?.description || "",
+  };
+}
+
+function fileNameFromUrl(url, fallback) {
+  if (!url) return fallback;
+  try {
+    const name = decodeURIComponent(String(url).split("?")[0].split("/").pop() || "");
+    return name || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function normalizeLeadForUi(lead) {
+  if (!lead || typeof lead !== "object") return lead;
+  const statusValue = String(lead.status || "Pending").trim().toLowerCase();
+  const statusMap = {
+    pending: "Pending",
+    "follow-up": "Follow-up",
+    interested: "Interested",
+    converted: "Converted",
+    approved: "Approved",
+    lost: "Lost",
+    not_interested: "Not Interested",
+    "not interested": "Not Interested",
+  };
+  return {
+    ...lead,
+    id: String(lead.id || lead._id || ""),
+    assignedTo: lead.assignedTo === undefined || lead.assignedTo === null ? "" : String(lead.assignedTo),
+    status: statusMap[statusValue] || String(lead.status || "Pending"),
+    source: lead.source || lead.leadSource || "",
+  };
 }
 
 const sidebarSections = [
@@ -186,6 +336,14 @@ const sidebarSections = [
         icon: GraduationCap,
       },
       { id: "stip", label: "STIP", icon: Award },
+    ],
+  },
+  {
+    heading: "COURSES",
+    items: [
+      { id: "course-add", label: "Add Course", icon: CirclePlus },
+      { id: "course-view", label: "View Courses", icon: BookOpen },
+      { id: "course-check", label: "Check Tasks", icon: ClipboardCheck },
     ],
   },
   {
@@ -792,6 +950,20 @@ function safeStorageRemove(key) {
   }
 }
 
+function readSavedLogin() {
+  const raw = safeStorageGet(SAVED_LOGIN_STORAGE_KEY);
+  if (!raw) return { username: "", password: "" };
+  try {
+    const saved = JSON.parse(raw);
+    return {
+      username: String(saved?.username || ""),
+      password: String(saved?.password || ""),
+    };
+  } catch {
+    return { username: "", password: "" };
+  }
+}
+
 function getDisplayImage(primaryImageUrl, fallbackImage, previewImage = "") {
   return previewImage || sanitizeImageReference(primaryImageUrl) || fallbackImage;
 }
@@ -862,6 +1034,32 @@ function readUsersFromStorage() {
   }
 }
 
+function getLeadCacheUserKey(user) {
+  return String(user?.id || user?._id || user?.username || "");
+}
+
+function readLeadsFromStorage(user) {
+  const raw = safeStorageGet(LEADS_STORAGE_KEY);
+  if (!raw) return { items: initialLeads, hasCache: false };
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      return { items: sanitizeImageCollection(parsed), hasCache: parsed.length > 0 };
+    }
+    if (
+      parsed?.version === LEADS_CACHE_VERSION
+      && parsed.userKey === getLeadCacheUserKey(user)
+      && Array.isArray(parsed.items)
+    ) {
+      const items = sanitizeImageCollection(parsed.items);
+      return { items, hasCache: items.length > 0 };
+    }
+  } catch {
+    // Fall through to the local demo data when an older cache is invalid.
+  }
+  return { items: initialLeads, hasCache: false };
+}
+
 function readSessionFromStorage() {
   const raw = safeStorageGet(SESSION_STORAGE_KEY);
   if (!raw) return null;
@@ -883,6 +1081,66 @@ function readCollectionFromStorage(key, fallback) {
   }
 }
 
+function isItUser(user) {
+  return String(user?.role || "").trim().toLowerCase() === "it"
+    || String(user?.dept || user?.department || "").trim().toLowerCase() === "it";
+}
+
+function ItDashboard({ user, users = [], tasks = [], leaves = [], employees = [], onLogout }) {
+  const [activeSection, setActiveSection] = useState("overview");
+  const displayTasks = Array.isArray(tasks) ? tasks : [];
+  const displayLeaves = Array.isArray(leaves) ? leaves : [];
+  const displayEmployees = Array.isArray(employees) && employees.length ? employees : users;
+  const activeUsers = users.filter((item) => String(item?.status || "").toLowerCase() === "active");
+  const pendingTasks = displayTasks.filter((item) => !["completed", "done"].includes(String(item?.status || "").toLowerCase()));
+  const pendingLeaves = displayLeaves.filter((item) => ["pending", "requested", "open"].includes(String(item?.status || "").toLowerCase()));
+  const sections = [
+    { id: "overview", label: "Overview", icon: LayoutDashboard },
+    { id: "team", label: "Team Directory", icon: Users },
+    { id: "tasks", label: "IT Tasks", icon: ListTodo },
+    { id: "leaves", label: "Leave Requests", icon: CalendarCheck2 },
+  ];
+
+  return (
+    <div className="dashboard-shell">
+      <aside className="sidebar">
+        <div className="sidebar-brand"><LogoBadge /><div><strong>SYSTEM TECHNOLOGIES</strong><span>IT Operations Portal</span></div></div>
+        <div className="sidebar-profile"><div className="avatar soft">{initials(user?.name || "IT")}</div><strong>{user?.name || "IT User"}</strong><span>IT Department</span></div>
+        <nav className="sidebar-nav">
+          <p className="sidebar-label">IT OPERATIONS</p>
+          {sections.map(({ id, label, icon: Icon }) => (
+            <button key={id} type="button" className={`sidebar-nav-item ${activeSection === id ? "active" : ""}`} onClick={() => setActiveSection(id)}><Icon size={17} /><span>{label}</span></button>
+          ))}
+          <p className="sidebar-label">ACCOUNT</p>
+          <button type="button" className="sidebar-nav-item" onClick={onLogout}><DoorOpen size={17} /><span>Logout</span></button>
+        </nav>
+      </aside>
+      <main className="dashboard-main">
+        <header className="dashboard-header"><div><p className="eyebrow">IT OPERATIONS</p><h1>{sections.find((section) => section.id === activeSection)?.label || "Overview"}</h1><p>Connected to your CRM backend workspace.</p></div><div className="dashboard-user"><div className="avatar soft">{initials(user?.name || "IT")}</div><span>{user?.name || "IT User"}</span></div></header>
+        <div className="dashboard-content">
+          {activeSection === "overview" ? (
+            <>
+              <div className="stats-grid">
+                <div className="stat-card"><span>Active team members</span><strong>{activeUsers.length}</strong><small>From backend users</small></div>
+                <div className="stat-card"><span>Open IT tasks</span><strong>{pendingTasks.length}</strong><small>Assigned work items</small></div>
+                <div className="stat-card"><span>Leave requests</span><strong>{pendingLeaves.length}</strong><small>Awaiting action</small></div>
+                <div className="stat-card"><span>Directory records</span><strong>{displayEmployees.length}</strong><small>Employee profiles</small></div>
+              </div>
+              <div className="content-grid-two">
+                <section className="panel"><div className="panel-heading"><h2>Recent team members</h2><button type="button" className="text-button" onClick={() => setActiveSection("team")}>View all</button></div>{displayEmployees.slice(0, 5).map((item) => <div className="list-row" key={item.id || item._id || item.username}><div className="avatar soft small">{initials(item.name || item.username || "User")}</div><div><strong>{item.name || item.username}</strong><span>{item.position || item.role || item.dept || "Team member"}</span></div><small>{item.status || "Active"}</small></div>)}</section>
+                <section className="panel"><div className="panel-heading"><h2>Open tasks</h2><button type="button" className="text-button" onClick={() => setActiveSection("tasks")}>View all</button></div>{pendingTasks.slice(0, 5).map((item, index) => <div className="list-row" key={item.id || item._id || index}><div className="list-icon"><ListTodo size={16} /></div><div><strong>{item.title || item.name || "Untitled task"}</strong><span>{item.priority || item.status || "Pending"}</span></div><small>{item.dueDate || item.due || "No due date"}</small></div>)}</section>
+              </div>
+            </>
+          ) : null}
+          {activeSection === "team" ? <section className="panel"><div className="panel-heading"><h2>Team Directory</h2><span>{displayEmployees.length} records</span></div>{displayEmployees.map((item, index) => <div className="list-row" key={item.id || item._id || index}><div className="avatar soft small">{initials(item.name || item.username || "User")}</div><div><strong>{item.name || item.username}</strong><span>{item.email || item.position || item.dept || "Team member"}</span></div><small>{item.status || "Active"}</small></div>)}</section> : null}
+          {activeSection === "tasks" ? <section className="panel"><div className="panel-heading"><h2>IT Tasks</h2><span>{displayTasks.length} records</span></div>{displayTasks.map((item, index) => <div className="list-row" key={item.id || item._id || index}><div className="list-icon"><ListTodo size={16} /></div><div><strong>{item.title || item.name || "Untitled task"}</strong><span>{item.description || item.priority || "Task"}</span></div><small>{item.status || "Pending"}</small></div>)}</section> : null}
+          {activeSection === "leaves" ? <section className="panel"><div className="panel-heading"><h2>Leave Requests</h2><span>{displayLeaves.length} records</span></div>{displayLeaves.map((item, index) => <div className="list-row" key={item.id || item._id || index}><div className="list-icon"><CalendarCheck2 size={16} /></div><div><strong>{item.emp || item.employeeName || item.name || "Employee"}</strong><span>{item.reason || item.type || "Leave request"}</span></div><small>{item.status || "Pending"}</small></div>)}</section> : null}
+        </div>
+      </main>
+    </div>
+  );
+}
+
 function App() {
   const [appView, setAppView] = useState("home");
   const [authMode, setAuthMode] = useState("login");
@@ -894,6 +1152,7 @@ function App() {
   const [toast, setToast] = useState("");
   const [serviceQuery, setServiceQuery] = useState("");
   const [trainingQuery, setTrainingQuery] = useState("");
+  const [taskReviewQuery, setTaskReviewQuery] = useState("");
   const [stipQuery, setStipQuery] = useState("");
   const [servicePage, setServicePage] = useState(1);
   const [trainingPage, setTrainingPage] = useState(1);
@@ -906,6 +1165,7 @@ function App() {
   const [stipModal, setStipModal] = useState(null);
   const [serviceModalUploading, setServiceModalUploading] = useState(false);
   const [trainingModalUploading, setTrainingModalUploading] = useState(false);
+  const [trainingAssetUploading, setTrainingAssetUploading] = useState("");
   const [stipModalUploading, setStipModalUploading] = useState(false);
 
   const [settingsForm, setSettingsForm] = useState({ name: "", email: "", phone: "", emergencyContact: "", maritalStatus: "", education: "", dept: "", position: "", role: "", joined: "", state: "", branch: "", branchCode: "", address: "", username: "", imageUrl: "", imagePublicId: "" });
@@ -925,6 +1185,10 @@ function App() {
 
   const [users, setUsers] = useState(initialUsers);
   const [leads, setLeads] = useState(initialLeads);
+  const [leadsLoadedFromBackend, setLeadsLoadedFromBackend] = useState(false);
+  const leadRecoveryAttempted = useRef(false);
+  const leadsCacheHydrated = useRef(false);
+  const leadCacheUserKey = useRef("");
   const [crmReports] = useState(initialCrmReports);
   const [tasks] = useState(initialTasks);
   const [leaves] = useState(initialLeaves);
@@ -932,8 +1196,19 @@ function App() {
   const [logs] = useState(initialLogs);
   const [serviceRows, setServiceRows] = useState(initialServiceRows);
   const [trainingRows, setTrainingRows] = useState(initialTrainingRows);
+  const [courseRows, setCourseRows] = useState([]);
+  const [notifications, setNotifications] = useState([]);
+  const [taskSubmissions, setTaskSubmissions] = useState([]);
+  const [taskSubmissionLoading, setTaskSubmissionLoading] = useState(false);
+  const [taskSubmissionModal, setTaskSubmissionModal] = useState(null);
+  const [taskGradeForm, setTaskGradeForm] = useState({ grade: "", feedback: "" });
+  const [taskGradeSaving, setTaskGradeSaving] = useState(false);
+  const [itTasks, setItTasks] = useState([]);
+  const [itLeaves, setItLeaves] = useState([]);
+  const [itEmployees, setItEmployees] = useState([]);
   const [stipPrograms, setStipPrograms] = useState(initialStipPrograms);
-  const [loginForm, setLoginForm] = useState({ username: "", password: "" });
+  const [loginForm, setLoginForm] = useState(readSavedLogin);
+  const [rememberLogin, setRememberLogin] = useState(() => Boolean(readSavedLogin().username));
   const [signupForm, setSignupForm] = useState({ name: "", username: "", password: "" });
   const [showSignupPassword, setShowSignupPassword] = useState(false);
   const [currentUser, setCurrentUser] = useState(() => {
@@ -992,13 +1267,16 @@ function App() {
     // load local fallback immediately
     const savedUsers = readUsersFromStorage();
     const savedSession = readSessionFromStorage();
+    const savedLeadCache = readLeadsFromStorage(savedSession);
     const savedServices = readCollectionFromStorage(SERVICES_STORAGE_KEY, initialServiceRows);
-    const savedTrainings = readCollectionFromStorage(TRAININGS_STORAGE_KEY, initialTrainingRows);
     const savedStipPrograms = readCollectionFromStorage(STIP_PROGRAMS_STORAGE_KEY, initialStipPrograms);
     const savedInterns = readCollectionFromStorage(STIP_APPLICATIONS_STORAGE_KEY, initialInterns);
     setUsers(savedUsers);
+    setLeads(savedLeadCache.items.map(normalizeLeadForUi));
+    leadsCacheHydrated.current = savedLeadCache.hasCache;
+    leadCacheUserKey.current = getLeadCacheUserKey(savedSession);
+    setLeadsLoadedFromBackend(savedLeadCache.hasCache);
     setServiceRows(savedServices);
-    setTrainingRows(savedTrainings);
     setStipPrograms(savedStipPrograms);
     setInterns(savedInterns);
     if (savedSession) {
@@ -1008,6 +1286,8 @@ function App() {
         setAppView("student-dashboard");
       } else if (isCrmExecutive(savedSession.role)) {
         setAppView("crm-executive");
+      } else if (isItUser(savedSession)) {
+        setAppView("it-dashboard");
       } else {
         setAppView("dashboard");
       }
@@ -1018,29 +1298,61 @@ function App() {
 
     (async () => {
       try {
-        if (isCrmExecutive(session.role)) {
-          const remoteLeads = await loadLeads();
-          if (remoteLeads.length) setLeads(remoteLeads);
+        if (String(session.role || "").trim().toLowerCase() === "student") {
+          const cachedCourses = readStudentCoursesFromStorage(session);
+          if (cachedCourses.courses.length) setCourseRows(cachedCourses.courses);
+          if (cachedCourses.fetchedAt && Date.now() - cachedCourses.fetchedAt < STUDENT_COURSES_CACHE_TTL_MS) return;
+
+          const remoteCourses = await loadCourses();
+          if (Array.isArray(remoteCourses) && remoteCourses.length) {
+            setCourseRows(remoteCourses);
+            writeStudentCoursesToStorage(session, remoteCourses);
+          }
           return;
         }
-        const [remoteUsers, remoteLeads, remoteServices, remoteTrainings, remoteStip, remoteInterns] = await Promise.all([
+        if (isItUser(session)) {
+          const [remoteUsers, remoteTasks, remoteLeaves, remoteEmployees] = await Promise.all([
+            loadUsers(),
+            loadTasks(),
+            loadLeaves(),
+            loadEmployees(),
+          ]);
+          if (remoteUsers.length) setUsers(remoteUsers);
+          if (Array.isArray(remoteTasks)) setItTasks(remoteTasks);
+          if (Array.isArray(remoteLeaves)) setItLeaves(remoteLeaves);
+          if (Array.isArray(remoteEmployees)) setItEmployees(remoteEmployees);
+          return;
+        }
+        if (isCrmExecutive(session.role)) {
+          if (savedLeadCache.hasCache) return;
+          const remoteLeads = await loadLeads();
+          if (Array.isArray(remoteLeads)) {
+            setLeads(remoteLeads.map(normalizeLeadForUi));
+            leadsCacheHydrated.current = true;
+            setLeadsLoadedFromBackend(true);
+          }
+          return;
+        }
+        const [remoteUsers, remoteLeads, remoteServices, remoteCourses, remoteStip, remoteInterns] = await Promise.all([
           loadUsers(),
-          loadLeads(),
+          savedLeadCache.hasCache ? Promise.resolve(null) : loadLeads(),
           loadServices(),
-          loadTrainings(),
+          loadCourses(),
           loadStipPrograms(),
           loadStipApplications(),
         ]);
         if (remoteUsers.length) setUsers(remoteUsers);
-        if (remoteLeads.length) setLeads(remoteLeads);
+        if (Array.isArray(remoteLeads)) {
+          setLeads(remoteLeads.map(normalizeLeadForUi));
+          leadsCacheHydrated.current = true;
+          setLeadsLoadedFromBackend(true);
+        }
         if (remoteServices.length) setServiceRows(remoteServices);
-        else if (savedServices.length) saveServicesToBackend(savedServices).catch(() => {});
-        if (remoteTrainings.length) setTrainingRows(remoteTrainings);
-        else if (savedTrainings.length) saveTrainingsToBackend(savedTrainings).catch(() => {});
+        if (remoteCourses.length) setCourseRows(remoteCourses);
         if (remoteStip.length) setStipPrograms(remoteStip);
-        else if (savedStipPrograms.length) saveStipProgramsToBackend(savedStipPrograms).catch(() => {});
+        else if (isAdminUser(session) && savedStipPrograms.length) saveStipProgramsToBackend(savedStipPrograms).catch(() => {});
         if (remoteInterns.length) setInterns(remoteInterns);
-        else if (savedInterns.length) saveStipApplicationsToBackend(savedInterns).catch(() => {});
+        else if (isAdminUser(session) && savedInterns.length) saveStipApplicationsToBackend(savedInterns).catch(() => {});
       } catch (err) {
         console.warn("Initial load failed", err);
       }
@@ -1048,13 +1360,136 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (isCrmExecutive(currentUser?.role)) return;
+    const role = String(currentUser?.role || "").trim().toLowerCase();
+    if (!currentUser || role === "student" || activePage !== "course-check") return undefined;
+    let active = true;
+    setTaskSubmissionLoading(true);
+    loadTaskSubmissions().then((items) => {
+      if (active && Array.isArray(items)) setTaskSubmissions(items);
+    }).catch((err) => {
+      if (active) notify(err?.message || "Could not load task submissions.");
+    }).finally(() => {
+      if (active) setTaskSubmissionLoading(false);
+    });
+    return () => { active = false; };
+  }, [activePage, currentUser]);
+
+  useEffect(() => {
+    const role = String(currentUser?.role || "").trim().toLowerCase();
+    const studentId = String(currentUser?.id || currentUser?._id || "").trim();
+    if (role !== "student" || !studentId) {
+      setNotifications([]);
+      return undefined;
+    }
+
+    let active = true;
+    const cached = readStudentNotificationsFromStorage(currentUser);
+    if (cached.items.length) setNotifications(cached.items);
+    const refreshEvaluatedCourses = async (items) => {
+      if (!items.some((item) => item.type === "assignment_evaluated")) return;
+      invalidateCoursesCache();
+      const refreshedCourses = await loadCourses(true);
+      if (active && refreshedCourses.length) {
+        setCourseRows(refreshedCourses);
+        writeStudentCoursesToStorage(currentUser, refreshedCourses);
+      }
+    };
+    if (cached.fetchedAt && Date.now() - cached.fetchedAt < STUDENT_NOTIFICATIONS_CACHE_TTL_MS) {
+      refreshEvaluatedCourses(cached.items).catch(() => {});
+      return undefined;
+    }
+    const refreshNotifications = async () => {
+      try {
+        const result = await loadNotifications(studentId);
+        if (active && Array.isArray(result)) {
+          setNotifications(result);
+          writeStudentNotificationsToStorage(currentUser, result);
+          await refreshEvaluatedCourses(result);
+        }
+      } catch (err) {
+        if (err?.status !== 401) console.warn("Notification refresh failed", err);
+      }
+    };
+    refreshNotifications();
+    return () => {
+      active = false;
+    };
+  }, [currentUser]);
+
+  async function handleReadNotification(notificationId) {
+    const studentId = String(currentUser?.id || currentUser?._id || "").trim();
+    if (!studentId || !notificationId) return;
+    try {
+      const updated = await readNotification(studentId, notificationId);
+      if (updated) {
+        setNotifications((current) => {
+          const next = current.map((notification) => (
+            notification.id === notificationId ? { ...notification, ...updated, read: true } : notification
+          ));
+          writeStudentNotificationsToStorage(currentUser, next);
+          return next;
+        });
+      }
+    } catch (err) {
+      if (err?.status !== 401) console.warn("Notification update failed", err);
+    }
+  }
+
+  async function handleReadAllNotifications() {
+    const studentId = String(currentUser?.id || currentUser?._id || "").trim();
+    if (!studentId) return;
+    try {
+      await readAllNotifications(studentId);
+      setNotifications((current) => {
+        const next = current.map((notification) => ({ ...notification, read: true }));
+        writeStudentNotificationsToStorage(currentUser, next);
+        return next;
+      });
+    } catch (err) {
+      if (err?.status !== 401) console.warn("Notification update failed", err);
+    }
+  }
+
+  useEffect(() => {
+    const userKey = getLeadCacheUserKey(currentUser);
+    if (!userKey || leadCacheUserKey.current === userKey) return;
+
+    leadCacheUserKey.current = userKey;
+    const cachedLeads = readLeadsFromStorage(currentUser);
+    setLeads(cachedLeads.items.map(normalizeLeadForUi));
+    leadsCacheHydrated.current = cachedLeads.hasCache;
+    if (cachedLeads.hasCache) {
+      setLeadsLoadedFromBackend(true);
+      return;
+    }
+
+    loadLeads().then((remoteLeads) => {
+      if (!Array.isArray(remoteLeads)) return;
+      setLeads(remoteLeads.map(normalizeLeadForUi));
+      leadsCacheHydrated.current = true;
+      setLeadsLoadedFromBackend(true);
+    });
+  }, [currentUser]);
+
+  useEffect(() => {
     const sanitizedUsers = sanitizeImageCollection(users);
     if (!safeStorageSet(USERS_STORAGE_KEY, JSON.stringify(sanitizedUsers))) {
       notify("Browser storage is full. Continuing without caching large local data.");
     }
-    saveUsersToBackend(sanitizedUsers);
-  }, [users, currentUser?.role]);
+  }, [users]);
+
+  useEffect(() => {
+    if (!leadsCacheHydrated.current || !leadCacheUserKey.current) return;
+    const sanitizedLeads = sanitizeImageCollection(leads);
+    const cache = {
+      version: LEADS_CACHE_VERSION,
+      userKey: leadCacheUserKey.current,
+      items: sanitizedLeads,
+    };
+    if (!safeStorageSet(LEADS_STORAGE_KEY, JSON.stringify(cache))) {
+      notify("Browser storage is full. Lead changes are still kept in memory.");
+    }
+  }, [leads]);
 
   useEffect(() => {
     const sanitizedServices = sanitizeImageCollection(serviceRows);
@@ -1064,14 +1499,7 @@ function App() {
   }, [serviceRows]);
 
   useEffect(() => {
-    const sanitizedTrainings = sanitizeImageCollection(trainingRows);
-    if (!safeStorageSet(TRAININGS_STORAGE_KEY, JSON.stringify(sanitizedTrainings))) {
-      notify("Browser storage is full. Training changes are still kept in memory.");
-    }
-    saveTrainingsToBackend(sanitizedTrainings);
-  }, [trainingRows]);
-
-  useEffect(() => {
+    if (!isAdminUser(currentUser)) return;
     const sanitizedPrograms = sanitizeImageCollection(stipPrograms);
     if (!safeStorageSet(STIP_PROGRAMS_STORAGE_KEY, JSON.stringify(sanitizedPrograms))) {
       notify("Browser storage is full. Internship changes are still kept in memory.");
@@ -1080,6 +1508,7 @@ function App() {
   }, [stipPrograms]);
 
   useEffect(() => {
+    if (!isAdminUser(currentUser)) return;
     const sanitizedInterns = sanitizeImageCollection(interns);
     if (!safeStorageSet(STIP_APPLICATIONS_STORAGE_KEY, JSON.stringify(sanitizedInterns))) {
       notify("Browser storage is full. Application changes are still kept in memory.");
@@ -1155,10 +1584,83 @@ function App() {
       .flatMap((section) => section.items)
       .find((item) => item.id === activePage)?.label || "Dashboard";
 
+  const displayTrainingRows = useMemo(() => {
+    return courseRows.map((course) => normalizeCourseToTraining(course));
+  }, [courseRows]);
+
+  const lessonSectionOptions = useMemo(() => {
+    const courseId = String(trainingModal?.item?.courseId || "");
+    if (!courseId) return [];
+    const course = courseRows.find((row) => String(row.id || row._id) === courseId);
+    return [...new Set((course?.lessons || []).map((lesson) => String(lesson.section || "General").trim()).filter(Boolean))].sort();
+  }, [courseRows, trainingModal?.item?.courseId]);
+
+  const currentLessonNumber = useMemo(() => {
+    const item = trainingModal?.item;
+    const courseId = String(item?.courseId || "");
+    const section = String(item?.section || "General").trim().toLowerCase() || "general";
+    const course = courseRows.find((row) => String(row.id || row._id) === courseId);
+    const lessons = Array.isArray(course?.lessons) ? course.lessons : [];
+    const sectionLessons = lessons.filter((lesson) => String(lesson.section || "General").trim().toLowerCase() === section);
+    if (trainingModal?.mode === "edit-lesson") {
+      const index = sectionLessons.findIndex((lesson) => String(lesson.id) === String(item?.lessonId));
+      return index >= 0 ? index + 1 : sectionLessons.length + 1;
+    }
+    return sectionLessons.length + 1;
+  }, [courseRows, trainingModal?.item, trainingModal?.mode]);
+
+  const visibleUsers = useMemo(() => {
+    return users.filter((user) => !isAdminUser(user));
+  }, [users]);
+
   const activeUsers = users.filter((user) => user.status === "Active");
-  const wonLeads = leads.filter((lead) => ["Interested"].includes(lead.status));
+  const studentUsers = useMemo(() => users.filter((user) => {
+    const role = String(user?.role || "").trim().toLowerCase();
+    const department = String(user?.dept || user?.department || "").trim().toLowerCase();
+    return role === "student" || department === "student";
+  }), [users]);
+
+  const taskReviewRows = useMemo(() => taskSubmissions.map((submission) => {
+    const student = studentUsers.find((user) => String(user.id || user._id) === String(submission.studentId));
+    const course = courseRows.find((item) => String(item.id || item._id) === String(submission.courseId));
+    const lesson = course?.lessons?.find((item) => String(item.id) === String(submission.lessonId) && String(item.section || "General").trim().toLowerCase() === String(submission.section || "General").trim().toLowerCase());
+    const task = lesson?.tasks?.find((item) => String(item.id) === String(submission.taskId));
+    return {
+      ...submission,
+      studentName: student?.name || student?.username || submission.studentId,
+      studentEmail: student?.email || "",
+      taskTitle: task?.title || submission.taskId || "Assignment",
+      taskPdfUrl: task?.pdfUrl || task?.url || "",
+    };
+  }), [taskSubmissions, studentUsers, courseRows]);
+
+  useEffect(() => {
+    const courseFormOpen = ["add", "edit", "lesson", "edit-lesson"].includes(trainingModal?.mode);
+    if (!courseFormOpen || studentUsers.length > 0 || !isAdminUser(currentUser)) return;
+    let active = true;
+    loadUsers().then((remoteUsers) => {
+      if (active && Array.isArray(remoteUsers) && remoteUsers.length > 0) setUsers(remoteUsers);
+    });
+    return () => {
+      active = false;
+    };
+  }, [trainingModal?.mode, studentUsers.length, currentUser]);
+
+  const wonLeads = leads.filter((lead) => ["Interested", "Converted", "Approved"].includes(String(lead.status || "").trim().replace(/_/g, " ")));
   const followUps = leads.filter((lead) => lead.status === "Follow-up");
   const revenue = wonLeads.reduce((sum, lead) => sum + Number(lead.value || 0), 0);
+
+  useEffect(() => {
+    const approvedPage = activePage === "sales-approved" || activePage === "co-approved" || activePage === "sales-report";
+    if (!approvedPage || leadRecoveryAttempted.current || wonLeads.length > 0) return;
+    leadRecoveryAttempted.current = true;
+    loadLeads().then((remoteLeads) => {
+      if (!Array.isArray(remoteLeads)) return;
+      setLeads(remoteLeads.map(normalizeLeadForUi));
+      leadsCacheHydrated.current = true;
+      setLeadsLoadedFromBackend(true);
+    });
+  }, [activePage, leadsLoadedFromBackend, wonLeads.length]);
   const leavePendingCount = leaves.filter((leave) => leave.status === "Pending").length;
   const sourceCounts = leads.reduce((acc, lead) => {
     acc[lead.source] = (acc[lead.source] || 0) + 1;
@@ -1168,7 +1670,7 @@ function App() {
 
   function getCrmReportForUser(userName) {
     const userLeads = leads.filter((lead) => {
-      const assignedUser = users.find((u) => String(u.id) === String(lead.assignedTo));
+      const assignedUser = users.find((u) => String(u.id || u._id) === String(lead.assignedTo));
       return assignedUser?.name === userName;
     });
     const completed = userLeads.filter((lead) => lead.status === "Interested").length;
@@ -1267,8 +1769,10 @@ function App() {
   }
 
   function closeTrainingModal() {
+    const shouldReturnToCourseLibrary = ["add", "edit", "lesson", "edit-lesson"].includes(trainingModal?.mode);
     cleanupModalStateImages(trainingModal);
     setTrainingModal(null);
+    if (shouldReturnToCourseLibrary) setActivePage("course-view");
   }
 
   function closeStipModal() {
@@ -1523,16 +2027,27 @@ function App() {
     }
   }
 
-  function openTrainingModal(mode, course = null) {
+  function openTrainingModal(mode, course = null, lesson = null) {
     if (mode === "add") {
+      setActivePage("course-add");
       setTrainingModal({
         mode: "add",
+        step: 1,
         item: {
           id: createEntityId("training"),
           name: "",
           duration: "",
           price: "",
           tools: "",
+          lessonTitle: "",
+          lesson: "",
+          videoUrl: "",
+          notesUrl: "",
+          assignmentTitle: "",
+          assignmentTime: "60",
+          assignment: "",
+          assignmentUrl: "",
+          studentIds: [],
           trainer: "",
           mode: "Hybrid",
           level: "Advanced",
@@ -1548,8 +2063,66 @@ function App() {
       return;
     }
 
-    setTrainingModal({ mode, item: course ? sanitizeImageRecord({ ...course }) : null });
+    if (mode === "edit") {
+      setActivePage("course-add");
+      setTrainingModal({ mode, step: 1, item: course ? sanitizeImageRecord({ ...course, section: course.section || "General" }) : null });
+      return;
+    }
+
+    if (mode === "lesson") {
+      setActivePage("course-add");
+      setTrainingModal({
+        mode,
+        step: 2,
+        item: {
+          courseId: course?.id || course?._raw?.id || "",
+          section: "",
+          lessonTitle: "",
+          durationSec: 3600,
+          videoUrl: "",
+          notesUrl: "",
+          assignmentTitle: "",
+          assignmentTime: "60",
+          assignment: "",
+          assignmentUrl: "",
+        },
+      });
+      return;
+    }
+
+    if (mode === "edit-lesson") {
+      setActivePage("course-add");
+      setTrainingModal({
+        mode,
+        step: 2,
+        item: {
+          courseId: course?.id || "",
+          lessonId: lesson?.id || "",
+          section: lesson?.section || "General",
+          lessonTitle: lesson?.title || "",
+          durationSec: lesson?.durationSec || 3600,
+          videoUrl: lesson?.videoUrl || "",
+          videoFileName: fileNameFromUrl(lesson?.videoUrl, "Existing video uploaded"),
+          notesUrl: lesson?.notesUrl || "",
+          notesFileName: fileNameFromUrl(lesson?.notesUrl, "Existing notes PDF uploaded"),
+          assignmentTitle: lesson?.tasks?.[0]?.title || "",
+          assignmentTime: lesson?.tasks?.[0]?.timeLimit || "60",
+          assignment: lesson?.tasks?.[0]?.description || "",
+          assignmentUrl: lesson?.tasks?.[0]?.pdfUrl || "",
+          assignmentFileName: fileNameFromUrl(lesson?.tasks?.[0]?.pdfUrl, "Existing task PDF uploaded"),
+        },
+      });
+      return;
+    }
+
+    setTrainingModal({ mode, step: 1, item: course ? sanitizeImageRecord({ ...course }) : null });
   }
+
+  useEffect(() => {
+    if (activePage === "course-add" && !trainingModal) {
+      openTrainingModal("add");
+    }
+  }, [activePage, trainingModal]);
 
   function duplicateServiceCategory(category) {
     const rows = serviceRows.filter((row) => (row.category || "Uncategorized") === category);
@@ -1579,11 +2152,34 @@ function App() {
     notify(`Duplicated ${course.name}.`);
   }
 
-  function deleteTraining(course) {
+  async function deleteTraining(course) {
     if (!window.confirm(`Delete ${course.name}?`)) return;
-    deleteTrainingApi(course.id).catch(() => {});
-    setTrainingRows((currentRows) => currentRows.filter((row) => row.id !== course.id));
+    try {
+      if (course?._raw?.id || course?.id) {
+        await deleteCourse(String(course._raw?.id || course.id));
+      }
+    } catch (err) {
+      console.warn("Failed deleting backend course", err);
+    }
+    setCourseRows((currentRows) => currentRows.filter((row) => String(row.id) !== String(course._raw?.id || course.id)));
+    setTrainingRows((currentRows) => currentRows.filter((row) => String(row.id) !== String(course.id)));
+    if (trainingModal?.mode === "view" && String(trainingModal.item?.id) === String(course._raw?.id || course.id)) {
+      closeTrainingModal();
+    }
     notify(`${course.name} was removed.`);
+  }
+
+  async function removeLessonFromCourse(course, lesson) {
+    if (!window.confirm(`Delete lesson "${lesson.title || "Untitled lesson"}"?`)) return;
+    try {
+      const updatedCourse = await deleteCourseLesson(course.id, lesson.id);
+      setCourseRows((currentRows) => currentRows.map((row) => String(row.id) === String(course.id) ? updatedCourse : row));
+      setTrainingRows((currentRows) => currentRows.map((row) => String(row.id) === String(course.id) ? normalizeCourseToTraining(updatedCourse) : row));
+      setTrainingModal({ mode: "view", step: 1, item: normalizeCourseToTraining(updatedCourse) });
+      notify("Lesson deleted.");
+    } catch (err) {
+      notify(err.message || "Lesson could not be deleted.");
+    }
   }
 
   function openStipModal(mode, program = null) {
@@ -1667,6 +2263,48 @@ function App() {
     }
   }
 
+  async function handleCourseAssetSelect(file, field, fileNameField) {
+    if (!file) return;
+    setTrainingAssetUploading(field);
+    try {
+      const uploaded = await uploadCourseAsset(file);
+      const uploadedUrl = uploaded?.url || uploaded?.filePath || "";
+      if (!uploadedUrl) throw new Error("Upload finished without a file URL. Please try again.");
+      setTrainingModal((current) => current ? {
+        ...current,
+        item: { ...current.item, [field]: uploadedUrl, [fileNameField]: file.name },
+      } : current);
+      notify(`${field === "videoUrl" ? "Video" : field === "notesUrl" ? "Notes" : "Assignment"} uploaded.`);
+    } catch (err) {
+      notify(err.message || "Course file upload failed.");
+    } finally {
+      setTrainingAssetUploading("");
+    }
+  }
+
+  function advanceTrainingStep() {
+    if (!trainingModal?.item) return;
+    const item = trainingModal.item;
+    const step = trainingModal.step || 1;
+    if (step === 1 && (!String(item.name || "").trim() || !String(item.duration || "").trim() || !String(item.price || "").trim() || !String(item.mode || "").trim() || !String(item.tools || "").trim() || !String(item.syllabus || "").trim())) {
+      notify("Complete all required course fields before continuing.");
+      return;
+    }
+    if (step === 2 && (!String(item.lessonTitle || "").trim() || !item.videoUrl || Number(item.durationSec || 0) <= 0)) {
+      notify("Add the lesson title, video duration, and video file before continuing.");
+      return;
+    }
+    if (step === 3 && !item.notesUrl) {
+      notify("Upload the lesson notes PDF before continuing.");
+      return;
+    }
+    if (step === 4) {
+      saveTrainingModal();
+      return;
+    }
+    setTrainingModal((current) => ({ ...current, step: step + 1 }));
+  }
+
   async function handleStipModalImageSelect(file) {
     if (!file) return;
     try {
@@ -1688,26 +2326,100 @@ function App() {
     }
   }
 
-  async function saveTrainingModal() {
+  async function saveTrainingModal(continueToNextLesson = false) {
     if (!trainingModal?.item || trainingModalUploading) return;
     setTrainingModalUploading(true);
 
     try {
       const uploadedItem = await persistImageIfNeeded(trainingModal.item, notify);
-      if (trainingModal.mode === "add") {
-        const backendItem = await createTraining({
-          ...uploadedItem,
-          id: undefined,
-        });
-        const next = { ...backendItem };
-        setTrainingRows((currentRows) => [...currentRows, next]);
+      const lessonTitle = String(uploadedItem.lessonTitle || "").trim();
+      const section = String(uploadedItem.section || "").trim();
+      const notesUrl = String(uploadedItem.notesUrl || "").trim();
+      const assignmentTitle = String(uploadedItem.assignmentTitle || "").trim();
+      const assignmentTime = Number(uploadedItem.assignmentTime || 0);
+      const assignmentUrl = String(uploadedItem.assignmentUrl || "").trim();
+      if (trainingModal.mode !== "lesson" && (!String(uploadedItem.name || "").trim() || !String(uploadedItem.duration || "").trim() || !String(uploadedItem.price || "").trim() || !String(uploadedItem.mode || "").trim() || !String(uploadedItem.tools || "").trim() || !String(uploadedItem.syllabus || "").trim())) {
+        throw new Error("Course title, duration, fees, mode, tools, and syllabus are required.");
+      }
+      if (["add", "lesson", "edit-lesson"].includes(trainingModal.mode) && (!section || !lessonTitle || !uploadedItem.videoUrl || !notesUrl || !assignmentTitle || assignmentTime <= 0 || !assignmentUrl)) {
+        throw new Error("Section, lesson title, video, notes PDF, assignment title, assignment time, and assignment PDF are required.");
+      }
+      const payload = {
+        title: uploadedItem.name || "Untitled course",
+        duration: uploadedItem.duration || "4 weeks",
+        fees: uploadedItem.price || "₹0",
+        mode: uploadedItem.mode || "Online",
+        tools: uploadedItem.tools || "",
+        syllabus: uploadedItem.syllabus || "",
+        thumbnail: uploadedItem.imageUrl || "",
+        status: "active",
+        studentIds: Array.isArray(uploadedItem.studentIds) ? uploadedItem.studentIds : [],
+        lessons: [
+          {
+            section,
+            title: lessonTitle,
+            videoUrl: uploadedItem.videoUrl || "",
+            notesUrl,
+            durationSec: Number(uploadedItem.durationSec || 3600),
+            tasks: [{
+              title: assignmentTitle,
+              timeLimit: assignmentTime,
+              pdfUrl: assignmentUrl || "",
+              type: "assignment",
+              description: uploadedItem.assignment || "",
+            }],
+          },
+        ],
+      };
+
+      if (trainingModal.mode === "edit-lesson") {
+        const courseId = String(uploadedItem.courseId || "");
+        const lessonId = String(uploadedItem.lessonId || "");
+        if (!courseId || !lessonId) throw new Error("Lesson reference is missing.");
+        const updatedCourse = await updateCourseLesson(courseId, lessonId, payload.lessons[0]);
+        setCourseRows((currentRows) => currentRows.map((row) => String(row.id) === courseId ? updatedCourse : row));
+        setTrainingRows((currentRows) => currentRows.map((row) => String(row.id) === courseId ? normalizeCourseToTraining(updatedCourse) : row));
+        notify("Lesson updated successfully.");
+      } else if (trainingModal.mode === "lesson") {
+        const courseId = String(uploadedItem.courseId || "");
+        if (!courseId) throw new Error("Course reference is missing.");
+        const updatedCourse = await addCourseLesson(courseId, payload.lessons[0]);
+        setCourseRows((currentRows) => currentRows.map((row) => String(row.id) === courseId ? updatedCourse : row));
+        setTrainingRows((currentRows) => currentRows.map((row) => String(row.id) === courseId ? normalizeCourseToTraining(updatedCourse) : row));
+        notify("Lesson added successfully.");
+      } else if (trainingModal.mode === "add") {
+        const backendItem = await createCourse(payload);
+        const next = normalizeCourseToTraining(backendItem);
+        setCourseRows((currentRows) => [backendItem, ...currentRows]);
+        setTrainingRows((currentRows) => [next, ...currentRows]);
         notify(`${next.name} was added.`);
       } else {
-        const saved = await updateTraining(uploadedItem.id, uploadedItem);
-        setTrainingRows((currentRows) => currentRows.map((row) => row.id === trainingModal.item.id ? { ...saved } : row));
-        notify(`${saved.name} was updated.`);
+        const saved = await updateCourse(uploadedItem.id, { ...payload, id: uploadedItem.id, title: uploadedItem.name || payload.title });
+        const next = normalizeCourseToTraining(saved || { ...payload, id: uploadedItem.id, title: payload.title });
+        setCourseRows((currentRows) => currentRows.map((row) => String(row.id) === String(uploadedItem.id) ? (saved || { ...payload, id: uploadedItem.id, title: payload.title }) : row));
+        setTrainingRows((currentRows) => currentRows.map((row) => String(row.id) === String(uploadedItem.id) ? next : row));
+        notify(`${next.name} was updated.`);
       }
-      closeTrainingModal();
+      if (trainingModal.mode === "lesson" && continueToNextLesson) {
+        setTrainingModal({
+          mode: "lesson",
+          step: 2,
+          item: {
+            courseId: String(uploadedItem.courseId || ""),
+            section: String(uploadedItem.section || "General"),
+            lessonTitle: "",
+            durationSec: 3600,
+            videoUrl: "",
+            notesUrl: "",
+            assignmentTitle: "",
+            assignmentTime: "60",
+            assignment: "",
+            assignmentUrl: "",
+          },
+        });
+      } else {
+        closeTrainingModal();
+      }
     } catch (err) {
       console.error("saveTrainingModal failed", err);
       notify(err?.message || "Save failed. Please try again.");
@@ -1770,17 +2482,20 @@ function App() {
   async function handleLogin(event) {
     event.preventDefault();
     try {
+      if (rememberLogin) {
+        safeStorageSet(SAVED_LOGIN_STORAGE_KEY, JSON.stringify(loginForm));
+      } else {
+        safeStorageRemove(SAVED_LOGIN_STORAGE_KEY);
+      }
       const user = await authLogin(loginForm.username, loginForm.password);
       setCurrentUser(user);
       if (String(user.role || "").toLowerCase() === "student") {
         localStorage.setItem("crmst-student-session", JSON.stringify(user));
         setAppView("student-dashboard");
-        setLoginForm({ username: "", password: "" });
         notify(`Welcome back, ${user.name}.`);
         return;
       }
-      setAppView(isCrmExecutive(user.role) ? "crm-executive" : "dashboard");
-      setLoginForm({ username: "", password: "" });
+      setAppView(isCrmExecutive(user.role) ? "crm-executive" : isItUser(user) ? "it-dashboard" : "dashboard");
       notify(`Welcome back, ${user.name}.`);
     } catch (err) {
       console.warn("API login failed", err);
@@ -1835,12 +2550,12 @@ function App() {
 
   async function updateCrmLead(lead) {
     const savedLead = await updateLead(lead.id, lead);
-    setLeads((current) => current.map((item) => String(item.id) === String(lead.id) ? savedLead : item));
+    setLeads((current) => current.map((item) => String(item.id) === String(lead.id) ? normalizeLeadForUi(savedLead) : item));
   }
 
   async function createCrmLead(lead) {
     const savedLead = await createLeadApi(lead);
-    setLeads((current) => [savedLead, ...current]);
+    setLeads((current) => [normalizeLeadForUi(savedLead), ...current]);
   }
 
  async function addMember(event) {
@@ -1856,7 +2571,7 @@ function App() {
   const password = createUserForm.password.trim();
   const dept = createUserForm.dept.trim();
   const position = createUserForm.position.trim();
-  const role = createUserForm.role.trim();
+  const role = departmentRoleMap[dept] || dept;
   const joined = createUserForm.joined.trim();
   const state = createUserForm.state.trim();
   const branch = createUserForm.branch.trim();
@@ -1968,7 +2683,7 @@ function App() {
     }
   }
 
-  function addLead(event) {
+  async function addLead(event) {
     event.preventDefault();
     const name = createLead.name.trim();
     const phone = createLead.phone.trim();
@@ -2023,10 +2738,13 @@ function App() {
       assignedDate: createLead.assignedDate || new Date().toISOString().slice(0, 10),
       createdAt: new Date().toISOString().slice(0, 10),
     };
-    setLeads((current) => [newLead, ...current]);
-    createLeadApi(newLead)
-      .then((savedLead) => setLeads((current) => current.map((lead) => String(lead.id) === newLead.id ? savedLead : lead)))
-      .catch((err) => console.warn("Lead was saved locally but could not be synced", err));
+    try {
+      const savedLead = await createLeadApi(newLead);
+      setLeads((current) => [normalizeLeadForUi(savedLead), ...current]);
+    } catch (err) {
+      notify(err.message || "Lead could not be saved.");
+      return;
+    }
     setCreateLead({
       name: "",
       phone: "",
@@ -2202,12 +2920,6 @@ function App() {
             >
               Login
             </button>
-            <button
-              className={authMode === "signup" ? "active" : ""}
-              onClick={() => setAuthMode("signup")}
-            >
-              Sign Up
-            </button>
           </div>
 
           {authMode === "login" ? (
@@ -2217,6 +2929,7 @@ function App() {
               <Field label="Username">
                 <input
                   value={loginForm.username}
+                  autoComplete="username"
                   onChange={(event) =>
                     setLoginForm((current) => ({
                       ...current,
@@ -2230,6 +2943,7 @@ function App() {
                 <input
                   type="password"
                   value={loginForm.password}
+                  autoComplete="current-password"
                   onChange={(event) =>
                     setLoginForm((current) => ({
                       ...current,
@@ -2239,6 +2953,14 @@ function App() {
                   placeholder="Enter your password"
                 />
               </Field>
+              <label className="remember-login">
+                <input
+                  type="checkbox"
+                  checked={rememberLogin}
+                  onChange={(event) => setRememberLogin(event.target.checked)}
+                />
+                <span>Remember credentials on this device</span>
+              </label>
               <button className="primary-button full-width" type="submit">
                 <LockKeyhole size={16} />
                 Login and Continue
@@ -2305,7 +3027,44 @@ function App() {
   if (appView === "student-dashboard" || (currentUser && String(currentUser.role || "").toLowerCase() === "student")) {
     return (
       <ErrorBoundary>
-        <StudentDashboard user={currentUser} onLogout={logout} courses={trainingRows} />
+        <StudentDashboard
+          user={currentUser}
+          onLogout={logout}
+          courses={displayTrainingRows}
+          notifications={notifications}
+          onRefreshNotifications={async () => {
+            const studentId = String(currentUser?.id || currentUser?._id || "").trim();
+            if (!studentId) return;
+            const cached = readStudentNotificationsFromStorage(currentUser);
+            if (cached.fetchedAt && Date.now() - cached.fetchedAt < STUDENT_NOTIFICATIONS_CACHE_TTL_MS) return;
+            const result = await loadNotifications(studentId);
+            if (Array.isArray(result)) {
+              setNotifications(result);
+              writeStudentNotificationsToStorage(currentUser, result);
+              if (result.some((item) => item.type === "assignment_evaluated")) {
+                invalidateCoursesCache();
+                const refreshedCourses = await loadCourses(true);
+                if (refreshedCourses.length) {
+                  setCourseRows(refreshedCourses);
+                  writeStudentCoursesToStorage(currentUser, refreshedCourses);
+                }
+              }
+            }
+          }}
+          onReadNotification={handleReadNotification}
+          onReadAllNotifications={handleReadAllNotifications}
+          uploadStudentResource={uploadStudentCourseResource}
+          saveLessonProgress={saveStudentLessonProgress}
+        />
+        {toast ? <div className="toast">{toast}</div> : null}
+      </ErrorBoundary>
+    );
+  }
+
+  if (appView === "it-dashboard" || (currentUser && isItUser(currentUser))) {
+    return (
+      <ErrorBoundary>
+        <ItDashboard user={currentUser} users={users} tasks={itTasks} leaves={itLeaves} employees={itEmployees} onLogout={logout} />
         {toast ? <div className="toast">{toast}</div> : null}
       </ErrorBoundary>
     );
@@ -2374,6 +3133,9 @@ function App() {
                     key={item.id}
                     className={`nav-item ${activePage === item.id ? "active" : ""}`}
                     onClick={() => {
+                      if (activePage === "course-add" && item.id !== "course-add") {
+                        closeTrainingModal();
+                      }
                       setActivePage(item.id);
                       setMobileNavOpen(false);
                     }}
@@ -2976,7 +3738,7 @@ function App() {
                       setCreateUserForm((current) => ({ ...current, dept: event.target.value }))
                     }
                   >
-                    {["CRM", "Sales", "HR", "Technical", "Design", "Marketing"].map((dept) => (
+                    {backendDepartments.map((dept) => (
                       <option key={dept} value={dept}>{dept}</option>
                     ))}
                   </select>
@@ -2990,21 +3752,6 @@ function App() {
                     placeholder="CRM Executive"
                   />
                 </Field>
-                <Field label="Role *">
-                  <select
-                    value={createUserForm.role}
-                    onChange={(event) =>
-                      setCreateUserForm((current) => ({ ...current, role: event.target.value }))
-                    }
-                  >
-                    {["CRM Executive", "Sales Executive", "HR", "Manager", "Admin", "Trainer", "Student"].map(
-                      (role) => (
-                        <option key={role} value={role}>{role}</option>
-                      ),
-                    )}
-                  </select>
-                </Field>
-
                 <p className="form-section-title">Joining Information</p>
                 <Field label="Date of Joining *">
                   <input
@@ -3124,8 +3871,8 @@ function App() {
           )}
 
           {activePage === "user-view" && (
-            <Panel title={`All users (${users.length})`}>
-              <UsersTable users={users} />
+            <Panel title={`All users (${visibleUsers.length})`}>
+              <UsersTable users={visibleUsers} />
             </Panel>
           )}
 
@@ -3331,7 +4078,7 @@ function App() {
                 <StatCard tone="blue" icon={Users} label="Total Leads" value={leads.length} note="Across sales modules" />
                 <StatCard tone="green" icon={CheckCircle2} label="Converted" value={wonLeads.length} note="Approved outcomes" />
                 <StatCard tone="rose" icon={BadgeIndianRupee} label="Revenue" value={compactCurrency(revenue)} note="Closed pipeline value" />
-                <StatCard tone="amber" icon={Sparkles} label="Conv. Rate" value={`${Math.round((wonLeads.length / leads.length) * 100)}%`} note="Overall conversion" />
+                <StatCard tone="amber" icon={Sparkles} label="Conv. Rate" value={`${leads.length ? Math.round((wonLeads.length / leads.length) * 100) : 0}%`} note="Overall conversion" />
               </section>
               <Panel title="Sales performance by executive">
                 <div className="table-wrap">
@@ -3347,9 +4094,9 @@ function App() {
                     </thead>
                     <tbody>
                       {activeUsers.map((user) => {
-                        const myLeads = leads.filter((lead) => lead.assignedTo === user.id);
+                        const myLeads = leads.filter((lead) => String(lead.assignedTo) === String(user.id || user._id));
                         const converted = myLeads.filter((lead) =>
-                          ["Interested"].includes(lead.status),
+                          ["Interested", "Converted", "Approved"].includes(lead.status),
                         );
                         const totalRevenue = converted.reduce(
                           (sum, lead) => sum + Number(lead.value || 0),
@@ -3788,13 +4535,128 @@ function App() {
             </>
           )}
 
+          {activePage === "course-view" && (
+            <>
+              <Panel title="Courses">
+                <div className="course-library-heading">
+                  <p className="eyebrow">COURSES</p>
+                  <h2>Course library</h2>
+                </div>
+                <div className="module-toolbar course-library-toolbar">
+                  <div className="toolbar-search">
+                    <Search size={16} />
+                    <input value={trainingQuery} onChange={(event) => { setTrainingQuery(event.target.value); setTrainingPage(1); }} placeholder="Search courses" />
+                  </div>
+                  <button type="button" className="primary-button" onClick={() => setActivePage("course-add")}>Add course</button>
+                </div>
+                {courseRows.length === 0 ? (
+                  <div className="catalog-empty-state">No courses found in Firebase.</div>
+                ) : (
+                  <div className="course-library-grid">
+                    {courseRows
+                      .map((course) => normalizeCourseToTraining(course))
+                      .filter((course) => [course.name, course.duration, course.mode, course.price, ...(course.lessons || []).map((lesson) => lesson.title)].join(" ").toLowerCase().includes(trainingQuery.toLowerCase()))
+                      .slice((trainingPage - 1) * 6, trainingPage * 6)
+                      .map((course) => {
+                        const expanded = expandedCourseId === course.id;
+                        const lessons = Array.isArray(course.lessons) ? course.lessons : [];
+                        const backendSectionNames = Array.isArray(course.sections)
+                          ? course.sections
+                              .map((section) => String(section?.name || section || "").trim())
+                              .filter(Boolean)
+                          : [];
+                        const sectionNames = backendSectionNames.length
+                          ? backendSectionNames
+                          : [...new Set(lessons.map((lesson) => String(lesson.section || "General").trim() || "General"))];
+                        const sectionGroups = sectionNames.map((section) => ({
+                          name: section,
+                          lessons: lessons.filter((lesson) => String(lesson.section || "General").trim() === section),
+                        }));
+                        return (
+                          <article key={course.id} className="course-library-card">
+                            <div className="course-library-card-head">
+                              <div>
+                                <strong>{course.name}</strong>
+                                <span>{sectionNames.join(", ") || "General"} · {course.duration} · {course.mode} · {course.price}</span>
+                              </div>
+                            </div>
+                            <div className="course-library-section-list course-library-section-list-plain">
+                              {sectionGroups.map((group) => (
+                                <div key={group.name} className="course-library-section-row course-library-section-row-plain">
+                                  <strong>{group.name}</strong>
+                                </div>
+                              ))}
+                            </div>
+                            {expanded ? (
+                              <div className="course-library-lessons">
+                                {lessons.length ? lessons.map((lesson, index) => (
+                                  <div key={lesson.id || `${course.id}-lesson-${index}`} className="course-library-lesson">
+                                    <div>
+                                      <strong>{lesson.title || `Lesson ${index + 1}`}</strong>
+                                      <span>{lesson.durationSec ? `${Math.round(Number(lesson.durationSec) / 60)} min` : "Lesson content"}</span>
+                                    </div>
+                                    <div className="course-library-links">
+                                      {lesson.videoUrl ? <a href={lesson.videoUrl} target="_blank" rel="noreferrer">Video</a> : null}
+                                      {lesson.notesUrl ? <a href={lesson.notesUrl} target="_blank" rel="noreferrer">Notes</a> : null}
+                                      {(lesson.tasks || []).map((task, taskIndex) => (
+                                        <a key={task.id || `${lesson.id}-task-${taskIndex}`} href={task.pdfUrl || task.url || "#"} target="_blank" rel="noreferrer">Assignment</a>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )) : <span className="course-library-empty-detail">No lessons saved for this course.</span>}
+                              </div>
+                            ) : null}
+                            <div className="course-library-actions">
+                              <button type="button" className="ghost-button compact" onClick={() => openTrainingModal("view", course)}>{expanded ? "Hide course" : "View course"}</button>
+                              <button type="button" className="ghost-button compact" onClick={() => openTrainingModal("edit", course)}>Edit</button>
+                              <button type="button" className="ghost-button compact" onClick={() => openTrainingModal("lesson", course)}>Next lesson</button>
+                              <button type="button" className="ghost-button compact danger" onClick={() => deleteTraining(course)}>Delete</button>
+                            </div>
+                          </article>
+                        );
+                      })}
+                  </div>
+                )}
+              </Panel>
+            </>
+          )}
+
+          {activePage === "course-check" && (
+            <>
+              <section className="stats-grid compact four-up">
+                <StatCard tone="blue" icon={Users} label="Students with submissions" value={new Set(taskReviewRows.map((row) => row.studentId)).size} note="Uploaded work" />
+                <StatCard tone="amber" icon={ClipboardCheck} label="Needs review" value={taskReviewRows.filter((row) => row.taskStudentPdfUpload && row.grade === null).length} note="Awaiting grade" />
+                <StatCard tone="green" icon={CheckCheck} label="Evaluated" value={taskReviewRows.filter((row) => row.grade !== null).length} note="Graded submissions" />
+                <StatCard tone="teal" icon={GraduationCap} label="Total submissions" value={taskReviewRows.length} note="Section-aware records" />
+              </section>
+              <Panel title="Check student tasks">
+                <div className="module-toolbar">
+                  <div className="toolbar-search"><Search size={16} /><input value={taskReviewQuery} onChange={(event) => setTaskReviewQuery(event.target.value)} placeholder="Search student, course, section, or task" /></div>
+                  <button type="button" className="ghost-button compact" onClick={async () => { setTaskSubmissionLoading(true); try { setTaskSubmissions(await loadTaskSubmissions(true)); } finally { setTaskSubmissionLoading(false); } }}>Refresh submissions</button>
+                </div>
+                {taskSubmissionLoading ? <div className="catalog-empty-state">Loading student submissions...</div> : (
+                  <div className="catalog-card-list training-grid">
+                    {taskReviewRows.filter((row) => [row.studentName, row.courseTitle, row.section, row.taskTitle].join(" ").toLowerCase().includes(taskReviewQuery.toLowerCase())).map((row) => (
+                      <article key={row.id} className="admin-entity-card wide-card">
+                        <div className="course-title-row"><div><strong>{row.studentName}</strong><span>{row.studentEmail || row.studentId}</span></div><span className={badgeClass(row.grade !== null ? "approved" : row.taskStudentPdfUpload ? "pending" : "neutral")}>{row.grade !== null ? `Graded · ${row.grade}/100` : row.taskStudentPdfUpload ? "Submitted" : "Not submitted"}</span></div>
+                        <div className="course-metrics-grid"><div><span>Course</span><strong>{row.courseTitle}</strong></div><div><span>Section</span><strong>{row.section}</strong></div><div><span>Lesson</span><strong>{row.lessonTitle}</strong></div><div><span>Task</span><strong>{row.taskTitle}</strong></div></div>
+                        <div className="course-actions"><button type="button" className="primary-button compact" onClick={() => { setTaskSubmissionModal(row); setTaskGradeForm({ grade: row.grade ?? "", feedback: row.feedback || "" }); }}>Check assignment</button></div>
+                      </article>
+                    ))}
+                    {!taskReviewRows.length && <div className="catalog-empty-state">No student submissions found.</div>}
+                  </div>
+                )}
+              </Panel>
+            </>
+          )}
+
           {activePage === "trainings" && (
             <>
               <section className="stats-grid compact four-up">
-                <StatCard tone="blue" icon={GraduationCap} label="Total courses" value={trainingRows.length} note="Learning offerings" />
-                <StatCard tone="teal" icon={CalendarClock} label="Active batches" value={Math.max(6, Math.round(trainingRows.length / 2))} note="Live training cohorts" />
-                <StatCard tone="green" icon={Users} label="Enrollments" value={Math.round(trainingRows.length * 3.2)} note="Current enrollments" />
-                <StatCard tone="amber" icon={BadgeIndianRupee} label="Revenue" value={`Rs ${Math.round(trainingRows.length * 14500 / 1000)}K`} note="Monthly training value" />
+                <StatCard tone="blue" icon={GraduationCap} label="Total courses" value={displayTrainingRows.length} note="Learning offerings" />
+                <StatCard tone="teal" icon={CalendarClock} label="Active batches" value={Math.max(6, Math.round(displayTrainingRows.length / 2))} note="Live training cohorts" />
+                <StatCard tone="green" icon={Users} label="Enrollments" value={Math.round(displayTrainingRows.length * 3.2)} note="Current enrollments" />
+                <StatCard tone="amber" icon={BadgeIndianRupee} label="Revenue" value={`Rs ${Math.round(displayTrainingRows.length * 14500 / 1000)}K`} note="Monthly training value" />
               </section>
 
               <Panel title="Training management workspace">
@@ -3806,12 +4668,12 @@ function App() {
                   <button type="button" className="primary-button" onClick={() => openTrainingModal("add")}>Add course</button>
                 </div>
 
-                {trainingRows.length === 0 ? (
+                {displayTrainingRows.length === 0 ? (
                   <div className="catalog-empty-state">No training programs available</div>
                 ) : (
                   <>
                     <div className="catalog-card-list training-grid">
-                      {trainingRows
+                      {displayTrainingRows
                         .filter((row) => {
                           const haystack = [row.name, row.duration, row.price, row.tools, row.trainer, row.mode].join(" ").toLowerCase();
                           return haystack.includes(trainingQuery.toLowerCase());
@@ -3832,7 +4694,6 @@ function App() {
                                 <div className="course-body">
                                   <div className="course-title-row">
                                     <strong>{course.name}</strong>
-                                    <span className="badge success">{course.mode || "Hybrid"}</span>
                                   </div>
                                   <div className="course-metrics-grid">
                                     <div><span>Duration</span><strong>{course.duration || "3 months"}</strong></div>
@@ -3853,14 +4714,12 @@ function App() {
                                   </div>
                                   {expanded && (
                                     <div className="syllabus-stack">
-                                      {[
-                                        "Introduction and environment setup",
-                                        "Project sprints and collaborative modules",
-                                        "Assessment, resume coaching, and portfolio review",
-                                      ].map((module, idx) => (
-                                        <div key={module} className="syllabus-item">
-                                          <strong>Module {idx + 1}</strong>
-                                          <span>{module}</span>
+                                      {(Array.isArray(course?.lessons) && course.lessons.length > 0 ? course.lessons : [
+                                        { title: "Course overview", notesUrl: course?.syllabus || "", tasks: [] },
+                                      ]).map((lesson, idx) => (
+                                        <div key={`${course.id}-lesson-${lesson.id || idx}`} className="syllabus-item">
+                                          <strong>{lesson.title || `Lesson ${idx + 1}`}</strong>
+                                          <span>{lesson.notesUrl ? "Notes uploaded" : lesson.tasks?.length ? `${lesson.tasks.length} assignment item(s)` : (course?.syllabus || "Course syllabus is ready.")}</span>
                                         </div>
                                       ))}
                                     </div>
@@ -3875,7 +4734,7 @@ function App() {
                     <div className="pagination-row">
                       <button type="button" className="ghost-button compact" disabled={trainingPage === 1} onClick={() => setTrainingPage((current) => Math.max(1, current - 1))}>Previous</button>
                       <span>Page {trainingPage}</span>
-                      <button type="button" className="ghost-button compact" disabled={trainingPage * 6 >= trainingRows.filter((row) => {
+                      <button type="button" className="ghost-button compact" disabled={trainingPage * 6 >= displayTrainingRows.filter((row) => {
                         const haystack = [row.name, row.duration, row.price, row.tools, row.trainer, row.mode].join(" ").toLowerCase();
                         return haystack.includes(trainingQuery.toLowerCase());
                       }).length} onClick={() => setTrainingPage((current) => current + 1)}>Next</button>
@@ -4291,54 +5150,147 @@ function App() {
         </ModalSurface>
       ) : null}
 
-      {trainingModal ? (
-        <ModalSurface title={trainingModal.mode === "add" ? "Add course" : trainingModal.mode === "view" ? "Course details" : "Edit course"} onClose={closeTrainingModal}>
-          <div className="modal-grid">
-            <div className="modal-detail-card single-edit">
-              <div className="modal-image-wrap">
-                <label className="upload-trigger" htmlFor={`training-modal-image-${trainingModal.item.id}`}>
-                  <DecorativeThumbnail
-                    label={`${trainingModal.item.name || ""} ${trainingModal.item.tools || ""}`}
-                    image={getDisplayImage(trainingModal.item.imageUrl, "", trainingModal.item._previewImage)}
-                    className="modal-thumbnail"
-                  />
-                  <input
-                    id={`training-modal-image-${trainingModal.item.id}`}
-                    type="file"
-                    accept="image/*"
-                    hidden
-                    onChange={(event) => {
-                      handleTrainingModalImageSelect(event.target.files?.[0] || null);
-                      event.target.value = "";
-                    }}
-                  />
-                </label>
-              </div>
-              <div className="modal-detail-body">
-                <label className="field"><span>Name</span><input value={trainingModal.item.name} readOnly={trainingModal.mode === "view"} onChange={(event) => setTrainingModal((current) => ({ ...current, item: { ...current.item, name: event.target.value } }))} /></label>
-                <label className="field"><span>Duration</span><input value={trainingModal.item.duration || ""} readOnly={trainingModal.mode === "view"} onChange={(event) => setTrainingModal((current) => ({ ...current, item: { ...current.item, duration: event.target.value } }))} /></label>
-                <label className="field"><span>Fees</span><input value={trainingModal.item.price || ""} readOnly={trainingModal.mode === "view"} onChange={(event) => setTrainingModal((current) => ({ ...current, item: { ...current.item, price: event.target.value } }))} /></label>
-                <label className="field"><span>Mode</span><input value={trainingModal.item.mode || ""} readOnly={trainingModal.mode === "view"} onChange={(event) => setTrainingModal((current) => ({ ...current, item: { ...current.item, mode: event.target.value } }))} /></label>
-                <label className="field"><span>Level</span><input value={trainingModal.item.level || ""} readOnly={trainingModal.mode === "view"} onChange={(event) => setTrainingModal((current) => ({ ...current, item: { ...current.item, level: event.target.value } }))} /></label>
-                <label className="field"><span>Seats</span><input value={trainingModal.item.seats || ""} readOnly={trainingModal.mode === "view"} onChange={(event) => setTrainingModal((current) => ({ ...current, item: { ...current.item, seats: event.target.value } }))} /></label>
-                <label className="field"><span>Trainer</span><input value={trainingModal.item.trainer || ""} readOnly={trainingModal.mode === "view"} onChange={(event) => setTrainingModal((current) => ({ ...current, item: { ...current.item, trainer: event.target.value } }))} /></label>
-                <label className="field"><span>Batch timing</span><input value={trainingModal.item.batchTiming || ""} readOnly={trainingModal.mode === "view"} onChange={(event) => setTrainingModal((current) => ({ ...current, item: { ...current.item, batchTiming: event.target.value } }))} /></label>
-                <label className="field"><span>Projects</span><input value={trainingModal.item.projects || ""} readOnly={trainingModal.mode === "view"} onChange={(event) => setTrainingModal((current) => ({ ...current, item: { ...current.item, projects: event.target.value } }))} /></label>
-                <label className="field"><span>Certification</span><input value={trainingModal.item.certification || ""} readOnly={trainingModal.mode === "view"} onChange={(event) => setTrainingModal((current) => ({ ...current, item: { ...current.item, certification: event.target.value } }))} /></label>
-                <label className="field"><span>Placement support</span><input value={trainingModal.item.placement || ""} readOnly={trainingModal.mode === "view"} onChange={(event) => setTrainingModal((current) => ({ ...current, item: { ...current.item, placement: event.target.value } }))} /></label>
-                <label className="field"><span>Tools / technologies</span><textarea value={trainingModal.item.tools || ""} readOnly={trainingModal.mode === "view"} onChange={(event) => setTrainingModal((current) => ({ ...current, item: { ...current.item, tools: event.target.value } }))} /></label>
-                <label className="field"><span>Syllabus</span><textarea value={trainingModal.item.syllabus || "Introduction and environment setup\nProject sprints and collaborative modules\nAssessment, resume coaching, and portfolio review"} readOnly={trainingModal.mode === "view"} onChange={(event) => setTrainingModal((current) => ({ ...current, item: { ...current.item, syllabus: event.target.value } }))} /></label>
-                <label className="field"><span>Image URL / data URL</span><input value={trainingModal.item.imageUrl || ""} readOnly={trainingModal.mode === "view"} onChange={(event) => setTrainingModal((current) => ({ ...current, item: { ...current.item, imageUrl: event.target.value, _pendingImageFile: null, _previewImage: sanitizeImageReference(event.target.value) } }))} /></label>
-              </div>
+      {taskSubmissionModal ? (
+        <ModalSurface title="Check assignment" onClose={() => setTaskSubmissionModal(null)}>
+          <div className="modal-detail-card single-edit">
+            <div className="course-title-row"><div><strong>{taskSubmissionModal.studentName}</strong><span>{taskSubmissionModal.courseTitle} · {taskSubmissionModal.section} · {taskSubmissionModal.lessonTitle}</span></div><span className={badgeClass(taskSubmissionModal.grade !== null ? "approved" : "pending")}>{taskSubmissionModal.grade !== null ? `Graded · ${taskSubmissionModal.grade}/100` : "Needs review"}</span></div>
+            <div className="course-actions">
+              {taskSubmissionModal.taskPdfUrl ? <a className="ghost-button compact" href={taskSubmissionModal.taskPdfUrl} target="_blank" rel="noreferrer">Open task PDF</a> : null}
+              {taskSubmissionModal.taskStudentPdfUpload ? <a className="ghost-button compact" href={taskSubmissionModal.taskStudentPdfUpload} target="_blank" rel="noreferrer">Open student PDF</a> : <span className="course-library-empty-detail">Student has not uploaded a PDF yet.</span>}
+            </div>
+            <div className="course-builder-grid">
+              <label className="course-builder-field"><span>Marks / grade (0-100)</span><input type="number" min="0" max="100" value={taskGradeForm.grade} onChange={(event) => setTaskGradeForm((current) => ({ ...current, grade: event.target.value }))} /></label>
+              <label className="course-builder-field full"><span>Feedback and improvement points</span><textarea rows="5" value={taskGradeForm.feedback} onChange={(event) => setTaskGradeForm((current) => ({ ...current, feedback: event.target.value }))} placeholder="Tell the student what was done well and what to improve." /></label>
             </div>
           </div>
-          <div className="modal-actions">
-            {trainingModal.mode !== "view" ? (
-              <button type="button" className="primary-button" onClick={saveTrainingModal} disabled={trainingModalUploading}>
-                {trainingModalUploading ? "Saving..." : "Save"}
+          <div className="modal-actions"><button type="button" className="primary-button" disabled={taskGradeSaving || !taskGradeForm.grade} onClick={async () => { setTaskGradeSaving(true); try { await gradeStudentTask(taskSubmissionModal.courseId, taskSubmissionModal.lessonId, taskSubmissionModal.taskId, { studentId: taskSubmissionModal.studentId, grade: taskGradeForm.grade, feedback: taskGradeForm.feedback, assignmentTitle: taskSubmissionModal.taskTitle }); setTaskSubmissions((current) => current.map((row) => row.id === taskSubmissionModal.id ? { ...row, grade: Number(taskGradeForm.grade), feedback: taskGradeForm.feedback } : row)); setTaskSubmissionModal(null); notify("Assignment graded and student notified."); } catch (err) { notify(err?.message || "Could not save grade."); } finally { setTaskGradeSaving(false); } }}>{taskGradeSaving ? "Saving..." : "Save grade"}</button><button type="button" className="ghost-button compact" onClick={() => setTaskSubmissionModal(null)}>Cancel</button></div>
+        </ModalSurface>
+      ) : null}
+
+      {trainingModal?.mode === "view" ? (
+        <CourseViewSurface
+          course={trainingModal.item}
+          onClose={closeTrainingModal}
+          onEdit={() => openTrainingModal("edit", trainingModal.item)}
+          onEditLesson={(lesson) => openTrainingModal("edit-lesson", trainingModal.item, lesson)}
+          onNextLesson={() => openTrainingModal("lesson", trainingModal.item)}
+          onDeleteCourse={() => deleteTraining(trainingModal.item)}
+          onDeleteLesson={(lesson) => removeLessonFromCourse(trainingModal.item, lesson)}
+        />
+      ) : trainingModal ? (
+        <ModalSurface showClose={!['add', 'edit', 'lesson', 'edit-lesson'].includes(trainingModal.mode)} className={`course-builder-modal ${['add', 'edit', 'lesson', 'edit-lesson'].includes(trainingModal.mode) ? "course-builder-page" : ""}`} title={trainingModal.mode === "add" ? "Add course" : trainingModal.mode === "lesson" ? "Add lesson" : trainingModal.mode === "edit-lesson" ? "Edit lesson" : trainingModal.mode === "view" ? "Course details" : "Edit course"} onClose={closeTrainingModal}>
+          <div className="course-builder-steps">
+            {(trainingModal.mode === "edit" ? ["Course"] : ["Course", "Lesson Video", "Notes PDF", "Task PDF"]).map((label, index) => (
+              <button key={label} type="button" className={trainingModal.step === index + 1 ? "active" : trainingModal.step > index + 1 ? "done" : ""} onClick={() => trainingModal.mode === "view" ? setTrainingModal((current) => ({ ...current, step: index + 1 })) : null}>
+                {index + 1} {label}
               </button>
+            ))}
+          </div>
+          <div className="course-builder-panel">
+            {trainingModal.step === 1 ? (
+              <>
+                <div className="course-builder-panel-title">Course information</div>
+                <div className="course-builder-grid">
+                  <div className="course-builder-field"><label>Title *</label><input value={trainingModal.item.name || ""} readOnly={trainingModal.mode === "view"} placeholder="Frontend Design" onChange={(event) => setTrainingModal((current) => ({ ...current, item: { ...current.item, name: event.target.value } }))} /></div>
+                  <div className="course-builder-field"><label>Duration *</label><input value={trainingModal.item.duration || ""} readOnly={trainingModal.mode === "view"} placeholder="12 weeks" onChange={(event) => setTrainingModal((current) => ({ ...current, item: { ...current.item, duration: event.target.value } }))} /></div>
+                  <div className="course-builder-field"><label>Fees *</label><input value={trainingModal.item.price || ""} readOnly={trainingModal.mode === "view"} placeholder="₹25,000" onChange={(event) => setTrainingModal((current) => ({ ...current, item: { ...current.item, price: event.target.value } }))} /></div>
+                  <div className="course-builder-field"><label>Mode *</label><select value={trainingModal.item.mode || "Online"} disabled={trainingModal.mode === "view"} onChange={(event) => setTrainingModal((current) => ({ ...current, item: { ...current.item, mode: event.target.value } }))}><option>Online</option><option>Offline</option><option>Hybrid</option></select></div>
+                  <div className="course-builder-field full"><label>Tools / Technologies *</label><input value={trainingModal.item.tools || ""} readOnly={trainingModal.mode === "view"} placeholder="React, Node.js, MongoDB" onChange={(event) => setTrainingModal((current) => ({ ...current, item: { ...current.item, tools: event.target.value } }))} /></div>
+                  <div className="course-builder-field full"><label>Syllabus *</label><textarea value={trainingModal.item.syllabus || ""} readOnly={trainingModal.mode === "view"} placeholder="Modules, topics, and outcomes" onChange={(event) => setTrainingModal((current) => ({ ...current, item: { ...current.item, syllabus: event.target.value } }))} /></div>
+                  <div className="course-builder-field full">
+                    <label>Assign students</label>
+                    {studentUsers.length === 0 ? (
+                      <small className="course-builder-empty-students">No student users found.</small>
+                    ) : (
+                      <div className="course-student-picker">
+                        {studentUsers.map((student) => {
+                          const studentId = String(student.id || student._id || "");
+                          const selected = (trainingModal.item.studentIds || []).map(String).includes(studentId);
+                          return (
+                            <label key={studentId} className={`course-student-option ${selected ? "selected" : ""}`}>
+                              <input
+                                type="checkbox"
+                                checked={selected}
+                                disabled={trainingModal.mode === "view"}
+                                onChange={() => setTrainingModal((current) => {
+                                  const currentIds = (current.item.studentIds || []).map(String);
+                                  const nextIds = currentIds.includes(studentId)
+                                    ? currentIds.filter((id) => id !== studentId)
+                                    : [...currentIds, studentId];
+                                  return { ...current, item: { ...current.item, studentIds: nextIds } };
+                                })}
+                              />
+                              <span>
+                                <strong>{student.name || student.username}</strong>
+                                <small>{student.username || student.email || "Student"}</small>
+                              </span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    )}
+                    <small>{(trainingModal.item.studentIds || []).length} student(s) selected</small>
+                  </div>
+                </div>
+              </>
             ) : null}
-            <button type="button" className="ghost-button compact" onClick={closeTrainingModal}>Close</button>
+            {trainingModal.step === 2 ? (
+              <>
+                <div className="course-builder-panel-title">{trainingModal.mode === "edit-lesson" ? "Edit" : "Add"} {trainingModal.item.section || "General"} lesson {currentLessonNumber}</div>
+                <div className="course-builder-grid">
+                  <div className="course-builder-field">
+                    <label>Section *</label>
+                    <select
+                      value={lessonSectionOptions.includes(trainingModal.item.section) ? trainingModal.item.section : "__new__"}
+                      disabled={trainingModal.mode === "view"}
+                      onChange={(event) => setTrainingModal((current) => ({ ...current, item: { ...current.item, section: event.target.value === "__new__" ? "" : event.target.value } }))}
+                    >
+                      {lessonSectionOptions.map((section) => <option key={section} value={section}>{section}</option>)}
+                      <option value="__new__">New section...</option>
+                    </select>
+                    {!lessonSectionOptions.includes(trainingModal.item.section) ? <input value={trainingModal.item.section || ""} readOnly={trainingModal.mode === "view"} placeholder="Enter new section name" onChange={(event) => setTrainingModal((current) => ({ ...current, item: { ...current.item, section: event.target.value } }))} /> : null}
+                  </div>
+                  <div className="course-builder-field"><label>Lesson title *</label><input value={trainingModal.item.lessonTitle || ""} readOnly={trainingModal.mode === "view"} placeholder="Intro to HTML" onChange={(event) => setTrainingModal((current) => ({ ...current, item: { ...current.item, lessonTitle: event.target.value } }))} /></div>
+                  <div className="course-builder-field"><label>Video duration (seconds) *</label><input type="number" min="1" value={trainingModal.item.durationSec || 3600} readOnly={trainingModal.mode === "view"} onChange={(event) => setTrainingModal((current) => ({ ...current, item: { ...current.item, durationSec: event.target.value } }))} /></div>
+                  <div className="course-builder-field full"><label>Video file *</label><input className="course-asset-input" type="file" accept="video/*" disabled={trainingModal.mode === "view"} onChange={(event) => { handleCourseAssetSelect(event.target.files?.[0], "videoUrl", "videoFileName"); }} /><small>{trainingAssetUploading === "videoUrl" ? "Uploading video..." : trainingModal.item.videoFileName || (trainingModal.item.videoUrl ? "Video uploaded." : "Choose a video file")}</small></div>
+                </div>
+              </>
+            ) : null}
+            {trainingModal.step === 3 ? (
+              <>
+                <div className="course-builder-panel-title">Add lesson notes</div>
+                <div className="course-builder-grid">
+                  <div className="course-builder-field full"><label>Notes PDF *</label><input className="course-asset-input" type="file" accept="application/pdf" disabled={trainingModal.mode === "view"} onChange={(event) => { handleCourseAssetSelect(event.target.files?.[0], "notesUrl", "notesFileName"); }} /><small>{trainingAssetUploading === "notesUrl" ? "Uploading notes..." : trainingModal.item.notesFileName || (trainingModal.item.notesUrl ? "Notes uploaded." : "Choose a PDF file")}</small></div>
+                </div>
+              </>
+            ) : null}
+            {trainingModal.step === 4 ? (
+              <>
+                <div className="course-builder-panel-title">Add assignment</div>
+                <div className="course-builder-grid">
+                  <div className="course-builder-field"><label>Assignment title *</label><input value={trainingModal.item.assignmentTitle || ""} readOnly={trainingModal.mode === "view"} placeholder="Build a landing page" onChange={(event) => setTrainingModal((current) => ({ ...current, item: { ...current.item, assignmentTitle: event.target.value } }))} /></div>
+                  <div className="course-builder-field"><label>Time (minutes) *</label><input type="number" min="1" value={trainingModal.item.assignmentTime || ""} readOnly={trainingModal.mode === "view"} placeholder="60" onChange={(event) => setTrainingModal((current) => ({ ...current, item: { ...current.item, assignmentTime: event.target.value } }))} /></div>
+                  <div className="course-builder-field full"><label>Description</label><input value={trainingModal.item.assignment || ""} readOnly={trainingModal.mode === "view"} placeholder="Assignment instructions" onChange={(event) => setTrainingModal((current) => ({ ...current, item: { ...current.item, assignment: event.target.value } }))} /></div>
+                  <div className="course-builder-field full"><label>Task PDF *</label><input className="course-asset-input" type="file" accept="application/pdf" disabled={trainingModal.mode === "view"} onChange={(event) => { handleCourseAssetSelect(event.target.files?.[0], "assignmentUrl", "assignmentFileName"); }} /><small>{trainingAssetUploading === "assignmentUrl" ? "Uploading assignment..." : trainingModal.item.assignmentFileName || (trainingModal.item.assignmentUrl ? "Assignment uploaded." : "Choose a PDF file")}</small></div>
+                </div>
+              </>
+            ) : null}
+          </div>
+          <div className="modal-actions">
+            {trainingModal.mode !== "edit" && trainingModal.step > 1 ? <button type="button" className="ghost-button compact" onClick={() => setTrainingModal((current) => ({ ...current, step: current.step - 1 }))}>Back</button> : null}
+            {trainingModal.mode !== "view" ? (
+              trainingModal.mode === "edit" ? (
+                <button type="button" className="primary-button" onClick={() => saveTrainingModal(false)} disabled={trainingModalUploading || Boolean(trainingAssetUploading)}>{trainingModalUploading ? "Updating..." : "Update course"}</button>
+              ) : trainingModal.step === 4 && trainingModal.mode === "lesson" ? (
+                <>
+                  <button type="button" className="ghost-button compact" onClick={() => saveTrainingModal(true)} disabled={trainingModalUploading || Boolean(trainingAssetUploading)}>Next lesson</button>
+                  <button type="button" className="primary-button" onClick={() => saveTrainingModal(false)} disabled={trainingModalUploading || Boolean(trainingAssetUploading)}>{trainingModalUploading ? "Saving..." : "Update lesson"}</button>
+                </>
+              ) : (
+                <button type="button" className="primary-button" onClick={advanceTrainingStep} disabled={trainingModalUploading || Boolean(trainingAssetUploading)}>{trainingModal.step === 4 ? (trainingModalUploading ? "Saving..." : trainingModal.mode === "edit" ? "Update course" : "Save course") : "Next"}</button>
+              )
+            ) : null}
+            {!['add', 'edit', 'lesson', 'edit-lesson'].includes(trainingModal.mode) ? <button type="button" className="ghost-button compact" onClick={closeTrainingModal}>Close</button> : null}
           </div>
         </ModalSurface>
       ) : null}
@@ -4484,14 +5436,73 @@ function Panel({ title, children }) {
   );
 }
 
-function ModalSurface({ title, onClose, children }) {
+function CourseViewSurface({ course, onClose, onEdit, onEditLesson, onNextLesson, onDeleteCourse, onDeleteLesson }) {
+  const lessons = Array.isArray(course?.lessons) ? course.lessons : [];
+  const backendSectionNames = Array.isArray(course?.sections)
+    ? course.sections
+        .map((section) => String(section?.name || section || "").trim())
+        .filter(Boolean)
+    : [];
+  const sectionNames = backendSectionNames.length
+    ? backendSectionNames
+    : [...new Set(lessons.map((lesson) => String(lesson.section || "General").trim() || "General"))];
+  const lessonsBySection = sectionNames.reduce((groups, section) => {
+    groups[section] = lessons.filter((lesson) => String(lesson.section || "General").trim() === section);
+    return groups;
+  }, {});
+
+  return (
+    <ModalSurface title={course?.name || course?.title || "Course lessons"} onClose={onClose}>
+      <div className="course-view-surface">
+        <div className="course-view-summary">
+          <div>
+            <span>{course?.duration || "Course"} · {course?.mode || "Hybrid"} · {course?.price || course?.fees || ""}</span>
+            <strong>{lessons.length} {lessons.length === 1 ? "lesson" : "lessons"}</strong>
+          </div>
+          <div className="course-view-actions">
+            <button type="button" className="ghost-button compact" onClick={onEdit}>Edit course</button>
+            <button type="button" className="primary-button compact" onClick={onNextLesson}>Next lesson</button>
+            <button type="button" className="ghost-button compact danger" onClick={onDeleteCourse}>Delete course</button>
+          </div>
+        </div>
+        <div className="course-view-lesson-list">
+          {sectionNames.length ? sectionNames.map((section) => {
+            const sectionLessons = lessonsBySection[section] || [];
+            return (
+              <div key={section}>
+                <h3 className="course-view-section-title">{section}</h3>
+                {sectionLessons.length ? sectionLessons.map((lesson, index) => (
+                  <article key={lesson.id || `${section}-lesson-${index}`} className="course-view-lesson">
+                    <div>
+                      <span>{section} · Lesson {index + 1}</span>
+                      <strong>{lesson.title || `Lesson ${index + 1}`}</strong>
+                      <small>{lesson.durationSec ? `${Math.round(Number(lesson.durationSec) / 60)} min video` : "Lesson content"}</small>
+                    </div>
+                    <div className="course-view-lesson-links">
+                      <button type="button" className="ghost-button compact" onClick={() => onEditLesson(lesson)}>Edit lesson</button>
+                      <button type="button" className="ghost-button compact danger" onClick={() => onDeleteLesson(lesson)}>Delete</button>
+                    </div>
+                  </article>
+                )) : (
+                  <div className="course-view-empty-section">No lessons in this section</div>
+                )}
+              </div>
+            );
+          }) : <div className="course-library-empty-detail">No lessons saved for this course.</div>}
+        </div>
+      </div>
+    </ModalSurface>
+  );
+}
+
+function ModalSurface({ title, onClose, children, className = "", showClose = true }) {
   return (
     <div className="modal-surface">
       <div className="modal-backdrop" onClick={onClose} />
-      <section className="modal-shell" role="dialog" aria-modal="true">
+      <section className={`modal-shell ${className}`.trim()} role="dialog" aria-modal="true">
         <div className="modal-head">
           <strong>{title}</strong>
-          <button type="button" className="ghost-button compact" onClick={onClose}>Close</button>
+          {showClose ? <button type="button" className="ghost-button compact" onClick={onClose}>Close</button> : null}
         </div>
         <div className="modal-body">{children}</div>
       </section>
@@ -4910,7 +5921,7 @@ function LeadsTable({ leads, users }) {
               <td>
                 <span className={badgeClass(lead.status)}>{lead.status}</span>
               </td>
-              <td>{users.find((user) => user.id === lead.assignedTo)?.name ?? "-"}</td>
+              <td>{users.find((user) => String(user.id || user._id) === String(lead.assignedTo))?.name ?? lead.assignedTo ?? "-"}</td>
               <td>{formatDateDDMMYYYY(lead.assignedDate)}</td>
               <td>{lead.createdAt}</td>
             </tr>

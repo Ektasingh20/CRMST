@@ -1,6 +1,7 @@
 import bcrypt from "bcryptjs";
 import User from "../models/User.js";
 import { isMongoConnected } from "../config/db.js";
+import { isAllowedRole } from "../utils/roles.js";
 
 function mongoUnavailable(res) {
   return res.status(503).json({ error: "Database is unavailable. Please try again later." });
@@ -17,7 +18,18 @@ function validateEmail(value) {
 export async function createUser(req, res) {
   if (!isMongoConnected) return mongoUnavailable(res);
   try {
-    const { name, email, phone, emergencyContact, maritalStatus, education, username, password, dept, position, role, joined, state, branch, branchCode, address } = req.body;
+    const { name, email, phone, emergencyContact, maritalStatus, education, username, password, dept, position, role, joined, state, branch, branchCode, address, imageUrl = "", imagePublicId = "" } = req.body;
+
+    if (!isAllowedRole(role)) {
+      return res.status(400).json({ error: "Choose a valid employee role." });
+    }
+
+    if (String(role).trim().toLowerCase() === "admin" || String(dept).trim().toLowerCase() === "admin") {
+      const existingAdmin = await User.findOne({ role: { $in: ["Admin", "Administrator", "Super Admin"] } });
+      if (existingAdmin) {
+        return res.status(409).json({ error: "Only one Admin account is allowed." });
+      }
+    }
 
     if (!name || !email || !phone || !emergencyContact || !education || !dept || !position || !role || !joined || !username || !password || !state || !branch || !branchCode || !address) {
       return res.status(400).json({ error: "All required fields must be filled" });
@@ -47,10 +59,10 @@ export async function createUser(req, res) {
     }
 
     const hash = await bcrypt.hash(password, 10);
-    const generatedId = `${usernameLower}-${Date.now()}`;
+    // const generatedId = `${usernameLower}-${Date.now()}`;
 
     const user = await User.create({
-      id: generatedId,
+      // id: generatedId,
       name: String(name).trim(),
       email: String(email).trim().toLowerCase(),
       phone: String(phone).trim(),
@@ -67,6 +79,8 @@ export async function createUser(req, res) {
       branch: String(branch).trim(),
       branchCode: String(branchCode).trim(),
       address: String(address).trim(),
+      imageUrl: String(imageUrl || "").trim(),
+      imagePublicId: String(imagePublicId || "").trim(),
       status: "Active",
       type: "Current",
     });
@@ -96,17 +110,6 @@ export async function updateUser(req, res) {
       return res.status(404).json({ error: "User not found" });
     }
     const targetId = String(existing._id);
-    const existingPublicId = existing.imagePublicId;
-    const newPublicId = payload?.imagePublicId;
-    if (existingPublicId && newPublicId && existingPublicId !== newPublicId) {
-      try {
-        const cloudinary = (await import("../config/cloudinary.js")).default;
-        await cloudinary.uploader.destroy(existingPublicId);
-      } catch (err) {
-        console.warn("Failed to delete old Cloudinary image:", err.message);
-      }
-    }
-
     if (payload.password && !String(payload.password).startsWith("$2a$") && !String(payload.password).startsWith("$2b$")) {
       payload.password = await bcrypt.hash(payload.password, 10);
     }
@@ -169,26 +172,10 @@ export async function deleteUser(req, res) {
         return res.json({ success: true, id: String(id) });
       }
       targetId = String(byObjectId._id);
-      if (byObjectId.imagePublicId) {
-        try {
-          const cloudinary = (await import("../config/cloudinary.js")).default;
-          await cloudinary.uploader.destroy(byObjectId.imagePublicId);
-        } catch (err) {
-          console.warn("Failed to delete Cloudinary image:", err.message);
-        }
-      }
       await User.findOneAndDelete({ _id: targetId });
       return res.json({ success: true, id: String(byObjectId._id) });
     }
 
-    if (existing.imagePublicId) {
-      try {
-        const cloudinary = (await import("../config/cloudinary.js")).default;
-        await cloudinary.uploader.destroy(existing.imagePublicId);
-      } catch (err) {
-        console.warn("Failed to delete Cloudinary image:", err.message);
-      }
-    }
     await User.findOneAndDelete({ _id: String(existing._id) });
     return res.json({ success: true, id: String(existing._id) });
   } catch (err) {

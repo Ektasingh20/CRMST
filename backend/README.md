@@ -1,3 +1,6 @@
+## ImageKit uploads
+
+Copy `.env.example` to `.env` and add the ImageKit private key, public key, and URL endpoint. The backend signs short-lived uploads at `/api/courses/upload-auth`; the private key is never sent to the browser.
 # CRM Backend
 
 This backend is built with Node.js and Express, using Firebase Admin for Firestore database access.

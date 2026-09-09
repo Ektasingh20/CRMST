@@ -1,7 +1,8 @@
-import mongoose from "mongoose";
 import { isMongoConnected } from "../config/db.js";
 import Lead from "../models/Lead.js";
 import { listCollection, deleteItem } from "../controllers/genericController.js";
+import { canCreateLeads } from "../utils/roles.js";
+import { LEAD_INTERESTS } from "../config/leadCatalog.js";
 
 function mongoUnavailable(res) {
   return res.status(503).json({ error: "Database is unavailable. Please try again later." });
@@ -37,10 +38,11 @@ export async function listLeads(req, res) {
 
 export async function createLead(req, res) {
   if (!isMongoConnected) return mongoUnavailable(res);
+  if (!canCreateLeads(req.user)) return res.status(403).json({ error: "Only Admin, Operations, and CRM Executive users can create leads." });
   try {
     const payload = { ...req.body };
 
-    if (isCrmExecutive(req.user)) {
+    if (canCreateLeads(req.user) && String(req.user.role || "").toLowerCase() !== "admin") {
       payload.assignedTo = String(req.user.id || req.user._id);
     }
 
@@ -55,6 +57,17 @@ export async function createLead(req, res) {
     }
     if (payload.alternatePhone && !validatePhone(payload.alternatePhone)) {
       return res.status(400).json({ error: "Enter a valid 10-digit mobile number." });
+    }
+
+    const typeKey = String(payload.type || "").trim().toLowerCase();
+    if (!Object.prototype.hasOwnProperty.call(LEAD_INTERESTS, typeKey)) {
+      return res.status(400).json({ error: "Lead type must be Training, Service, or Internship." });
+    }
+    if (!payload.interest || String(payload.interest).trim() === "") {
+      return res.status(400).json({ error: "Lead interest is required." });
+    }
+    if (!LEAD_INTERESTS[typeKey].includes(String(payload.interest).trim())) {
+      return res.status(400).json({ error: "The selected interest does not belong to this lead type." });
     }
 
     const allowedStatuses = ["pending", "follow-up", "interested", "converted", "lost", "not_interested", "Pending", "Follow-up", "Interested", "Converted", "Lost", "Not Interested"];
@@ -80,6 +93,7 @@ export async function createLead(req, res) {
 
 export async function updateLead(req, res) {
   if (!isMongoConnected) return mongoUnavailable(res);
+  if (!canCreateLeads(req.user)) return res.status(403).json({ error: "You do not have permission to update leads." });
   const { id } = req.params;
   if (!id || String(id).trim() === "") {
     return res.status(400).json({ error: "Invalid document id" });
@@ -131,6 +145,7 @@ export async function updateLead(req, res) {
 }
 
 export async function deleteLead(req, res) {
+  if (!canCreateLeads(req.user)) return res.status(403).json({ error: "You do not have permission to delete leads." });
   if (isCrmExecutive(req.user)) {
     if (!isMongoConnected) return mongoUnavailable(res);
     const lead = await Lead.findOne({ id: String(req.params.id) });
