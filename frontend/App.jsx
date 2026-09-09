@@ -293,7 +293,7 @@ const sidebarSections = [
     items: [
       { id: "dashboard", label: "CRM Dashboard", icon: LayoutDashboard },
       { id: "crm", label: "All Leads", icon: PhoneCall },
-      { id: "co-approved", label: "Approved Leads", icon: CheckCheck },
+      { id: "co-approved", label: "Assigned Leads", icon: CheckCheck },
       { id: "sales-report", label: "CRM Reports", icon: Activity },
     ],
   },
@@ -308,7 +308,7 @@ const sidebarSections = [
     heading: "SALES",
     items: [
       { id: "sales-add", label: "Add Lead", icon: CirclePlus },
-      { id: "sales-approved", label: "Approved Leads", icon: CheckCircle2 },
+      { id: "sales-approved", label: "Assigned Leads", icon: CheckCircle2 },
       { id: "sales-report", label: "Sales Reports", icon: Activity },
     ],
   },
@@ -1148,6 +1148,7 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [globalQuery, setGlobalQuery] = useState("");
+  const contentRef = useRef(null);
   const deferredQuery = useDeferredValue(globalQuery);
   const [toast, setToast] = useState("");
   const [serviceQuery, setServiceQuery] = useState("");
@@ -1649,6 +1650,10 @@ function App() {
     };
   }, [trainingModal?.mode, studentUsers.length, currentUser]);
 
+  const currentUserId = String(currentUser?.id || currentUser?._id || "").trim();
+  const assignedLeads = currentUserId
+    ? leads.filter((lead) => String(lead.assignedTo || "") === currentUserId)
+    : [];
   const wonLeads = leads.filter((lead) => ["Interested", "Converted", "Approved"].includes(String(lead.status || "").trim().replace(/_/g, " ")));
   const followUps = leads.filter((lead) => lead.status === "Follow-up");
   const revenue = wonLeads.reduce((sum, lead) => sum + Number(lead.value || 0), 0);
@@ -1664,6 +1669,12 @@ function App() {
       setLeadsLoadedFromBackend(true);
     });
   }, [activePage, leadsLoadedFromBackend, wonLeads.length]);
+
+  useEffect(() => {
+    if (contentRef.current) {
+      contentRef.current.scrollTo({ top: 0, behavior: "instant" });
+    }
+  }, [activePage]);
   const leavePendingCount = leaves.filter((leave) => leave.status === "Pending").length;
   const sourceCounts = leads.reduce((acc, lead) => {
     acc[lead.source] = (acc[lead.source] || 0) + 1;
@@ -3206,6 +3217,9 @@ function App() {
                         closeTrainingModal();
                       }
                       setActivePage(item.id);
+                      if (contentRef.current) {
+                        contentRef.current.scrollTop = 0;
+                      }
                       setMobileNavOpen(false);
                     }}
                   >
@@ -3274,7 +3288,7 @@ function App() {
           </div>
         </header>
 
-        <section className="content">
+        <section className="content" ref={contentRef}>
           {activePage === "dashboard" && (
             <>
               <section className="hero-grid">
@@ -4139,8 +4153,8 @@ function App() {
           )}
 
           {activePage === "sales-approved" && (
-            <Panel title="Approved leads">
-              <LeadsTable leads={wonLeads} users={users} onEdit={editApprovedLead} />
+            <Panel title="Assigned leads">
+              <LeadsTable leads={assignedLeads} users={users} onEdit={editApprovedLead} />
             </Panel>
           )}
 
@@ -4148,7 +4162,7 @@ function App() {
             <>
               <section className="stats-grid compact">
                 <StatCard tone="blue" icon={Users} label="Total Leads" value={leads.length} note="Across sales modules" />
-                <StatCard tone="green" icon={CheckCircle2} label="Converted" value={wonLeads.length} note="Approved outcomes" />
+                <StatCard tone="green" icon={CheckCircle2} label="Assigned Leads" value={assignedLeads.length} note={`${currentUser?.name || "You"}'s locked leads`} />
                 <StatCard tone="rose" icon={BadgeIndianRupee} label="Revenue" value={compactCurrency(revenue)} note="Closed pipeline value" />
                 <StatCard tone="amber" icon={Sparkles} label="Conv. Rate" value={`${leads.length ? Math.round((wonLeads.length / leads.length) * 100) : 0}%`} note="Overall conversion" />
               </section>
@@ -4240,8 +4254,8 @@ function App() {
           )}
 
           {activePage === "co-approved" && (
-            <Panel title="All approved leads">
-              <LeadsTable leads={wonLeads} users={users} onEdit={editApprovedLead} />
+            <Panel title="Assigned leads">
+              <LeadsTable leads={assignedLeads} users={users} onEdit={editApprovedLead} />
             </Panel>
           )}
 
