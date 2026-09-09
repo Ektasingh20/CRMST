@@ -471,7 +471,7 @@ const initialLeads = [
     phone: "9876500001",
     email: "neha@example.com",
     alternatePhone: "",
-    city: "Ajmer",
+    city: "",
     company: "",
     type: "Training",
     interest: "Digital Marketing",
@@ -1245,6 +1245,7 @@ function App() {
   const [createUserPreview, setCreateUserPreview] = useState("");
   const [createUserFile, setCreateUserFile] = useState(null);
   const [isCreatingUser, setIsCreatingUser] = useState(false);
+  const [editingUserId, setEditingUserId] = useState(null);
   const [createLead, setCreateLead] = useState({
     name: "",
     phone: "",
@@ -1262,6 +1263,8 @@ function App() {
     assignedDate: new Date().toISOString().slice(0, 10),
     notes: "",
   });
+  const [editingLeadId, setEditingLeadId] = useState(null);
+  const [editingLeadReturnPage, setEditingLeadReturnPage] = useState("sales-approved");
 
   useEffect(() => {
     // load local fallback immediately
@@ -2583,8 +2586,7 @@ function App() {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { notify("Enter a valid email address."); return; }
     if (!phone) { notify("Contact number is required."); return; }
     if (!/^[6-9]\d{9}$/.test(phone)) { notify("Contact number must be exactly 10 digits and start with 6, 7, 8, or 9."); return; }
-    if (!emergencyContact) { notify("Emergency contact is required."); return; }
-    if (!/^[6-9]\d{9}$/.test(emergencyContact)) { notify("Emergency contact must be exactly 10 digits and start with 6, 7, 8, or 9."); return; }
+    if (emergencyContact && !/^[6-9]\d{9}$/.test(emergencyContact)) { notify("Emergency contact must be exactly 10 digits and start with 6, 7, 8, or 9."); return; }
     if (!education) { notify("Education is required."); return; }
     if (!dept) { notify("Department is required."); return; }
     if (!position) { notify("Position is required."); return; }
@@ -2592,14 +2594,14 @@ function App() {
     if (!joined) { notify("Date of joining is required."); return; }
     if (!username) { notify("Username is required."); return; }
     if (!/^[a-zA-Z0-9_]+$/.test(username)) { notify("Username can only contain letters, numbers, and underscores."); return; }
-    if (!password) { notify("Password is required."); return; }
-    if (password.length < 6) { notify("Password must be at least 6 characters."); return; }
+    if (!editingUserId && !password) { notify("Password is required."); return; }
+    if (password && password.length < 6) { notify("Password must be at least 6 characters."); return; }
     if (!state) { notify("State is required."); return; }
     if (!branch) { notify("Branch is required."); return; }
     if (!branchCode) { notify("Branch code is required."); return; }
     if (!address) { notify("Address is required."); return; }
 
-    if (users.some((entry) => entry.username.toLowerCase() === username.toLowerCase())) {
+    if (users.some((entry) => String(entry.id || entry._id) !== String(editingUserId) && String(entry.username || "").toLowerCase() === username.toLowerCase())) {
       notify("Username already exists. Please choose another username.");
       return;
     }
@@ -2621,7 +2623,7 @@ function App() {
       }
     }
 
-    const newUserPayload = {
+    const userPayload = {
       name,
       email,
       phone,
@@ -2629,7 +2631,6 @@ function App() {
       maritalStatus: createUserForm.maritalStatus || "",
       education,
       username,
-      password,
       dept,
       position,
       role,
@@ -2643,10 +2644,18 @@ function App() {
       status: "Active",
       type: "Current",
     };
+    if (password) userPayload.password = password;
 
     try {
-      const createdUser = await createUser(newUserPayload);
-      setUsers((current) => [createdUser, ...current]);
+      if (editingUserId) {
+        const updatedUser = await updateUser(editingUserId, userPayload);
+        setUsers((current) => current.map((item) => String(item.id || item._id) === String(editingUserId) ? { ...item, ...updatedUser } : item));
+      } else {
+        const createdUser = await createUser(userPayload);
+        setUsers((current) => [createdUser, ...current]);
+      }
+      const wasEditing = Boolean(editingUserId);
+      setEditingUserId(null);
       setCreateUserForm({
         name: "",
         email: "",
@@ -2669,7 +2678,7 @@ function App() {
       });
       setCreateUserPreview("");
       setCreateUserFile(null);
-      notify("New user created successfully.");
+      notify(wasEditing ? "User updated successfully." : "New user created successfully.");
       setActivePage("user-view");
     } catch (err) {
       if (err.status === 409 && /username already exists/i.test(err.message)) {
@@ -2730,27 +2739,37 @@ function App() {
       return;
     }
 
-    const newLead = {
-      id: String(Date.now()),
+    const leadPayload = {
       ...createLead,
       value: Number(createLead.value || 0),
       assignedTo: String(createLead.assignedTo),
       assignedDate: createLead.assignedDate || new Date().toISOString().slice(0, 10),
-      createdAt: new Date().toISOString().slice(0, 10),
     };
     try {
-      const savedLead = await createLeadApi(newLead);
-      setLeads((current) => [normalizeLeadForUi(savedLead), ...current]);
+      if (editingLeadId) {
+        const savedLead = await updateLead(editingLeadId, leadPayload);
+        setLeads((current) => current.map((item) => String(item.id) === String(editingLeadId) ? normalizeLeadForUi(savedLead) : item));
+      } else {
+        const savedLead = await createLeadApi({
+          id: String(Date.now()),
+          ...leadPayload,
+          createdAt: new Date().toISOString().slice(0, 10),
+        });
+        setLeads((current) => [normalizeLeadForUi(savedLead), ...current]);
+      }
     } catch (err) {
-      notify(err.message || "Lead could not be saved.");
+      notify(err.message || (editingLeadId ? "Lead could not be updated." : "Lead could not be saved."));
       return;
     }
+    const wasEditing = Boolean(editingLeadId);
+    const returnPage = editingLeadReturnPage;
+    setEditingLeadId(null);
     setCreateLead({
       name: "",
       phone: "",
       email: "",
       alternatePhone: "",
-      city: "Ajmer",
+      city: "",
       company: "",
       type: "Training",
       interest: trainingCatalog[0],
@@ -2762,8 +2781,58 @@ function App() {
       assignedDate: new Date().toISOString().slice(0, 10),
       notes: "",
     });
-    notify("Lead saved to the pipeline.");
-    setActivePage("co-leads");
+    notify(wasEditing ? "Lead updated in the backend." : "Lead saved to the pipeline.");
+    setActivePage(wasEditing ? returnPage : "co-leads");
+  }
+
+  function editApprovedLead(lead) {
+    setCreateLead({
+      name: lead.name || "",
+      phone: lead.phone || "",
+      email: lead.email || "",
+      alternatePhone: lead.alternatePhone || "",
+      city: lead.city || "",
+      company: lead.company || "",
+      type: lead.type || "Training",
+      interest: lead.interest || trainingCatalog[0],
+      value: lead.value ?? "",
+      status: lead.status || "Pending",
+      source: lead.source || lead.leadSource || "Website",
+      leadSource: lead.leadSource || lead.source || "Website",
+      assignedTo: String(lead.assignedTo || activeUsers[0]?.id || 1),
+      assignedDate: lead.assignedDate || new Date().toISOString().slice(0, 10),
+      notes: lead.notes || "",
+    });
+    setEditingLeadId(lead.id);
+    setEditingLeadReturnPage(activePage);
+    setActivePage("sales-add");
+  }
+
+  function editUser(user) {
+    setCreateUserForm({
+      name: user.name || "",
+      email: user.email || "",
+      phone: user.phone || "",
+      emergencyContact: user.emergencyContact || "",
+      maritalStatus: user.maritalStatus || "",
+      education: user.education || "",
+      username: user.username || "",
+      password: "",
+      role: user.role || departmentRoleMap[user.dept] || "CRM Executive",
+      dept: user.dept || user.department || "CRM",
+      position: user.position || "",
+      joined: user.joined || "",
+      state: user.state || "",
+      branch: user.branch || "",
+      branchCode: user.branchCode || "",
+      address: user.address || "",
+      imageUrl: user.imageUrl || "",
+      imagePublicId: user.imagePublicId || "",
+    });
+    setCreateUserPreview(user.imageUrl || "");
+    setCreateUserFile(null);
+    setEditingUserId(user.id || user._id);
+    setActivePage("user-create");
   }
 
   if (appView === "home") {
@@ -3660,13 +3729,13 @@ function App() {
 
           {activePage === "crm" && (
             <Panel title={`All company leads (${leads.length})`}>
-              <LeadsTable leads={leads} users={users} />
+              <LeadsTable leads={leads} users={users} onEdit={editApprovedLead} />
             </Panel>
           )}
 
           {activePage === "user-create" && (
-            <Panel title="Create new user">
-              <form className="form-grid" onSubmit={addMember}>
+            <Panel title={editingUserId ? "Edit user" : "Create new user"}>
+              <form className="form-grid" onSubmit={addMember} autoComplete="off">
                 <p className="form-section-title">Personal Information</p>
                 <Field label="Full Name *">
                   <input
@@ -3674,7 +3743,7 @@ function App() {
                     onChange={(event) =>
                       setCreateUserForm((current) => ({ ...current, name: event.target.value }))
                     }
-                    placeholder="Ravi Sharma"
+                    placeholder="Enter your full name here"
                   />
                 </Field>
                 <Field label="Email *">
@@ -3684,7 +3753,7 @@ function App() {
                     onChange={(event) =>
                       setCreateUserForm((current) => ({ ...current, email: event.target.value }))
                     }
-                    placeholder="rahul@systemtechnologies.in"
+                    placeholder="Enter your work email here"
                   />
                 </Field>
                 <Field label="Contact Number *">
@@ -3693,17 +3762,17 @@ function App() {
                     onChange={(event) =>
                       setCreateUserForm((current) => ({ ...current, phone: event.target.value.replace(/\D/g, "") }))
                     }
-                    placeholder="9876543210"
+                    placeholder="Enter your contact number here"
                     maxLength={10}
                   />
                 </Field>
-                <Field label="Emergency Contact *">
+                <Field label="Emergency Contact">
                   <input
                     value={createUserForm.emergencyContact}
                     onChange={(event) =>
                       setCreateUserForm((current) => ({ ...current, emergencyContact: event.target.value.replace(/\D/g, "") }))
                     }
-                    placeholder="9876543210"
+                    placeholder="Enter your emergency contact here"
                     maxLength={10}
                   />
                 </Field>
@@ -3726,7 +3795,7 @@ function App() {
                     onChange={(event) =>
                       setCreateUserForm((current) => ({ ...current, education: event.target.value }))
                     }
-                    placeholder="B.Tech, MBA, B.Com"
+                    placeholder="Enter your highest qualification here"
                   />
                 </Field>
 
@@ -3749,7 +3818,7 @@ function App() {
                     onChange={(event) =>
                       setCreateUserForm((current) => ({ ...current, position: event.target.value }))
                     }
-                    placeholder="CRM Executive"
+                    placeholder="Enter your position here"
                   />
                 </Field>
                 <p className="form-section-title">Joining Information</p>
@@ -3803,20 +3872,22 @@ function App() {
                 <Field label="Username *">
                   <input
                     value={createUserForm.username}
+                    autoComplete="off"
                     onChange={(event) =>
                       setCreateUserForm((current) => ({ ...current, username: event.target.value }))
                     }
-                    placeholder="ravi"
+                    placeholder="Choose a username here"
                   />
                 </Field>
                 <Field label="Password *">
                   <input
                     type="password"
                     value={createUserForm.password}
+                    autoComplete="new-password"
                     onChange={(event) =>
                       setCreateUserForm((current) => ({ ...current, password: event.target.value }))
                     }
-                    placeholder="Create password"
+                    placeholder="Create a secure password here"
                   />
                 </Field>
 
@@ -3827,7 +3898,7 @@ function App() {
                     onChange={(event) =>
                       setCreateUserForm((current) => ({ ...current, state: event.target.value }))
                     }
-                    placeholder="Rajasthan"
+                    placeholder="Enter your state here"
                   />
                 </Field>
                 <Field label="Branch *">
@@ -3836,7 +3907,7 @@ function App() {
                     onChange={(event) =>
                       setCreateUserForm((current) => ({ ...current, branch: event.target.value }))
                     }
-                    placeholder="Ajmer"
+                    placeholder="Enter your branch here"
                   />
                 </Field>
                 <Field label="Branch Code *">
@@ -3845,7 +3916,7 @@ function App() {
                     onChange={(event) =>
                       setCreateUserForm((current) => ({ ...current, branchCode: event.target.value }))
                     }
-                    placeholder="AJ-01"
+                    placeholder="Enter your branch code here"
                   />
                 </Field>
 
@@ -3856,14 +3927,14 @@ function App() {
                     onChange={(event) =>
                       setCreateUserForm((current) => ({ ...current, address: event.target.value }))
                     }
-                    placeholder="123 Main Road, Ajmer, Rajasthan"
+                    placeholder="Enter your complete address here"
                     rows={3}
                   />
                 </Field>
 
                 <div className="form-actions span-full">
                   <button className="primary-button" type="submit" disabled={isCreatingUser}>
-                    {isCreatingUser ? "Creating User..." : "Create User"}
+                    {isCreatingUser ? (editingUserId ? "Updating User..." : "Creating User...") : (editingUserId ? "Update User" : "Create User")}
                   </button>
                 </div>
               </form>
@@ -3872,12 +3943,12 @@ function App() {
 
           {activePage === "user-view" && (
             <Panel title={`All users (${visibleUsers.length})`}>
-              <UsersTable users={visibleUsers} />
+              <UsersTable users={visibleUsers} onEdit={editUser} />
             </Panel>
           )}
 
           {activePage === "sales-add" && (
-            <Panel title="Add new lead">
+            <Panel title={editingLeadId ? "Edit lead" : "Add new lead"}>
               <form className="form-grid" onSubmit={addLead}>
                 <div className="form-section">
                   <p className="form-section-title">Contact Information</p>
@@ -3887,7 +3958,7 @@ function App() {
                       onChange={(event) =>
                         setCreateLead((current) => ({ ...current, name: event.target.value }))
                       }
-                      placeholder="Priya Verma"
+                      placeholder="Enter the lead's full name here"
                     />
                   </Field>
                   <Field label="Phone *">
@@ -3896,7 +3967,7 @@ function App() {
                       onChange={(event) =>
                         setCreateLead((current) => ({ ...current, phone: event.target.value.replace(/\D/g, "").slice(0, 10) }))
                       }
-                      placeholder="9876543210"
+                      placeholder="Enter the lead's phone number here"
                       maxLength={10}
                     />
                   </Field>
@@ -3906,7 +3977,7 @@ function App() {
                       onChange={(event) =>
                         setCreateLead((current) => ({ ...current, email: event.target.value }))
                       }
-                      placeholder="priya@example.com"
+                      placeholder="Enter the lead's email here"
                       type="email"
                     />
                   </Field>
@@ -3916,7 +3987,7 @@ function App() {
                       onChange={(event) =>
                         setCreateLead((current) => ({ ...current, alternatePhone: event.target.value }))
                       }
-                      placeholder="9876543210"
+                      placeholder="Enter an alternate phone number here"
                     />
                   </Field>
                   <Field label="City *">
@@ -3925,6 +3996,7 @@ function App() {
                       onChange={(event) =>
                         setCreateLead((current) => ({ ...current, city: event.target.value }))
                       }
+                      placeholder="Enter the city here"
                     />
                   </Field>
                   <Field label="Company / Organization">
@@ -3933,7 +4005,7 @@ function App() {
                       onChange={(event) =>
                         setCreateLead((current) => ({ ...current, company: event.target.value }))
                       }
-                      placeholder="System Technologies"
+                      placeholder="Enter the company or organization here"
                     />
                   </Field>
                 </div>
@@ -3985,7 +4057,7 @@ function App() {
                       onChange={(event) =>
                         setCreateLead((current) => ({ ...current, value: event.target.value }))
                       }
-                      placeholder="15000"
+                      placeholder="Enter the estimated value here"
                     />
                   </Field>
                   <Field label="Lead Source *">
@@ -4051,7 +4123,7 @@ function App() {
                       onChange={(event) =>
                         setCreateLead((current) => ({ ...current, notes: event.target.value }))
                       }
-                      placeholder="Interested in Front End Development and requested fee details. Will confirm after discussion."
+                      placeholder="Enter lead notes or requirements here"
                       rows={4}
                     />
                   </Field>
@@ -4059,7 +4131,7 @@ function App() {
 
                 <div className="form-actions span-full">
                   <button className="primary-button" type="submit">
-                    Save lead
+                    {editingLeadId ? "Update lead" : "Save lead"}
                   </button>
                 </div>
               </form>
@@ -4068,7 +4140,7 @@ function App() {
 
           {activePage === "sales-approved" && (
             <Panel title="Approved leads">
-              <LeadsTable leads={wonLeads} users={users} />
+              <LeadsTable leads={wonLeads} users={users} onEdit={editApprovedLead} />
             </Panel>
           )}
 
@@ -4163,13 +4235,13 @@ function App() {
 
           {activePage === "co-leads" && (
             <Panel title={`All company leads (${leads.length})`}>
-              <LeadsTable leads={leads} users={users} />
+              <LeadsTable leads={leads} users={users} onEdit={editApprovedLead} />
             </Panel>
           )}
 
           {activePage === "co-approved" && (
             <Panel title="All approved leads">
-              <LeadsTable leads={wonLeads} users={users} />
+              <LeadsTable leads={wonLeads} users={users} onEdit={editApprovedLead} />
             </Panel>
           )}
 
@@ -5888,7 +5960,7 @@ function Field({ label, children }) {
   );
 }
 
-function LeadsTable({ leads, users }) {
+function LeadsTable({ leads, users, onEdit }) {
   return (
     <div className="table-wrap">
       <table className="table">
@@ -5902,7 +5974,7 @@ function LeadsTable({ leads, users }) {
             <th>Status</th>
             <th>Assigned to</th>
             <th>Assigned Date</th>
-            <th>Date</th>
+            <th>Action</th>
           </tr>
         </thead>
         <tbody>
@@ -5923,7 +5995,11 @@ function LeadsTable({ leads, users }) {
               </td>
               <td>{users.find((user) => String(user.id || user._id) === String(lead.assignedTo))?.name ?? lead.assignedTo ?? "-"}</td>
               <td>{formatDateDDMMYYYY(lead.assignedDate)}</td>
-              <td>{lead.createdAt}</td>
+              <td>
+                <button type="button" className="ghost-button compact" onClick={() => onEdit?.(lead)}>
+                  <Edit3 size={14} /> Edit
+                </button>
+              </td>
             </tr>
           ))}
         </tbody>
@@ -5970,7 +6046,7 @@ function TaskTable({ tasks }) {
   );
 }
 
-function UsersTable({ users }) {
+function UsersTable({ users, onEdit }) {
   return (
     <div className="table-wrap">
       <table className="table">
@@ -5982,6 +6058,7 @@ function UsersTable({ users }) {
           <th>Department</th>
           <th>Status</th>
           <th>Joined</th>
+          <th>Action</th>
         </tr>
       </thead>
       <tbody>
@@ -6000,6 +6077,11 @@ function UsersTable({ users }) {
               <span className={badgeClass(user.status)}>{user.status}</span>
             </td>
             <td>{user.joined}</td>
+            <td>
+              <button type="button" className="ghost-button compact" onClick={() => onEdit?.(user)}>
+                <Edit3 size={14} /> Edit
+              </button>
+            </td>
           </tr>
         ))}
       </tbody>
