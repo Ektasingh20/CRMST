@@ -426,12 +426,12 @@ export async function uploadStudentCourseResource(file, courseId, lessonId, task
   const response = await fetch("https://upload.imagekit.io/api/v1/files/upload", { method: "POST", body: form });
   if (!response.ok) throw new Error("Student PDF upload failed.");
   const uploaded = await response.json();
-  await submitCourseTaskApi(courseId, lessonId, taskId, { studentId, kind, section, url: uploaded.url });
-  return uploaded.url;
+  return submitCourseTaskApi(courseId, lessonId, taskId, { studentId, kind, section, url: uploaded.url });
 }
 
-export async function saveStudentLessonProgress(courseId, lessonId, videoCompleted, studentId, section) {
-  return saveCourseLessonProgressApi(courseId, lessonId, { studentId, videoCompleted, section });
+export async function saveStudentLessonProgress(courseId, lessonId, progress, studentId, section) {
+  const patch = typeof progress === "boolean" ? { videoCompleted: progress } : progress || {};
+  return saveCourseLessonProgressApi(courseId, lessonId, { studentId, ...patch, section });
 }
 
 export async function uploadCourseAsset(file) {

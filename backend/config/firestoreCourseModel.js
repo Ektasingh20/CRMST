@@ -1,4 +1,4 @@
-import { getFirestore } from "firebase-admin/firestore";
+import { FieldValue, getFirestore } from "firebase-admin/firestore";
 
 const COURSES_CACHE_TTL_MS = 60 * 1000;
 let coursesCache = null;
@@ -24,6 +24,51 @@ async function readTasks(lessonRef) {
   return snapshot.docs
     .sort((left, right) => Number(left.data().order || 0) - Number(right.data().order || 0))
     .map((task) => ({ id: task.id, ...task.data() }));
+}
+
+function buildTaskSubmissions(tasks = [], current = {}, taskId = "", url = "", field = "") {
+  const submissions = { ...(current.taskSubmissions || {}) };
+  tasks.forEach((task) => {
+    const id = String(task.id);
+    submissions[id] = {
+      ...(submissions[id] || {}),
+      taskId: id,
+      submitted: Boolean(submissions[id]?.submitted),
+      taskStudentPdfUpload: submissions[id]?.taskStudentPdfUpload || "",
+      grade: submissions[id]?.grade ?? "",
+      feedback: submissions[id]?.feedback || "",
+    };
+  });
+  if (current.grade !== undefined || current.feedback) {
+      const submittedTask = current.taskId
+        || tasks.find((task) => submissions[String(task.id)]?.submitted)?.id
+        || Object.keys(submissions).find((id) => submissions[id]?.submitted === true)
+        || tasks[0]?.id;
+      const id = String(submittedTask || "");
+      if (!id) return submissions;
+      submissions[id] = {
+        ...(submissions[id] || {}),
+        taskId: id,
+        grade: current.grade ?? "",
+        feedback: current.feedback || "",
+      };
+    }
+  if (taskId) {
+    const id = String(taskId);
+    submissions[id] = {
+      ...(submissions[id] || {}),
+      taskId: id,
+      submitted: field === "taskUrl" ? true : Boolean(submissions[id]?.submitted),
+      taskStudentPdfUpload: field === "taskUrl" ? String(url) : String(submissions[id]?.taskStudentPdfUpload || ""),
+      updatedAt: new Date().toISOString(),
+    };
+  }
+  return submissions;
+}
+
+function normalizeTaskGrade(value) {
+  if (value === undefined || value === null || String(value).trim() === "") return null;
+  return value;
 }
 
 async function readCourseLessons(courseRef) {
@@ -224,8 +269,37 @@ export async function createCourse(data) {
 export async function updateCourse(courseId, data) {
   const db = getFirestore();
   const ref = db.collection("courses").doc(String(courseId));
-  const { lessons: _lessons, ...courseData } = data;
+  const { lessons, ...courseData } = data;
   await ref.set({ ...courseData, id: String(courseId), updatedAt: new Date().toISOString() }, { merge: true });
+  if (Array.isArray(lessons)) {
+    const existingSections = await ref.collection("sections").get();
+    for (const section of existingSections.docs) {
+      const existingLessons = await section.ref.collection("lessons").get();
+      for (const lesson of existingLessons.docs) {
+        const existingTasks = await lesson.ref.collection("tasks").get();
+        for (const task of existingTasks.docs) await task.ref.delete();
+        await lesson.ref.delete();
+      }
+      await section.ref.delete();
+    }
+    const sectionOrders = new Map();
+    for (const [lessonIndex, lesson] of lessons.entries()) {
+      const lessonSection = String(lesson.section || "General").trim() || "General";
+      const section = sectionRef(ref, lessonSection);
+      await section.set({ name: lessonSection, updatedAt: new Date().toISOString() }, { merge: true });
+      const order = (sectionOrders.get(lessonSection) || 0) + 1;
+      sectionOrders.set(lessonSection, order);
+      const lessonId = String(lesson.id || `lesson-${Date.now()}-${lessonIndex + 1}`);
+      const lessonRef = section.collection("lessons").doc(lessonId);
+      const { tasks = [], ...lessonData } = lesson;
+      await lessonRef.set({ ...lessonData, id: lessonId, order: lesson.order || order });
+      for (const [taskIndex, task] of tasks.entries()) {
+        const taskId = String(task.id || `task-${taskIndex + 1}`);
+        await lessonRef.collection("tasks").doc(taskId).set({ ...task, id: taskId, order: task.order || taskIndex + 1 });
+      }
+    }
+    await ref.set({ totalLessons: lessons.length }, { merge: true });
+  }
   invalidateCoursesCache();
   return getCourse(courseId);
 }
@@ -305,7 +379,24 @@ export async function gradeCourseTask(courseId, lessonId, taskId, studentId, gra
   const grades = { ...(task.grades || {}), [String(studentId)]: { grade: String(grade).trim(), feedback: String(feedback || "").trim(), updatedAt: new Date().toISOString() } };
   await taskRef.set({ grades }, { merge: true });
   const { progressRef } = await getStudentProgressRefs(studentId, courseId, taskLessonRef);
-  await progressRef.set({ grade: String(grade).trim(), feedback: String(feedback || "").trim(), updatedAt: new Date().toISOString() }, { merge: true });
+  const progressSnapshot = await progressRef.get();
+  const progress = progressSnapshot.exists ? progressSnapshot.data() : {};
+  const taskSubmissions = {
+    ...(progress.taskSubmissions || {}),
+    [String(taskId)]: {
+      ...(progress.taskSubmissions?.[String(taskId)] || {}),
+      taskId: String(taskId),
+      grade: String(grade).trim(),
+      feedback: String(feedback || "").trim(),
+      updatedAt: new Date().toISOString(),
+    },
+  };
+  await progressRef.set({
+    taskSubmissions,
+    updatedAt: new Date().toISOString(),
+    grade: FieldValue.delete(),
+    feedback: FieldValue.delete(),
+  }, { merge: true });
   invalidateCoursesCache();
   return { id: taskRef.id, ...task, grades };
 }
@@ -321,20 +412,22 @@ export async function saveStudentTaskSubmission(courseId, lessonId, taskId, stud
   const { enrolledCourseRef, sectionProgressRef, progressRef, sectionName } = await getStudentProgressRefs(studentId, courseId, lessonRef);
   const existing = await progressRef.get();
   const current = existing.exists ? existing.data() : {};
+  const tasks = await readTasks(lessonRef);
+  const taskSubmissions = buildTaskSubmissions(tasks, current, taskId, url, field);
+  const allTasksCompleted = tasks.length === 0 || tasks.every((task) => taskSubmissions[String(task.id)]?.submitted === true);
   const next = {
     studentId: String(studentId),
     courseId: String(courseId),
     courseTitle: courseSnapshot.data().title || "",
     lessonId: String(lessonId),
     lessonTitle: lessonSnapshot.data().title || "",
-    taskId: String(taskId),
+    section: sectionName,
     videoCompleted: Boolean(current.videoCompleted),
-    taskStudentPdfUpload: field === "taskUrl" ? String(url) : String(current.taskStudentPdfUpload || ""),
-    taskCompleted: field === "taskUrl" ? true : Boolean(current.taskCompleted),
-    grade: current.grade ?? null,
-    feedback: current.feedback || "",
+    notesCompleted: Boolean(current.notesCompleted || !lessonSnapshot.data().notesUrl),
+    taskSubmissions,
     updatedAt: new Date().toISOString(),
   };
+  next.completed = Boolean(next.videoCompleted && next.notesCompleted && allTasksCompleted);
   await enrolledCourseRef.set({
     studentId: String(studentId),
     courseId: String(courseId),
@@ -342,12 +435,67 @@ export async function saveStudentTaskSubmission(courseId, lessonId, taskId, stud
     updatedAt: next.updatedAt,
   }, { merge: true });
   await sectionProgressRef.set({ name: sectionName, updatedAt: next.updatedAt }, { merge: true });
-  await progressRef.set(next, { merge: true });
+  await progressRef.set({ ...next, taskId: FieldValue.delete(), taskStudentPdfUpload: FieldValue.delete(), taskCompleted: FieldValue.delete(), grade: FieldValue.delete(), feedback: FieldValue.delete() }, { merge: true });
+  await updateEnrollmentSummary(enrolledCourseRef, courseRef, studentId, courseId);
   invalidateCoursesCache();
   return { id: progressRef.id, ...next };
 }
 
-export async function saveStudentLessonProgress(courseId, lessonId, studentId, videoCompleted, requestedSectionName = "") {
+async function updateEnrollmentSummary(enrolledCourseRef, courseRef, studentId, courseId) {
+  const courseLessons = await readCourseLessons(courseRef);
+  const sections = await enrolledCourseRef.collection("sections").get();
+  const progressDocs = [];
+  for (const section of sections.docs) {
+    const lessons = await section.ref.collection("lessons").get();
+    lessons.docs.forEach((lesson) => progressDocs.push({ ...lesson.data(), section: lesson.data().section || section.data().name || section.id }));
+  }
+  const completedLessons = progressDocs.filter((lesson) => lesson.completed === true).length;
+  const getLessonProgress = (lesson) => {
+    const taskCount = Array.isArray(lesson.tasks) ? lesson.tasks.length : 0;
+    const taskDone = Object.values(lesson.taskSubmissions || {}).filter((task) => task?.submitted === true).length;
+    const total = 1 + (lesson.notesUrl ? 1 : 0) + taskCount;
+    const done = (lesson.videoCompleted ? 1 : 0) + (lesson.notesUrl ? (lesson.notesCompleted ? 1 : 0) : 0) + taskDone;
+    return { total, done };
+  };
+  const courseProgress = courseLessons.reduce((result, lesson) => {
+    const saved = progressDocs.find((item) => String(item.lessonId) === String(lesson.id) && String(item.section || "General").toLowerCase() === String(lesson.section || "General").toLowerCase());
+    const current = getLessonProgress({ ...lesson, ...(saved || {}) });
+    return { total: result.total + current.total, done: result.done + current.done };
+  }, { total: 0, done: 0 });
+  const progress = courseProgress.total ? Math.round((courseProgress.done / courseProgress.total) * 100) : 0;
+  const courseSectionNames = [...new Set(courseLessons.map((lesson) => String(lesson.section || "General").trim() || "General"))];
+  for (const sectionName of courseSectionNames) {
+    const sectionLessons = courseLessons.filter((lesson) => String(lesson.section || "General").trim().toLowerCase() === sectionName.toLowerCase());
+    const sectionProgress = sectionLessons.reduce((result, lesson) => {
+      const saved = progressDocs.find((item) => String(item.lessonId) === String(lesson.id) && String(item.section || "General").toLowerCase() === sectionName.toLowerCase());
+      const current = getLessonProgress({ ...lesson, ...(saved || {}) });
+      return { total: result.total + current.total, done: result.done + current.done };
+    }, { total: 0, done: 0 });
+    const sectionCompleted = progressDocs.filter((lesson) => String(lesson.section || "General").trim().toLowerCase() === sectionName.toLowerCase() && lesson.completed === true).length;
+    await enrolledCourseRef.collection("sections").doc(sectionDocumentId(sectionName)).set({
+      name: sectionName,
+      totalLessons: sectionLessons.length,
+      completedLessons: sectionCompleted,
+      progress: sectionProgress.total ? Math.round((sectionProgress.done / sectionProgress.total) * 100) : 0,
+      completed: sectionLessons.length > 0 && sectionCompleted >= sectionLessons.length,
+      updatedAt: new Date().toISOString(),
+    }, { merge: true });
+  }
+  await enrolledCourseRef.set({
+    studentId: String(studentId),
+    courseId: String(courseId),
+    totalLessons: courseLessons.length,
+    completedLessons,
+    totalProgressUnits: courseProgress.total,
+    completedProgressUnits: courseProgress.done,
+    progress,
+    completed: progress >= 100,
+    updatedAt: new Date().toISOString(),
+  }, { merge: true });
+  return { progress, completed: progress >= 100, completedLessons, totalLessons: courseLessons.length };
+}
+
+export async function saveStudentLessonProgress(courseId, lessonId, studentId, progressPatch = {}, requestedSectionName = "") {
   const db = getFirestore();
   const courseRef = db.collection("courses").doc(String(courseId));
   const lessonRef = await findLessonRef(courseRef, lessonId, requestedSectionName);
@@ -357,20 +505,25 @@ export async function saveStudentLessonProgress(courseId, lessonId, studentId, v
   const { enrolledCourseRef, sectionProgressRef, progressRef, sectionName } = await getStudentProgressRefs(studentId, courseId, lessonRef);
   const existing = await progressRef.get();
   const current = existing.exists ? existing.data() : {};
+  const tasks = await readTasks(lessonRef);
+  const taskSubmissions = buildTaskSubmissions(tasks, current);
+  const allTasksCompleted = tasks.length === 0 || tasks.every((task) => taskSubmissions[String(task.id)]?.submitted === true);
   const next = {
     studentId: String(studentId),
     courseId: String(courseId),
     courseTitle: courseSnapshot.data().title || "",
     lessonId: String(lessonId),
     lessonTitle: lessonSnapshot.data().title || "",
-    taskId: current.taskId || "",
-    videoCompleted: Boolean(videoCompleted),
+    section: sectionName,
+    videoCompleted: typeof progressPatch.videoCompleted === "boolean" ? progressPatch.videoCompleted : Boolean(current.videoCompleted),
+    notesCompleted: typeof progressPatch.notesCompleted === "boolean"
+      ? progressPatch.notesCompleted
+      : Boolean(current.notesCompleted || !lessonSnapshot.data().notesUrl),
     taskStudentPdfUpload: current.taskStudentPdfUpload || "",
-    taskCompleted: Boolean(current.taskCompleted),
-    grade: current.grade ?? null,
-    feedback: current.feedback || "",
+    taskSubmissions,
     updatedAt: new Date().toISOString(),
   };
+  next.completed = Boolean(next.videoCompleted && next.notesCompleted && allTasksCompleted);
   await enrolledCourseRef.set({
     studentId: String(studentId),
     courseId: String(courseId),
@@ -378,8 +531,29 @@ export async function saveStudentLessonProgress(courseId, lessonId, studentId, v
     updatedAt: next.updatedAt,
   }, { merge: true });
   await sectionProgressRef.set({ name: sectionName, updatedAt: next.updatedAt }, { merge: true });
-  await progressRef.set(next, { merge: true });
-  return { id: progressRef.id, ...next };
+  await progressRef.set({ ...next, taskId: FieldValue.delete(), taskStudentPdfUpload: FieldValue.delete(), taskCompleted: FieldValue.delete(), grade: FieldValue.delete(), feedback: FieldValue.delete() }, { merge: true });
+  const summary = await updateEnrollmentSummary(enrolledCourseRef, courseRef, studentId, courseId);
+  return { id: progressRef.id, ...next, courseProgress: summary.progress, courseCompleted: summary.completed };
+}
+
+export async function ensureStudentEnrollment(studentId, course) {
+  if (!studentId || !course?.id) return;
+  const ref = getFirestore().collection("students").doc(String(studentId))
+    .collection("enrolledCourses").doc(String(course.id));
+  const totalLessons = Array.isArray(course.lessons) ? course.lessons.length : Number(course.totalLessons || 0);
+  await ref.set({
+    studentId: String(studentId),
+    courseId: String(course.id),
+    courseTitle: course.title || "",
+    syllabus: course.syllabus || "",
+    duration: course.duration || "",
+    fees: course.fees || course.price || "",
+    mode: course.mode || "",
+    tools: course.tools || "",
+    thumbnail: course.thumbnail || "",
+    totalLessons,
+    updatedAt: new Date().toISOString(),
+  }, { merge: true });
 }
 
 export async function getStudentCourseProgress(studentId) {
@@ -391,6 +565,7 @@ export async function getStudentCourseProgress(studentId) {
     const courseLessons = await readCourseLessons(courseRef);
     const byLessonId = new Map(courseLessons.map((lesson) => [`${lesson.id}:${String(lesson.title || "").trim().toLowerCase()}`, lesson]));
     const merged = new Map();
+    const backfillWrites = [];
     const addProgress = (doc, sectionName = "") => {
       const data = doc.data ? doc.data() : doc;
       const lessonId = String(data.lessonId || doc.id || "");
@@ -399,13 +574,42 @@ export async function getStudentCourseProgress(studentId) {
       const section = String(data.section || lessonMatch?.section || sectionName || "General").trim() || "General";
       const key = `${section.toLowerCase()}:${lessonId}`;
       const previous = merged.get(key) || {};
-      const next = { ...previous, ...data, id: doc.id || data.id, section };
+      const hasTasks = Array.isArray(lessonMatch?.tasks) && lessonMatch.tasks.length > 0;
+      const notesCompleted = typeof data.notesCompleted === "boolean" ? data.notesCompleted : !lessonMatch?.notesUrl;
+      const legacyTaskSubmissions = buildTaskSubmissions(lessonMatch?.tasks || [], {
+        ...data,
+        taskSubmissions: data.taskId && data.taskStudentPdfUpload
+          ? {
+              ...(data.taskSubmissions || {}),
+              [String(data.taskId)]: {
+                ...(data.taskSubmissions?.[String(data.taskId)] || {}),
+                taskId: String(data.taskId),
+                taskStudentPdfUpload: String(data.taskStudentPdfUpload),
+                submitted: true,
+              },
+            }
+          : data.taskSubmissions,
+      });
+      const taskCompleted = !hasTasks || (lessonMatch?.tasks || []).every((task) => legacyTaskSubmissions[String(task.id)]?.submitted === true);
+      const next = {
+        ...previous,
+        ...data,
+        id: doc.id || data.id,
+        section,
+        notesCompleted,
+        taskCompleted,
+        taskSubmissions: legacyTaskSubmissions,
+        completed: typeof data.completed === "boolean"
+          ? data.completed
+          : Boolean(data.videoCompleted && notesCompleted && taskCompleted),
+      };
       const taskGrade = lessonMatch?.tasks?.find((task) => String(task.id) === String(data.taskId))?.grades?.[String(studentId)];
       if ((next.grade === null || next.grade === undefined || next.grade === "") && taskGrade?.grade !== undefined) next.grade = taskGrade.grade;
       if (!next.feedback && taskGrade?.feedback) next.feedback = taskGrade.feedback;
       ["grade", "feedback", "taskStudentPdfUpload", "taskId", "lessonTitle"].forEach((field) => {
         if ((data[field] === null || data[field] === undefined || data[field] === "") && previous[field] !== undefined) next[field] = previous[field];
       });
+      backfillWrites.push(doc.ref.set({ section, notesCompleted, taskSubmissions: legacyTaskSubmissions, completed: next.completed, taskId: FieldValue.delete(), taskStudentPdfUpload: FieldValue.delete(), taskCompleted: FieldValue.delete(), grade: FieldValue.delete(), feedback: FieldValue.delete() }, { merge: true }));
       merged.set(key, next);
     };
     const legacySnapshot = await courseDoc.ref.collection("lessons").get();
@@ -415,6 +619,12 @@ export async function getStudentCourseProgress(studentId) {
       const lessonsSnapshot = await sectionDoc.ref.collection("lessons").get();
       lessonsSnapshot.docs.forEach((doc) => addProgress(doc, sectionDoc.data().name || sectionDoc.id));
     }
+    await Promise.all(backfillWrites);
+    try {
+      await updateEnrollmentSummary(courseDoc.ref, courseRef, studentId, courseDoc.id);
+    } catch (error) {
+      console.warn(`Student course progress backfill skipped for ${courseDoc.id}:`, error.message || error);
+    }
     progress.push(...merged.values());
   }
   return progress;
@@ -422,33 +632,47 @@ export async function getStudentCourseProgress(studentId) {
 
 export async function listStudentTaskSubmissions() {
   const snapshot = await getFirestore().collectionGroup("lessons").get();
-  return snapshot.docs.flatMap((lessonDoc) => {
+  const rows = [];
+  for (const lessonDoc of snapshot.docs) {
     const pathParts = lessonDoc.ref.path.split("/");
-    if (pathParts[0] !== "students" || pathParts[2] !== "enrolledCourses") return [];
+    if (pathParts[0] !== "students" || pathParts[2] !== "enrolledCourses") continue;
     const data = lessonDoc.data();
-    const hasEvaluationData = Boolean(data.taskStudentPdfUpload || data.taskCompleted || data.feedback || data.grade !== null && data.grade !== undefined);
-    if (!hasEvaluationData) return [];
+    const normalizedSubmissions = buildTaskSubmissions([], data);
+    if (data.grade !== undefined || data.feedback || data.taskId || data.taskStudentPdfUpload) {
+      await lessonDoc.ref.set({
+        taskSubmissions: normalizedSubmissions,
+        grade: FieldValue.delete(),
+        feedback: FieldValue.delete(),
+        taskId: FieldValue.delete(),
+        taskStudentPdfUpload: FieldValue.delete(),
+        taskCompleted: FieldValue.delete(),
+      }, { merge: true });
+    }
+    const taskEntries = Object.values(normalizedSubmissions);
+    const hasEvaluationData = Boolean(taskEntries.length || data.feedback || data.grade !== null && data.grade !== undefined);
+    if (!hasEvaluationData) continue;
     const studentId = pathParts[1];
     const courseId = pathParts[3];
     const sectionIndex = pathParts.indexOf("sections");
     const section = String(data.section || (sectionIndex >= 0 ? pathParts[sectionIndex + 1] : "General")).trim() || "General";
-    return [{
-      id: `${studentId}:${courseId}:${section}:${lessonDoc.id}`,
+    (taskEntries.length ? taskEntries : [{ taskId: "", submitted: false }]).forEach((task) => rows.push({
+      id: `${studentId}:${courseId}:${section}:${lessonDoc.id}:${task.taskId || "task"}`,
       studentId,
       courseId,
       courseTitle: data.courseTitle || courseId,
       section,
       lessonId: data.lessonId || lessonDoc.id,
       lessonTitle: data.lessonTitle || lessonDoc.id,
-      taskId: data.taskId || "",
-      taskStudentPdfUpload: data.taskStudentPdfUpload || "",
-      taskCompleted: Boolean(data.taskCompleted),
+      taskId: task.taskId || "",
+      taskStudentPdfUpload: task.taskStudentPdfUpload || "",
+      taskCompleted: Boolean(task.submitted),
       videoCompleted: Boolean(data.videoCompleted),
-      grade: data.grade ?? null,
-      feedback: data.feedback || "",
-      updatedAt: data.updatedAt || null,
-    }];
-  });
+      grade: normalizeTaskGrade(task.grade ?? data.grade),
+      feedback: task.feedback || data.feedback || "",
+      updatedAt: task.updatedAt || data.updatedAt || null,
+    }));
+  }
+  return rows;
 }
 
 export async function getCourse(courseId) {

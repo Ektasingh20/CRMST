@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import { isMongoConnected } from "../config/db.js";
-import { addCourseLesson, createCourse, deleteCourse, deleteCourseLesson, getCourse, getStudentCourseProgress, gradeCourseTask, listCourses, listStudentTaskSubmissions, saveStudentLessonProgress, saveStudentTaskSubmission, updateCourse, updateCourseLesson } from "../config/firestoreCourseModel.js";
+import { addCourseLesson, createCourse, deleteCourse, deleteCourseLesson, ensureStudentEnrollment, getCourse, getStudentCourseProgress, gradeCourseTask, listCourses, listStudentTaskSubmissions, saveStudentLessonProgress, saveStudentTaskSubmission, updateCourse, updateCourseLesson } from "../config/firestoreCourseModel.js";
 import { notifyEnrolledStudents, notifyStudent } from "../config/firestoreNotificationModel.js";
 import { isAdmin } from "../utils/roles.js";
 
@@ -17,6 +17,17 @@ function progressKey(item) {
   return `${item.courseId}:${String(item.section || "General").trim().toLowerCase()}:${item.lessonId}`;
 }
 
+function lessonProgressRatio(lesson, saved = {}) {
+  const tasks = Array.isArray(lesson.tasks) ? lesson.tasks : [];
+  const submissions = saved.taskSubmissions || {};
+  const taskDone = tasks.filter((task, index) => submissions[String(task.id || index)]?.submitted === true).length;
+  const total = 1 + (lesson.notesUrl ? 1 : 0) + tasks.length;
+  const done = (saved.videoCompleted ? 1 : 0)
+    + (lesson.notesUrl ? (saved.notesCompleted ? 1 : 0) : 0)
+    + taskDone;
+  return total ? done / total : 0;
+}
+
 function requireAdmin(req, res) {
   if (!isAdmin(req.user)) {
     res.status(403).json({ error: "Only an Admin can manage courses." });
@@ -30,16 +41,33 @@ export async function getCourses(req, res) {
   try {
     const courses = await listCourses();
     if (String(req.user?.role || "").toLowerCase() !== "student") return res.json(courses);
-    const progress = await getStudentCourseProgress(req.user.id || req.user._id);
+    const studentId = req.user.id || req.user._id;
+    const assignedCourses = courses.filter((course) => normalizeStudentIds(course.studentIds).includes(String(studentId)));
+    await Promise.all(assignedCourses.map((course) => ensureStudentEnrollment(studentId, course).catch((error) => {
+      console.warn(`Could not initialize enrollment ${studentId}/${course.id}:`, error.message || error);
+    })));
+    let progress = [];
+    try {
+      progress = await getStudentCourseProgress(studentId);
+    } catch (error) {
+      console.error(`Could not load student progress for ${studentId}:`, error);
+    }
     const byLesson = new Map(progress.map((item) => [progressKey(item), item]));
     return res.json(courses.map((course) => ({
       ...course,
+      progress: course.lessons.length
+        ? Math.round((course.lessons.reduce((sum, lesson) => sum + lessonProgressRatio(lesson, byLesson.get(`${course.id}:${String(lesson.section || "General").trim().toLowerCase()}:${lesson.id}`) || {}), 0) / course.lessons.length) * 100)
+        : 0,
+      completed: course.lessons.length > 0 && course.lessons.every((lesson) => byLesson.get(`${course.id}:${String(lesson.section || "General").trim().toLowerCase()}:${lesson.id}`)?.completed === true),
       lessons: course.lessons.map((lesson) => ({
         ...lesson,
         studentProgress: byLesson.get(`${course.id}:${String(lesson.section || "General").trim().toLowerCase()}:${lesson.id}`) || null,
       })),
     })));
-  } catch (err) { return res.status(500).json({ error: err.message }); }
+  } catch (err) {
+    console.error("GET /api/courses failed:", err);
+    return res.status(500).json({ error: err.message });
+  }
 }
 
 export async function getStudentTaskSubmissions(req, res) {
@@ -178,7 +206,18 @@ export async function submitCourseTask(req, res) {
   try {
     const task = await saveStudentTaskSubmission(req.params.courseId, req.params.lessonId, req.params.taskId, studentId, field, req.body.url, req.body.section || "");
     return task ? res.json(task) : res.status(404).json({ error: "Assignment not found." });
-  } catch (err) { return res.status(400).json({ error: err.message }); }
+  } catch (err) {
+    console.error("Student task submission failed:", {
+      courseId: req.params.courseId,
+      lessonId: req.params.lessonId,
+      taskId: req.params.taskId,
+      studentId,
+      section: req.body.section || "",
+      message: err.message,
+      stack: err.stack,
+    });
+    return res.status(500).json({ error: err.message || "Student task submission failed." });
+  }
 }
 
 export async function saveCourseLessonProgress(req, res) {
@@ -186,7 +225,10 @@ export async function saveCourseLessonProgress(req, res) {
   const studentId = String(req.body.studentId || "");
   if (String(req.user?.id || req.user?._id) !== studentId) return res.status(403).json({ error: "You can only update your own progress." });
   try {
-    const progress = await saveStudentLessonProgress(req.params.courseId, req.params.lessonId, studentId, req.body.videoCompleted === true, req.body.section || "");
+    const progress = await saveStudentLessonProgress(req.params.courseId, req.params.lessonId, studentId, {
+      videoCompleted: req.body.videoCompleted,
+      notesCompleted: req.body.notesCompleted,
+    }, req.body.section || "");
     return progress ? res.json(progress) : res.status(404).json({ error: "Lesson not found." });
   } catch (err) { return res.status(400).json({ error: err.message }); }
 }

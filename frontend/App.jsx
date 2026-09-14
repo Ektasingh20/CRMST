@@ -55,6 +55,14 @@ import {
   X,
   Eye,
   EyeOff,
+  Trash2,
+  FileText,
+  Plus,
+  FolderUp,
+  Info,
+  ChevronDown,
+  Video,
+  Layers,
 } from "lucide-react";
 import crmHero from "./assets/crm-hero.png";
 import crmOperations from "./assets/crm-operations.png";
@@ -221,6 +229,21 @@ const departmentRoleMap = {
 
 function normalizeCourseToTraining(course) {
   const id = course?.id || course?._id || "course-unknown";
+  const lessons = Array.isArray(course?.lessons) ? course.lessons : [];
+  const sourceSections = Array.isArray(course?.sections) && course.sections.length
+    ? course.sections
+    : [...new Set(lessons.map((lesson) => String(lesson.section || "General").trim() || "General"))].map((name) => ({ name }));
+  const sections = sourceSections.map((section, index) => {
+    const sectionName = String(section?.name || section?.title || "General").trim() || "General";
+    return {
+      ...section,
+      id: section?.id || createEntityId(`section-${index}`),
+      name: sectionName,
+      lessons: Array.isArray(section?.lessons)
+        ? section.lessons
+        : lessons.filter((lesson) => String(lesson.section || "General").trim().toLowerCase() === sectionName.toLowerCase()),
+    };
+  });
   const firstLesson = Array.isArray(course?.lessons) ? course.lessons[0] : null;
   const firstTask = Array.isArray(firstLesson?.tasks) ? firstLesson.tasks[0] : null;
   return {
@@ -236,15 +259,13 @@ function normalizeCourseToTraining(course) {
     level: course?.level || "Advanced",
     seats: Array.isArray(course?.studentIds) ? String(course.studentIds.length || 24) : "24",
     batchTiming: course?.batchTiming || "Mon-Fri • 6PM-8PM",
-    projects: Array.isArray(course?.lessons) ? `${course.lessons.length} lessons` : "3 capstone projects",
+    projects: `${lessons.length} lessons`,
     certification: course?.certification || "Industry certificate",
     placement: course?.placement || "100% interview prep",
     imageUrl: course?.thumbnail || course?.imageUrl || "",
     syllabus: course?.syllabus || "",
-    sections: Array.isArray(course?.sections) && course.sections.length
-      ? course.sections
-      : [...new Set((Array.isArray(course?.lessons) ? course.lessons : []).map((lesson) => String(lesson.section || "General").trim() || "General"))].map((name) => ({ name })),
-    lessons: Array.isArray(course?.lessons) ? course.lessons : [],
+    sections,
+    lessons,
     lessonTitle: firstLesson?.title || "",
     videoUrl: firstLesson?.videoUrl || "",
     notesUrl: firstLesson?.notesUrl || "",
@@ -877,6 +898,10 @@ function badgeClass(status) {
   return "badge neutral";
 }
 
+function hasTaskGrade(value) {
+  return value !== undefined && value !== null && String(value).trim() !== "";
+}
+
 function getThumbnailPreset(label = "") {
   const value = label.toLowerCase();
 
@@ -1168,6 +1193,10 @@ function App() {
   const [trainingModalUploading, setTrainingModalUploading] = useState(false);
   const [trainingAssetUploading, setTrainingAssetUploading] = useState("");
   const [stipModalUploading, setStipModalUploading] = useState(false);
+  const [courseBuilderMode, setCourseBuilderMode] = useState("manual");
+  const [folderUploadState, setFolderUploadState] = useState(null);
+  const [openSectionIds, setOpenSectionIds] = useState([]);
+  const [focusedLessonId, setFocusedLessonId] = useState("");
 
   const [settingsForm, setSettingsForm] = useState({ name: "", email: "", phone: "", emergencyContact: "", maritalStatus: "", education: "", dept: "", position: "", role: "", joined: "", state: "", branch: "", branchCode: "", address: "", username: "", imageUrl: "", imagePublicId: "" });
   const [passwordForm, setPasswordForm] = useState({ current: "", new: "", confirm: "" });
@@ -1305,9 +1334,7 @@ function App() {
         if (String(session.role || "").trim().toLowerCase() === "student") {
           const cachedCourses = readStudentCoursesFromStorage(session);
           if (cachedCourses.courses.length) setCourseRows(cachedCourses.courses);
-          if (cachedCourses.fetchedAt && Date.now() - cachedCourses.fetchedAt < STUDENT_COURSES_CACHE_TTL_MS) return;
-
-          const remoteCourses = await loadCourses();
+          const remoteCourses = await loadCourses(true);
           if (Array.isArray(remoteCourses) && remoteCourses.length) {
             setCourseRows(remoteCourses);
             writeStudentCoursesToStorage(session, remoteCourses);
@@ -1390,7 +1417,7 @@ function App() {
     const cached = readStudentNotificationsFromStorage(currentUser);
     if (cached.items.length) setNotifications(cached.items);
     const refreshEvaluatedCourses = async (items) => {
-      if (!items.some((item) => item.type === "assignment_evaluated")) return;
+      if (!items.some((item) => ["assignment_evaluated", "lesson_added"].includes(item.type))) return;
       invalidateCoursesCache();
       const refreshedCourses = await loadCourses(true);
       if (active && refreshedCourses.length) {
@@ -1624,19 +1651,30 @@ function App() {
     return role === "student" || department === "student";
   }), [users]);
 
-  const taskReviewRows = useMemo(() => taskSubmissions.map((submission) => {
-    const student = studentUsers.find((user) => String(user.id || user._id) === String(submission.studentId));
-    const course = courseRows.find((item) => String(item.id || item._id) === String(submission.courseId));
-    const lesson = course?.lessons?.find((item) => String(item.id) === String(submission.lessonId) && String(item.section || "General").trim().toLowerCase() === String(submission.section || "General").trim().toLowerCase());
-    const task = lesson?.tasks?.find((item) => String(item.id) === String(submission.taskId));
-    return {
-      ...submission,
-      studentName: student?.name || student?.username || submission.studentId,
-      studentEmail: student?.email || "",
-      taskTitle: task?.title || submission.taskId || "Assignment",
-      taskPdfUrl: task?.pdfUrl || task?.url || "",
-    };
-  }), [taskSubmissions, studentUsers, courseRows]);
+  const taskReviewRows = useMemo(() => taskSubmissions
+    .filter((submission) => String(submission.taskStudentPdfUpload || "").trim())
+    .map((submission) => {
+      const student = studentUsers.find((user) => String(user.id || user._id) === String(submission.studentId));
+      const course = courseRows.find((item) => String(item.id || item._id) === String(submission.courseId));
+      const lesson = course?.lessons?.find((item) => String(item.id) === String(submission.lessonId) && String(item.section || "General").trim().toLowerCase() === String(submission.section || "General").trim().toLowerCase());
+      const task = lesson?.tasks?.find((item) => String(item.id) === String(submission.taskId));
+      return {
+        ...submission,
+        grade: hasTaskGrade(submission.grade) ? submission.grade : null,
+        studentName: student?.name || student?.username || submission.studentId,
+        studentEmail: student?.email || "",
+        taskTitle: task?.title || submission.taskId || "Assignment",
+        taskPdfUrl: task?.pdfUrl || task?.url || "",
+      };
+    })
+    .sort((left, right) => {
+      const leftGraded = hasTaskGrade(left.grade);
+      const rightGraded = hasTaskGrade(right.grade);
+      if (leftGraded !== rightGraded) return Number(leftGraded) - Number(rightGraded);
+      const rightTime = new Date(right.updatedAt || 0).getTime();
+      const leftTime = new Date(left.updatedAt || 0).getTime();
+      return rightTime - leftTime;
+    }), [taskSubmissions, studentUsers, courseRows]);
 
   useEffect(() => {
     const courseFormOpen = ["add", "edit", "lesson", "edit-lesson"].includes(trainingModal?.mode);
@@ -1786,6 +1824,9 @@ function App() {
     const shouldReturnToCourseLibrary = ["add", "edit", "lesson", "edit-lesson"].includes(trainingModal?.mode);
     cleanupModalStateImages(trainingModal);
     setTrainingModal(null);
+    setFolderUploadState(null);
+    setCourseBuilderMode("manual");
+    setOpenSectionIds([]);
     if (shouldReturnToCourseLibrary) setActivePage("course-view");
   }
 
@@ -2041,9 +2082,26 @@ function App() {
     }
   }
 
+  function makeEmptyTask() {
+    return { id: createEntityId("task"), title: "", pdfUrl: "", fileName: "", timeLimit: "60", description: "" };
+  }
+  function makeEmptyLesson() {
+    return { id: createEntityId("lesson"), title: "", videoUrl: "", videoFileName: "", notesUrl: "", notesFileName: "", durationSec: 3600, tasks: [] };
+  }
+  function makeEmptySection() {
+    const section = { id: createEntityId("section"), name: "", lessons: [makeEmptyLesson()] };
+    setOpenSectionIds((current) => [...current, section.id]);
+    return section;
+  }
+
   function openTrainingModal(mode, course = null, lesson = null) {
     if (mode === "add") {
       setActivePage("course-add");
+      setCourseBuilderMode("manual");
+      setFolderUploadState(null);
+      setFocusedLessonId("");
+      const firstSection = makeEmptySection();
+      setOpenSectionIds([firstSection.id]);
       setTrainingModal({
         mode: "add",
         step: 1,
@@ -2062,6 +2120,7 @@ function App() {
           assignment: "",
           assignmentUrl: "",
           studentIds: [],
+          sections: [firstSection],
           trainer: "",
           mode: "Hybrid",
           level: "Advanced",
@@ -2079,7 +2138,32 @@ function App() {
 
     if (mode === "edit") {
       setActivePage("course-add");
-      setTrainingModal({ mode, step: 1, item: course ? sanitizeImageRecord({ ...course, section: course.section || "General" }) : null });
+      setCourseBuilderMode("manual");
+      let item = course ? sanitizeImageRecord({ ...course }) : null;
+      let selectedLessonId = String(lesson?.id || "");
+      let selectedSectionIds = selectedLessonId
+        ? (item?.sections || []).filter((section) => (section.lessons || []).some((entry) => String(entry.id) === selectedLessonId)).map((section) => section.id)
+        : (item?.sections || []).map((section) => section.id);
+
+      if (!lesson && item) {
+        const existingSections = Array.isArray(item.sections) && item.sections.length
+          ? item.sections
+          : [{ id: createEntityId("section"), name: "General", lessons: item.lessons || [] }];
+        const targetSection = existingSections[existingSections.length - 1];
+        const newLesson = makeEmptyLesson();
+        item = {
+          ...item,
+          sections: existingSections.map((section, index) => index === existingSections.length - 1
+            ? { ...section, lessons: [...(section.lessons || []), newLesson] }
+            : section),
+        };
+        selectedLessonId = newLesson.id;
+        selectedSectionIds = [targetSection.id];
+      }
+
+      setFocusedLessonId(selectedLessonId);
+      setOpenSectionIds(selectedSectionIds);
+      setTrainingModal({ mode, step: 1, item });
       return;
     }
 
@@ -2137,6 +2221,23 @@ function App() {
       openTrainingModal("add");
     }
   }, [activePage, trainingModal]);
+
+  useEffect(() => {
+    if (!focusedLessonId || !trainingModal) return;
+    const timer = window.setTimeout(() => {
+      const lessonElement = document.querySelector(`[data-lesson-id="${CSS.escape(focusedLessonId)}"]`);
+      const builderElement = lessonElement?.closest(".cb-page");
+      if (!lessonElement || !builderElement) return;
+      lessonElement.querySelector("[data-lesson-title]")?.focus();
+      const targetTop = builderElement.scrollTop
+        + lessonElement.getBoundingClientRect().top
+        - builderElement.getBoundingClientRect().top
+        - builderElement.clientHeight / 2
+        + lessonElement.offsetHeight / 2;
+      builderElement.scrollTo({ top: Math.max(0, targetTop), behavior: "smooth" });
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [focusedLessonId, trainingModal, openSectionIds]);
 
   function duplicateServiceCategory(category) {
     const rows = serviceRows.filter((row) => (row.category || "Uncategorized") === category);
@@ -2317,6 +2418,297 @@ function App() {
       return;
     }
     setTrainingModal((current) => ({ ...current, step: step + 1 }));
+  }
+
+  function updateCourseSections(updater) {
+    setTrainingModal((current) => {
+      if (!current) return current;
+      const sections = updater(current.item.sections || []);
+      return { ...current, item: { ...current.item, sections } };
+    });
+  }
+  function addCourseSection() {
+    const section = makeEmptySection();
+    updateCourseSections((sections) => [...sections, section]);
+  }
+  function removeCourseSection(sectionId) {
+    updateCourseSections((sections) => sections.filter((section) => section.id !== sectionId));
+  }
+  function renameCourseSection(sectionId, name) {
+    updateCourseSections((sections) => sections.map((section) => section.id === sectionId ? { ...section, name } : section));
+  }
+  function addLessonToSection(sectionId) {
+    updateCourseSections((sections) => sections.map((section) => section.id === sectionId ? { ...section, lessons: [...section.lessons, makeEmptyLesson()] } : section));
+  }
+  function removeLessonFromSection(sectionId, lessonId) {
+    updateCourseSections((sections) => sections.map((section) => section.id === sectionId ? { ...section, lessons: section.lessons.filter((lesson) => lesson.id !== lessonId) } : section));
+  }
+  function patchLesson(sectionId, lessonId, patch) {
+    updateCourseSections((sections) => sections.map((section) => section.id === sectionId ? {
+      ...section,
+      lessons: section.lessons.map((lesson) => lesson.id === lessonId ? { ...lesson, ...patch } : lesson),
+    } : section));
+  }
+  function addTaskToLesson(sectionId, lessonId) {
+    updateCourseSections((sections) => sections.map((section) => section.id === sectionId ? {
+      ...section,
+      lessons: section.lessons.map((lesson) => lesson.id === lessonId ? { ...lesson, tasks: [...(lesson.tasks || []), makeEmptyTask()] } : lesson),
+    } : section));
+  }
+  function removeTaskFromLesson(sectionId, lessonId, taskId) {
+    updateCourseSections((sections) => sections.map((section) => section.id === sectionId ? {
+      ...section,
+      lessons: section.lessons.map((lesson) => lesson.id === lessonId ? { ...lesson, tasks: (lesson.tasks || []).filter((task) => task.id !== taskId) } : lesson),
+    } : section));
+  }
+  function patchTask(sectionId, lessonId, taskId, patch) {
+    updateCourseSections((sections) => sections.map((section) => section.id === sectionId ? {
+      ...section,
+      lessons: section.lessons.map((lesson) => lesson.id === lessonId ? {
+        ...lesson,
+        tasks: (lesson.tasks || []).map((task) => task.id === taskId ? { ...task, ...patch } : task),
+      } : lesson),
+    } : section));
+  }
+  function toggleSectionOpen(sectionId) {
+    setOpenSectionIds((current) => current.includes(sectionId) ? current.filter((id) => id !== sectionId) : [...current, sectionId]);
+  }
+
+  async function handleLessonFileUpload(sectionId, lessonId, field, fileNameField, file) {
+    if (!file) return;
+    const busyKey = `${lessonId}:${field}`;
+    setTrainingAssetUploading(busyKey);
+    try {
+      const uploaded = await uploadCourseAsset(file);
+      const uploadedUrl = uploaded?.url || uploaded?.filePath || "";
+      if (!uploadedUrl) throw new Error("Upload finished without a file URL. Please try again.");
+      patchLesson(sectionId, lessonId, { [field]: uploadedUrl, [fileNameField]: file.name });
+    } catch (err) {
+      notify(err.message || "File upload failed.");
+    } finally {
+      setTrainingAssetUploading("");
+    }
+  }
+
+  async function handleTaskFileUpload(sectionId, lessonId, taskId, file) {
+    if (!file) return;
+    const busyKey = `${taskId}:pdfUrl`;
+    setTrainingAssetUploading(busyKey);
+    try {
+      const uploaded = await uploadCourseAsset(file);
+      const uploadedUrl = uploaded?.url || uploaded?.filePath || "";
+      if (!uploadedUrl) throw new Error("Upload finished without a file URL. Please try again.");
+      patchTask(sectionId, lessonId, taskId, { pdfUrl: uploadedUrl, fileName: file.name });
+    } catch (err) {
+      notify(err.message || "Task PDF upload failed.");
+    } finally {
+      setTrainingAssetUploading("");
+    }
+  }
+
+  function buildLessonsPayloadFromSections(sections) {
+    const payload = [];
+    (sections || []).forEach((section) => {
+      (section.lessons || []).forEach((lesson) => {
+        if (!String(lesson.title || "").trim()) return;
+        const tasks = (lesson.tasks || [])
+          .filter((task) => String(task.title || "").trim() || task.pdfUrl)
+          .map((task) => ({
+            title: String(task.title || "").trim() || "Task",
+            timeLimit: Number(task.timeLimit || 30),
+            pdfUrl: task.pdfUrl || "",
+            type: "assignment",
+            description: task.description || "",
+          }));
+        payload.push({
+          section: String(section.name || "").trim() || "General",
+          title: String(lesson.title).trim(),
+          videoUrl: lesson.videoUrl || "",
+          notesUrl: lesson.notesUrl || "",
+          durationSec: Number(lesson.durationSec || 0) || 0,
+          tasks,
+        });
+      });
+    });
+    return payload;
+  }
+
+  async function saveCourseBuilder() {
+    if (!trainingModal?.item || trainingModalUploading) return;
+    const item = trainingModal.item;
+    if (!String(item.name || "").trim() || !String(item.duration || "").trim() || !String(item.price || "").trim() || !String(item.mode || "").trim() || !String(item.tools || "").trim() || !String(item.syllabus || "").trim()) {
+      notify("Fill in title, duration, fees, mode, tools, and syllabus before saving.");
+      return;
+    }
+    const lessonsPayload = buildLessonsPayloadFromSections(item.sections);
+    if (!lessonsPayload.length) {
+      notify("Add at least one section with a titled lesson before saving.");
+      return;
+    }
+    setTrainingModalUploading(true);
+    try {
+      const uploadedItem = await persistImageIfNeeded(item, notify);
+      const payload = {
+        title: uploadedItem.name || "Untitled course",
+        duration: uploadedItem.duration || "4 weeks",
+        fees: uploadedItem.price || "₹0",
+        mode: uploadedItem.mode || "Online",
+        tools: uploadedItem.tools || "",
+        syllabus: uploadedItem.syllabus || "",
+        thumbnail: uploadedItem.imageUrl || "",
+        status: "active",
+        studentIds: Array.isArray(uploadedItem.studentIds) ? uploadedItem.studentIds : [],
+        lessons: lessonsPayload,
+      };
+      const savedCourse = trainingModal.mode === "edit"
+        ? await updateCourse(uploadedItem.id, { ...payload, id: uploadedItem.id })
+        : await createCourse(payload);
+      const latestCourse = savedCourse;
+      const next = normalizeCourseToTraining(latestCourse);
+      if (trainingModal.mode === "edit") {
+        setCourseRows((currentRows) => currentRows.map((row) => String(row.id) === String(uploadedItem.id) ? latestCourse : row));
+        setTrainingRows((currentRows) => currentRows.map((row) => String(row.id) === String(uploadedItem.id) ? next : row));
+        notify(`${next.name} was updated with ${lessonsPayload.length} lesson(s).`);
+      } else {
+        setCourseRows((currentRows) => [latestCourse, ...currentRows]);
+        setTrainingRows((currentRows) => [next, ...currentRows]);
+        notify(`${next.name} was added with ${lessonsPayload.length} lesson(s).`);
+      }
+      closeTrainingModal();
+    } catch (err) {
+      notify(err.message || "Could not save the course.");
+    } finally {
+      setTrainingModalUploading(false);
+    }
+  }
+
+  async function handleCourseFolderUpload(fileList) {
+    const files = Array.from(fileList || []);
+    if (!files.length) return;
+    let courseName = "";
+    const structured = new Map();
+    files.forEach((file) => {
+      const rel = file.webkitRelativePath || file.name;
+      const parts = rel.split("/").filter(Boolean);
+      if (parts.length < 3) return;
+      if (!courseName) courseName = parts[0];
+      const nestedLayout = parts[1].toLowerCase() === "sections"
+        && parts[3]?.toLowerCase() === "lessons";
+      const sectionName = nestedLayout ? parts[2] : parts[1];
+      const lessonName = nestedLayout ? parts[4] : parts[2];
+      const rest = parts.slice(nestedLayout ? 5 : 3);
+      if (!sectionName || !lessonName) return;
+      if (!structured.has(sectionName)) structured.set(sectionName, new Map());
+      const lessonsMap = structured.get(sectionName);
+      if (!lessonsMap.has(lessonName)) lessonsMap.set(lessonName, { videoFile: null, notesFile: null, taskFiles: [] });
+      const entry = lessonsMap.get(lessonName);
+      if (rest.length === 1) {
+        const fname = rest[0].toLowerCase();
+        if (/\.(mp4|mov|webm|mkv|avi|m4v)$/.test(fname)) entry.videoFile = file;
+        else if (/\.pdf$/.test(fname)) entry.notesFile = file;
+      } else if (rest.length === 2 && rest[0].toLowerCase() === "tasks" && /\.pdf$/i.test(rest[1])) {
+        entry.taskFiles.push(file);
+      }
+    });
+
+    const uploadJobs = [];
+    structured.forEach((lessonsMap) => {
+      lessonsMap.forEach((entry) => {
+        if (entry.videoFile) uploadJobs.push(entry.videoFile);
+        if (entry.notesFile) uploadJobs.push(entry.notesFile);
+        entry.taskFiles.forEach((file) => uploadJobs.push(file));
+      });
+    });
+
+    if (!uploadJobs.length) {
+      notify("No matching lesson files were found. Check the folder structure and try again.");
+      return;
+    }
+
+    setFolderUploadState({ status: "uploading", total: uploadJobs.length, done: 0, courseName });
+    const urlByFile = new Map();
+    try {
+      for (const file of uploadJobs) {
+        const uploaded = await uploadCourseAsset(file);
+        urlByFile.set(file, uploaded?.url || uploaded?.filePath || "");
+        setFolderUploadState((current) => current ? { ...current, done: current.done + 1 } : current);
+      }
+    } catch (err) {
+      notify(err.message || "Folder upload failed partway through. Please try again.");
+      setFolderUploadState(null);
+      return;
+    }
+
+    const sections = [];
+    const nextOpenIds = [];
+    structured.forEach((lessonsMap, sectionName) => {
+      const sectionId = createEntityId("section");
+      nextOpenIds.push(sectionId);
+      const lessons = [];
+      lessonsMap.forEach((entry, lessonName) => {
+        lessons.push({
+          id: createEntityId("lesson"),
+          title: lessonName,
+          videoUrl: entry.videoFile ? urlByFile.get(entry.videoFile) : "",
+          videoFileName: entry.videoFile?.name || "",
+          notesUrl: entry.notesFile ? urlByFile.get(entry.notesFile) : "",
+          notesFileName: entry.notesFile?.name || "",
+          durationSec: 3600,
+          tasks: entry.taskFiles.map((file, index) => ({
+            id: createEntityId("task"),
+            title: file.name.replace(/\.pdf$/i, "") || `Task ${index + 1}`,
+            pdfUrl: urlByFile.get(file),
+            fileName: file.name,
+            timeLimit: "60",
+            description: "",
+          })),
+        });
+      });
+      sections.push({ id: sectionId, name: sectionName, lessons });
+    });
+
+    const lessons = sections.flatMap((section) => section.lessons.map((lesson, lessonIndex) => ({
+      section: section.name,
+      title: lesson.title,
+      videoUrl: lesson.videoUrl || "",
+      notesUrl: lesson.notesUrl || "",
+      durationSec: Number(lesson.durationSec || 3600),
+      order: lessonIndex + 1,
+      tasks: lesson.tasks.map((task, taskIndex) => ({
+        title: task.title,
+        pdfUrl: task.pdfUrl || "",
+        timeLimit: task.timeLimit || "60",
+        description: task.description || "",
+        order: taskIndex + 1,
+      })),
+    })));
+
+    try {
+      const syllabus = sections
+        .map((section) => `${section.name}: ${section.lessons.map((lesson) => lesson.title).join(", ")}`)
+        .join(". ");
+      const createdCourse = await createCourse({
+        title: courseName || "Imported course",
+        duration: "Self-paced",
+        fees: "₹0",
+        mode: "Online",
+        tools: "Course materials",
+        syllabus: syllabus || `Self-paced ${courseName || "course"} covering the uploaded lessons and practice tasks.`,
+        thumbnail: "",
+        status: "active",
+        studentIds: [],
+        lessons,
+      });
+      const nextCourse = normalizeCourseToTraining(createdCourse);
+      setCourseRows((currentRows) => [createdCourse, ...currentRows]);
+      setTrainingRows((currentRows) => [nextCourse, ...currentRows]);
+      setFolderUploadState({ status: "done", total: uploadJobs.length, done: uploadJobs.length, courseName, sectionCount: sections.length, lessonCount: lessons.length });
+      notify(`${nextCourse.name} was uploaded with ${lessons.length} lesson(s).`);
+      closeTrainingModal();
+    } catch (err) {
+      setFolderUploadState(null);
+      notify(err.message || "Folder uploaded, but the course could not be saved.");
+    }
   }
 
   async function handleStipModalImageSelect(file) {
@@ -3113,22 +3505,24 @@ function App() {
           courses={displayTrainingRows}
           notifications={notifications}
           onRefreshNotifications={async () => {
-            const studentId = String(currentUser?.id || currentUser?._id || "").trim();
-            if (!studentId) return;
-            const cached = readStudentNotificationsFromStorage(currentUser);
-            if (cached.fetchedAt && Date.now() - cached.fetchedAt < STUDENT_NOTIFICATIONS_CACHE_TTL_MS) return;
-            const result = await loadNotifications(studentId);
-            if (Array.isArray(result)) {
-              setNotifications(result);
-              writeStudentNotificationsToStorage(currentUser, result);
-              if (result.some((item) => item.type === "assignment_evaluated")) {
-                invalidateCoursesCache();
-                const refreshedCourses = await loadCourses(true);
-                if (refreshedCourses.length) {
-                  setCourseRows(refreshedCourses);
-                  writeStudentCoursesToStorage(currentUser, refreshedCourses);
+            try {
+              const studentId = String(currentUser?.id || currentUser?._id || "").trim();
+              if (!studentId) return;
+              const result = await loadNotifications(studentId);
+              if (Array.isArray(result)) {
+                setNotifications(result);
+                writeStudentNotificationsToStorage(currentUser, result);
+                if (result.some((item) => ["assignment_evaluated", "lesson_added"].includes(item.type))) {
+                  invalidateCoursesCache();
+                  const refreshedCourses = await loadCourses(true);
+                  if (refreshedCourses.length) {
+                    setCourseRows(refreshedCourses);
+                    writeStudentCoursesToStorage(currentUser, refreshedCourses);
+                  }
                 }
               }
+            } catch (err) {
+              if (err?.status !== 401) console.warn("Notification refresh failed", err);
             }
           }}
           onReadNotification={handleReadNotification}
@@ -3166,7 +3560,7 @@ function App() {
   }
 
   return (
-    <div className="shell">
+    <div className={`shell ${activePage === "course-add" ? "course-create-shell" : ""}`}>
       <div
         className={`mobile-scrim ${mobileNavOpen ? "show" : ""}`}
         onClick={() => setMobileNavOpen(false)}
@@ -4695,7 +5089,6 @@ function App() {
                             <div className="course-library-actions">
                               <button type="button" className="ghost-button compact" onClick={() => openTrainingModal("view", course)}>{expanded ? "Hide course" : "View course"}</button>
                               <button type="button" className="ghost-button compact" onClick={() => openTrainingModal("edit", course)}>Edit</button>
-                              <button type="button" className="ghost-button compact" onClick={() => openTrainingModal("lesson", course)}>Next lesson</button>
                               <button type="button" className="ghost-button compact danger" onClick={() => deleteTraining(course)}>Delete</button>
                             </div>
                           </article>
@@ -4710,10 +5103,10 @@ function App() {
           {activePage === "course-check" && (
             <>
               <section className="stats-grid compact four-up">
-                <StatCard tone="blue" icon={Users} label="Students with submissions" value={new Set(taskReviewRows.map((row) => row.studentId)).size} note="Uploaded work" />
-                <StatCard tone="amber" icon={ClipboardCheck} label="Needs review" value={taskReviewRows.filter((row) => row.taskStudentPdfUpload && row.grade === null).length} note="Awaiting grade" />
-                <StatCard tone="green" icon={CheckCheck} label="Evaluated" value={taskReviewRows.filter((row) => row.grade !== null).length} note="Graded submissions" />
-                <StatCard tone="teal" icon={GraduationCap} label="Total submissions" value={taskReviewRows.length} note="Section-aware records" />
+                <StatCard tone="blue" icon={Users} label="Unique students" value={new Set(taskReviewRows.map((row) => row.studentId)).size} note={`${taskReviewRows.length} uploaded assignments`} />
+                <StatCard tone="amber" icon={ClipboardCheck} label="Needs review" value={taskReviewRows.filter((row) => !hasTaskGrade(row.grade)).length} note="Awaiting grade" />
+                <StatCard tone="green" icon={CheckCheck} label="Graded assignments" value={taskReviewRows.filter((row) => hasTaskGrade(row.grade)).length} note="Grade already added" />
+                <StatCard tone="teal" icon={GraduationCap} label="Uploaded assignments" value={taskReviewRows.length} note="All student uploads" />
               </section>
               <Panel title="Check student tasks">
                 <div className="module-toolbar">
@@ -4721,15 +5114,23 @@ function App() {
                   <button type="button" className="ghost-button compact" onClick={async () => { setTaskSubmissionLoading(true); try { setTaskSubmissions(await loadTaskSubmissions(true)); } finally { setTaskSubmissionLoading(false); } }}>Refresh submissions</button>
                 </div>
                 {taskSubmissionLoading ? <div className="catalog-empty-state">Loading student submissions...</div> : (
-                  <div className="catalog-card-list training-grid">
-                    {taskReviewRows.filter((row) => [row.studentName, row.courseTitle, row.section, row.taskTitle].join(" ").toLowerCase().includes(taskReviewQuery.toLowerCase())).map((row) => (
-                      <article key={row.id} className="admin-entity-card wide-card">
-                        <div className="course-title-row"><div><strong>{row.studentName}</strong><span>{row.studentEmail || row.studentId}</span></div><span className={badgeClass(row.grade !== null ? "approved" : row.taskStudentPdfUpload ? "pending" : "neutral")}>{row.grade !== null ? `Graded · ${row.grade}/100` : row.taskStudentPdfUpload ? "Submitted" : "Not submitted"}</span></div>
-                        <div className="course-metrics-grid"><div><span>Course</span><strong>{row.courseTitle}</strong></div><div><span>Section</span><strong>{row.section}</strong></div><div><span>Lesson</span><strong>{row.lessonTitle}</strong></div><div><span>Task</span><strong>{row.taskTitle}</strong></div></div>
-                        <div className="course-actions"><button type="button" className="primary-button compact" onClick={() => { setTaskSubmissionModal(row); setTaskGradeForm({ grade: row.grade ?? "", feedback: row.feedback || "" }); }}>Check assignment</button></div>
-                      </article>
-                    ))}
-                    {!taskReviewRows.length && <div className="catalog-empty-state">No student submissions found.</div>}
+                  <div className="submission-table-wrap">
+                    <div className="submission-table-meta"><span><strong>{taskReviewRows.filter((row) => [row.studentName, row.courseTitle, row.section, row.taskTitle].join(" ").toLowerCase().includes(taskReviewQuery.toLowerCase())).length}</strong> assignments shown</span><span className="submission-table-hint">Select a row to review and grade</span></div>
+                    <div className="submission-table" role="table" aria-label="Student assignment submissions">
+                      <div className="submission-table-head" role="row">
+                        <span role="columnheader">Student</span><span role="columnheader">Course & lesson</span><span role="columnheader">Assignment</span><span role="columnheader">Status</span><span role="columnheader" aria-label="Actions"></span>
+                      </div>
+                      {taskReviewRows.filter((row) => [row.studentName, row.courseTitle, row.section, row.taskTitle].join(" ").toLowerCase().includes(taskReviewQuery.toLowerCase())).map((row) => (
+                        <div key={row.id} className="submission-table-row" role="row">
+                          <div className="submission-student" role="cell"><span className="submission-avatar">{String(row.studentName || "S").trim().charAt(0).toUpperCase()}</span><span><strong>{row.studentName}</strong><small>{row.studentEmail || row.studentId}</small></span></div>
+                          <div className="submission-context" role="cell"><strong>{row.courseTitle}</strong><small>{row.section} · {row.lessonTitle}</small></div>
+                          <div className="submission-task" role="cell"><strong>{row.taskTitle}</strong><small>{row.taskStudentPdfUpload ? "Work uploaded" : "No upload yet"}</small></div>
+                          <div role="cell"><span className={badgeClass(hasTaskGrade(row.grade) ? "approved" : row.taskStudentPdfUpload ? "pending" : "neutral")}>{hasTaskGrade(row.grade) ? `Graded · ${row.grade}/100` : row.taskStudentPdfUpload ? "Submitted" : "Not submitted"}</span></div>
+                          <div className="submission-action" role="cell"><button type="button" className="primary-button compact" onClick={() => { setTaskSubmissionModal(row); setTaskGradeForm({ grade: row.grade ?? "", feedback: row.feedback || "" }); }}>{hasTaskGrade(row.grade) ? "View grade" : "Review"}</button></div>
+                        </div>
+                      ))}
+                    </div>
+                    {!taskReviewRows.filter((row) => [row.studentName, row.courseTitle, row.section, row.taskTitle].join(" ").toLowerCase().includes(taskReviewQuery.toLowerCase())).length && <div className="catalog-empty-state">No student submissions found.</div>}
                   </div>
                 )}
               </Panel>
@@ -5239,7 +5640,7 @@ function App() {
       {taskSubmissionModal ? (
         <ModalSurface title="Check assignment" onClose={() => setTaskSubmissionModal(null)}>
           <div className="modal-detail-card single-edit">
-            <div className="course-title-row"><div><strong>{taskSubmissionModal.studentName}</strong><span>{taskSubmissionModal.courseTitle} · {taskSubmissionModal.section} · {taskSubmissionModal.lessonTitle}</span></div><span className={badgeClass(taskSubmissionModal.grade !== null ? "approved" : "pending")}>{taskSubmissionModal.grade !== null ? `Graded · ${taskSubmissionModal.grade}/100` : "Needs review"}</span></div>
+            <div className="course-title-row"><div><strong>{taskSubmissionModal.studentName}</strong><span>{taskSubmissionModal.courseTitle} · {taskSubmissionModal.section} · {taskSubmissionModal.lessonTitle}</span></div><span className={badgeClass(hasTaskGrade(taskSubmissionModal.grade) ? "approved" : "pending")}>{hasTaskGrade(taskSubmissionModal.grade) ? `Graded · ${taskSubmissionModal.grade}/100` : "Needs review"}</span></div>
             <div className="course-actions">
               {taskSubmissionModal.taskPdfUrl ? <a className="ghost-button compact" href={taskSubmissionModal.taskPdfUrl} target="_blank" rel="noreferrer">Open task PDF</a> : null}
               {taskSubmissionModal.taskStudentPdfUpload ? <a className="ghost-button compact" href={taskSubmissionModal.taskStudentPdfUpload} target="_blank" rel="noreferrer">Open student PDF</a> : <span className="course-library-empty-detail">Student has not uploaded a PDF yet.</span>}
@@ -5249,7 +5650,7 @@ function App() {
               <label className="course-builder-field full"><span>Feedback and improvement points</span><textarea rows="5" value={taskGradeForm.feedback} onChange={(event) => setTaskGradeForm((current) => ({ ...current, feedback: event.target.value }))} placeholder="Tell the student what was done well and what to improve." /></label>
             </div>
           </div>
-          <div className="modal-actions"><button type="button" className="primary-button" disabled={taskGradeSaving || !taskGradeForm.grade} onClick={async () => { setTaskGradeSaving(true); try { await gradeStudentTask(taskSubmissionModal.courseId, taskSubmissionModal.lessonId, taskSubmissionModal.taskId, { studentId: taskSubmissionModal.studentId, grade: taskGradeForm.grade, feedback: taskGradeForm.feedback, assignmentTitle: taskSubmissionModal.taskTitle }); setTaskSubmissions((current) => current.map((row) => row.id === taskSubmissionModal.id ? { ...row, grade: Number(taskGradeForm.grade), feedback: taskGradeForm.feedback } : row)); setTaskSubmissionModal(null); notify("Assignment graded and student notified."); } catch (err) { notify(err?.message || "Could not save grade."); } finally { setTaskGradeSaving(false); } }}>{taskGradeSaving ? "Saving..." : "Save grade"}</button><button type="button" className="ghost-button compact" onClick={() => setTaskSubmissionModal(null)}>Cancel</button></div>
+          <div className="modal-actions"><button type="button" className="primary-button" disabled={taskGradeSaving || !taskGradeForm.grade} onClick={async () => { setTaskGradeSaving(true); try { await gradeStudentTask(taskSubmissionModal.courseId, taskSubmissionModal.lessonId, taskSubmissionModal.taskId, { studentId: taskSubmissionModal.studentId, grade: taskGradeForm.grade, feedback: taskGradeForm.feedback, assignmentTitle: taskSubmissionModal.taskTitle }); setTaskSubmissions((current) => current.map((row) => row.id === taskSubmissionModal.id ? { ...row, grade: Number(taskGradeForm.grade), feedback: taskGradeForm.feedback, updatedAt: new Date().toISOString() } : row)); setTaskSubmissionModal(null); notify("Assignment graded and student notified."); } catch (err) { notify(err?.message || "Could not save grade."); } finally { setTaskGradeSaving(false); } }}>{taskGradeSaving ? "Saving..." : "Save grade"}</button><button type="button" className="ghost-button compact" onClick={() => setTaskSubmissionModal(null)}>Cancel</button></div>
         </ModalSurface>
       ) : null}
 
@@ -5258,11 +5659,226 @@ function App() {
           course={trainingModal.item}
           onClose={closeTrainingModal}
           onEdit={() => openTrainingModal("edit", trainingModal.item)}
-          onEditLesson={(lesson) => openTrainingModal("edit-lesson", trainingModal.item, lesson)}
-          onNextLesson={() => openTrainingModal("lesson", trainingModal.item)}
+          onEditLesson={(lesson) => openTrainingModal("edit", trainingModal.item, lesson)}
           onDeleteCourse={() => deleteTraining(trainingModal.item)}
           onDeleteLesson={(lesson) => removeLessonFromCourse(trainingModal.item, lesson)}
         />
+      ) : trainingModal && ["add", "edit"].includes(trainingModal.mode) ? (
+        <>
+          <CourseBuilderStyles />
+          <div className="cb-page">
+            <div className="cb-modehead">
+              <div className="cb-modetabs">
+                <button type="button" className={courseBuilderMode === "manual" ? "active" : ""} onClick={() => setCourseBuilderMode("manual")}>
+                  <Layers size={15} /> Build manually
+                </button>
+                <button type="button" className={courseBuilderMode === "upload" ? "active" : ""} onClick={() => setCourseBuilderMode("upload")}>
+                  <FolderUp size={15} /> Upload course folder
+                </button>
+              </div>
+              <button type="button" className="cb-cancel" onClick={closeTrainingModal}>Cancel</button>
+            </div>
+
+            {courseBuilderMode === "upload" ? (
+              <CourseFolderUploadPanel
+                folderUploadState={folderUploadState}
+                onUpload={handleCourseFolderUpload}
+                onReview={() => setCourseBuilderMode("manual")}
+              />
+            ) : null}
+
+            {courseBuilderMode === "manual" ? <>
+            <div className="cb-card">
+              <div className="cb-card-head">
+                <h3>Course details</h3>
+                <p>The basics students see before they enroll.</p>
+              </div>
+              <div className="cb-grid">
+                <label className="cb-field"><span>Title *</span><input value={trainingModal.item.name || ""} placeholder="Full Stack Development" onChange={(event) => setTrainingModal((current) => ({ ...current, item: { ...current.item, name: event.target.value } }))} /></label>
+                <label className="cb-field"><span>Duration *</span><input value={trainingModal.item.duration || ""} placeholder="6 months" onChange={(event) => setTrainingModal((current) => ({ ...current, item: { ...current.item, duration: event.target.value } }))} /></label>
+                <label className="cb-field"><span>Fees *</span><input value={trainingModal.item.price || ""} placeholder="₹25,000" onChange={(event) => setTrainingModal((current) => ({ ...current, item: { ...current.item, price: event.target.value } }))} /></label>
+                <label className="cb-field"><span>Mode *</span>
+                  <select value={trainingModal.item.mode || "Hybrid"} onChange={(event) => setTrainingModal((current) => ({ ...current, item: { ...current.item, mode: event.target.value } }))}>
+                    <option>Online</option><option>Offline</option><option>Hybrid</option>
+                  </select>
+                </label>
+                <label className="cb-field full"><span>Tools / technologies *</span><input value={trainingModal.item.tools || ""} placeholder="React, Node.js, MongoDB" onChange={(event) => setTrainingModal((current) => ({ ...current, item: { ...current.item, tools: event.target.value } }))} /></label>
+                <div className="cb-field">
+                  <span>Thumbnail</span>
+                  <CbFileButton
+                    label={trainingModal.item.imageUrl ? "Change thumbnail" : "Upload thumbnail"}
+                    accept="image/*"
+                    fileName={trainingModal.item._pendingImageFile?.name || (trainingModal.item.imageUrl ? "Thumbnail set" : "")}
+                    onSelect={(file) => handleTrainingModalImageSelect(file)}
+                  />
+                </div>
+                <label className="cb-field full"><span>Syllabus *</span><textarea rows={3} value={trainingModal.item.syllabus || ""} placeholder="Modules, topics, and outcomes" onChange={(event) => setTrainingModal((current) => ({ ...current, item: { ...current.item, syllabus: event.target.value } }))} /></label>
+                <div className="cb-field full">
+                  <span>Assign students</span>
+                  {studentUsers.length === 0 ? (
+                    <p className="cb-muted">No student users found.</p>
+                  ) : (
+                    <div className="cb-students">
+                      {studentUsers.map((student) => {
+                        const studentId = String(student.id || student._id || "");
+                        const selected = (trainingModal.item.studentIds || []).map(String).includes(studentId);
+                        return (
+                          <label key={studentId} className={`cb-student ${selected ? "selected" : ""}`}>
+                            <input
+                              type="checkbox"
+                              checked={selected}
+                              onChange={() => setTrainingModal((current) => {
+                                const currentIds = (current.item.studentIds || []).map(String);
+                                const nextIds = currentIds.includes(studentId) ? currentIds.filter((id) => id !== studentId) : [...currentIds, studentId];
+                                return { ...current, item: { ...current.item, studentIds: nextIds } };
+                              })}
+                            />
+                            <span>
+                              <strong>{student.name || student.username}</strong>
+                              <small>{student.username || student.email || "Student"}</small>
+                            </span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  )}
+                  <small className="cb-count">{(trainingModal.item.studentIds || []).length} student(s) selected</small>
+                </div>
+              </div>
+            </div>
+
+            <div className="cb-card">
+              <div className="cb-card-head">
+                <h3>Curriculum</h3>
+                <p>Group lessons into sections. Each lesson can carry a video, notes, and any number of tasks.</p>
+              </div>
+              <div className="cb-sections">
+                {(trainingModal.item.sections || []).map((section, sectionIndex) => (
+                  <div className="cb-section" key={section.id}>
+                    <div className="cb-section-head">
+                      <button type="button" className="cb-section-toggle" onClick={() => toggleSectionOpen(section.id)}>
+                        <ChevronDown size={16} className={openSectionIds.includes(section.id) ? "cb-chev open" : "cb-chev"} />
+                        <span className="cb-section-index">Section {sectionIndex + 1}</span>
+                      </button>
+                      <input
+                        className="cb-section-name"
+                        value={section.name}
+                        placeholder="e.g. HTML Basics"
+                        onChange={(event) => renameCourseSection(section.id, event.target.value)}
+                      />
+                      <span className="cb-section-meta">{section.lessons.length} lesson{section.lessons.length === 1 ? "" : "s"}</span>
+                      {(trainingModal.item.sections || []).length > 1 ? (
+                        <button type="button" className="cb-iconbtn danger" title="Remove section" onClick={() => removeCourseSection(section.id)}><Trash2 size={15} /></button>
+                      ) : null}
+                    </div>
+
+                    {openSectionIds.includes(section.id) ? (
+                      <div className="cb-lessons">
+                        {section.lessons.map((lesson, lessonIndex) => (
+                          <div
+                            className={`cb-lesson ${String(lesson.id) === focusedLessonId ? "focused" : ""}`}
+                            data-lesson-id={lesson.id}
+                            key={lesson.id}
+                            onPointerDown={() => setFocusedLessonId(String(lesson.id))}
+                            onFocusCapture={() => setFocusedLessonId(String(lesson.id))}
+                          >
+                            <div className="cb-lesson-head">
+                              <span className="cb-lesson-index">Lesson {lessonIndex + 1}</span>
+                              <input
+                                className="cb-lesson-title"
+                                data-lesson-title
+                                value={lesson.title}
+                                placeholder="Lesson title, e.g. Intro to HTML"
+                                onChange={(event) => patchLesson(section.id, lesson.id, { title: event.target.value })}
+                              />
+                              {section.lessons.length > 1 ? (
+                                <button type="button" className="cb-iconbtn danger" title="Remove lesson" onClick={() => removeLessonFromSection(section.id, lesson.id)}><Trash2 size={14} /></button>
+                              ) : null}
+                            </div>
+
+                            <div className="cb-lesson-body">
+                              <div className="cb-assetrow">
+                                <CbFileButton
+                                  icon={<Video size={14} />}
+                                  label={lesson.videoFileName || "Add video (optional)"}
+                                  accept="video/*"
+                                  busy={trainingAssetUploading === `${lesson.id}:videoUrl`}
+                                  onSelect={(file) => handleLessonFileUpload(section.id, lesson.id, "videoUrl", "videoFileName", file)}
+                                />
+                                <label className="cb-inline-number">
+                                  <span>Length (sec)</span>
+                                  <input type="number" min="0" value={lesson.durationSec || ""} onChange={(event) => patchLesson(section.id, lesson.id, { durationSec: event.target.value })} />
+                                </label>
+                                <CbFileButton
+                                  icon={<FileText size={14} />}
+                                  label={lesson.notesFileName || "Add notes PDF (optional)"}
+                                  accept="application/pdf"
+                                  busy={trainingAssetUploading === `${lesson.id}:notesUrl`}
+                                  onSelect={(file) => handleLessonFileUpload(section.id, lesson.id, "notesUrl", "notesFileName", file)}
+                                />
+                              </div>
+
+                              <div className="cb-tasks">
+                                <div className="cb-tasks-head">
+                                  <span>Tasks</span>
+                                  <button type="button" className="cb-addtask" onClick={() => addTaskToLesson(section.id, lesson.id)}><Plus size={13} /> Add task</button>
+                                </div>
+                                {(lesson.tasks || []).length === 0 ? (
+                                  <p className="cb-muted">No tasks yet — a lesson can have zero, one, or many.</p>
+                                ) : (
+                                  (lesson.tasks || []).map((task, taskIndex) => (
+                                    <div className="cb-task" key={task.id}>
+                                      <span className="cb-task-index">{taskIndex + 1}</span>
+                                      <input
+                                        className="cb-task-title"
+                                        value={task.title}
+                                        placeholder={`Task ${taskIndex + 1} title`}
+                                        onChange={(event) => patchTask(section.id, lesson.id, task.id, { title: event.target.value })}
+                                      />
+                                      <input
+                                        className="cb-task-time"
+                                        type="number"
+                                        min="1"
+                                        value={task.timeLimit || ""}
+                                        placeholder="min"
+                                        onChange={(event) => patchTask(section.id, lesson.id, task.id, { timeLimit: event.target.value })}
+                                      />
+                                      <CbFileButton
+                                        compact
+                                        icon={<FileText size={13} />}
+                                        label={task.fileName || "PDF"}
+                                        accept="application/pdf"
+                                        busy={trainingAssetUploading === `${task.id}:pdfUrl`}
+                                        onSelect={(file) => handleTaskFileUpload(section.id, lesson.id, task.id, file)}
+                                      />
+                                      <button type="button" className="cb-iconbtn danger" title="Remove task" onClick={() => removeTaskFromLesson(section.id, lesson.id, task.id)}><Trash2 size={13} /></button>
+                                    </div>
+                                  ))
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                        <button type="button" className="cb-addlesson" onClick={() => addLessonToSection(section.id)}><Plus size={14} /> Add lesson</button>
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+                <button type="button" className="cb-addsection" onClick={addCourseSection}><Plus size={15} /> Add section</button>
+              </div>
+            </div>
+
+            <div className="cb-footer">
+              <span className="cb-footer-summary">
+                {(trainingModal.item.sections || []).length} section(s) · {(trainingModal.item.sections || []).reduce((sum, s) => sum + s.lessons.filter((l) => String(l.title || "").trim()).length, 0)} lesson(s)
+              </span>
+              <button type="button" className="cb-save" onClick={saveCourseBuilder} disabled={trainingModalUploading || Boolean(trainingAssetUploading)}>
+                {trainingModalUploading ? "Saving course..." : trainingModal.mode === "edit" ? "Update course" : "Save course"}
+              </button>
+            </div>
+            </> : null}
+          </div>
+        </>
       ) : trainingModal ? (
         <ModalSurface showClose={!['add', 'edit', 'lesson', 'edit-lesson'].includes(trainingModal.mode)} className={`course-builder-modal ${['add', 'edit', 'lesson', 'edit-lesson'].includes(trainingModal.mode) ? "course-builder-page" : ""}`} title={trainingModal.mode === "add" ? "Add course" : trainingModal.mode === "lesson" ? "Add lesson" : trainingModal.mode === "edit-lesson" ? "Edit lesson" : trainingModal.mode === "view" ? "Course details" : "Edit course"} onClose={closeTrainingModal}>
           <div className="course-builder-steps">
@@ -5368,10 +5984,7 @@ function App() {
               trainingModal.mode === "edit" ? (
                 <button type="button" className="primary-button" onClick={() => saveTrainingModal(false)} disabled={trainingModalUploading || Boolean(trainingAssetUploading)}>{trainingModalUploading ? "Updating..." : "Update course"}</button>
               ) : trainingModal.step === 4 && trainingModal.mode === "lesson" ? (
-                <>
-                  <button type="button" className="ghost-button compact" onClick={() => saveTrainingModal(true)} disabled={trainingModalUploading || Boolean(trainingAssetUploading)}>Next lesson</button>
-                  <button type="button" className="primary-button" onClick={() => saveTrainingModal(false)} disabled={trainingModalUploading || Boolean(trainingAssetUploading)}>{trainingModalUploading ? "Saving..." : "Update lesson"}</button>
-                </>
+                <button type="button" className="primary-button" onClick={() => saveTrainingModal(false)} disabled={trainingModalUploading || Boolean(trainingAssetUploading)}>{trainingModalUploading ? "Saving..." : "Update lesson"}</button>
               ) : (
                 <button type="button" className="primary-button" onClick={advanceTrainingStep} disabled={trainingModalUploading || Boolean(trainingAssetUploading)}>{trainingModal.step === 4 ? (trainingModalUploading ? "Saving..." : trainingModal.mode === "edit" ? "Update course" : "Save course") : "Next"}</button>
               )
@@ -5522,7 +6135,7 @@ function Panel({ title, children }) {
   );
 }
 
-function CourseViewSurface({ course, onClose, onEdit, onEditLesson, onNextLesson, onDeleteCourse, onDeleteLesson }) {
+function CourseViewSurface({ course, onClose, onEdit, onEditLesson, onDeleteCourse, onDeleteLesson }) {
   const lessons = Array.isArray(course?.lessons) ? course.lessons : [];
   const backendSectionNames = Array.isArray(course?.sections)
     ? course.sections
@@ -5547,7 +6160,6 @@ function CourseViewSurface({ course, onClose, onEdit, onEditLesson, onNextLesson
           </div>
           <div className="course-view-actions">
             <button type="button" className="ghost-button compact" onClick={onEdit}>Edit course</button>
-            <button type="button" className="primary-button compact" onClick={onNextLesson}>Next lesson</button>
             <button type="button" className="ghost-button compact danger" onClick={onDeleteCourse}>Delete course</button>
           </div>
         </div>
@@ -5578,6 +6190,258 @@ function CourseViewSurface({ course, onClose, onEdit, onEditLesson, onNextLesson
         </div>
       </div>
     </ModalSurface>
+  );
+}
+
+function CbFileButton({ label, accept, onSelect, busy, icon, compact, fileName }) {
+  const inputRef = useRef(null);
+  return (
+    <div className={`cb-filebtn ${compact ? "compact" : ""} ${busy ? "busy" : ""}`}>
+      <button type="button" onClick={() => inputRef.current?.click()} disabled={busy}>
+        {icon || <Upload size={14} />}
+        <span>{busy ? "Uploading..." : label}</span>
+      </button>
+      <input
+        ref={inputRef}
+        type="file"
+        accept={accept}
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          onSelect(file);
+          event.target.value = "";
+        }}
+      />
+    </div>
+  );
+}
+
+function CourseFolderUploadPanel({ folderUploadState, onUpload, onReview }) {
+  const inputRef = useRef(null);
+  const [dragging, setDragging] = useState(false);
+  const uploading = folderUploadState?.status === "uploading";
+  const done = folderUploadState?.status === "done";
+
+  const handleDrop = (event) => {
+    event.preventDefault();
+    setDragging(false);
+    if (!uploading) onUpload(event.dataTransfer.files);
+  };
+
+  return (
+    <div className="cb-card cb-upload-card">
+      <div className="cb-upload-layout">
+        <div
+          className={`cb-upload-dropzone ${dragging ? "dragging" : ""}`}
+          role="button"
+          tabIndex={0}
+          aria-label="Upload course folder"
+          onClick={() => inputRef.current?.click()}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") inputRef.current?.click();
+          }}
+          onDragEnter={(event) => {
+            event.preventDefault();
+            if (!uploading) setDragging(true);
+          }}
+          onDragOver={(event) => event.preventDefault()}
+          onDragLeave={(event) => {
+            if (event.currentTarget === event.target) setDragging(false);
+          }}
+          onDrop={handleDrop}
+        >
+          <div className="cb-upload-copy">
+            <h3>Upload a course folder</h3>
+            <p>Drop a folder here or click the icon.</p>
+          </div>
+          <button
+            type="button"
+            className="cb-upload-button"
+            disabled={uploading}
+            aria-label="Choose course folder"
+            title="Choose course folder"
+            onClick={(event) => {
+              event.stopPropagation();
+              inputRef.current?.click();
+            }}
+          >
+            <FolderUp size={32} />
+          </button>
+          <input
+            ref={inputRef}
+            type="file"
+            webkitdirectory=""
+            directory=""
+            multiple
+            style={{ display: "none" }}
+            onChange={(event) => onUpload(event.target.files)}
+          />
+        </div>
+
+        <div className="cb-upload-structure">
+          <div className="cb-structure-heading"><Info size={14} /> Folder structure to upload</div>
+          <div className="cb-structure">
+            <pre>{`Course name/
+└── Section name/
+    └── Lesson name/
+        ├── video.mp4
+        ├── notes.pdf
+        └── tasks/
+            ├── task-1.pdf
+            ├── task-2.pdf
+            └── task-3.pdf`}</pre>
+            <p>Repeat the section and lesson folders as needed. Video, notes, and task PDFs are optional.</p>
+          </div>
+        </div>
+      </div>
+
+      {uploading ? (
+        <div className="cb-upload-progress" aria-live="polite">
+          <div className="cb-upload-progress-head">
+            <strong>Uploading course files</strong>
+            <span>{Math.round((folderUploadState.done / folderUploadState.total) * 100)}%</span>
+          </div>
+          <div className="cb-upload-bar">
+            <span style={{ width: `${Math.round((folderUploadState.done / folderUploadState.total) * 100)}%` }} />
+          </div>
+          <small>{folderUploadState.done} of {folderUploadState.total} files uploaded</small>
+        </div>
+      ) : null}
+
+      {done ? (
+        <div className="cb-upload-result">
+          <CheckCircle2 size={16} />
+          <span>Parsed <strong>{folderUploadState.sectionCount}</strong> section(s) and <strong>{folderUploadState.lessonCount}</strong> lesson(s) from "{folderUploadState.courseName}".</span>
+          <button type="button" onClick={onReview}>Review &amp; save</button>
+        </div>
+      ) : null}
+
+    </div>
+  );
+}
+
+function CourseBuilderStyles() {
+  return (
+    <style>{`
+      .cb-page { display: flex; flex-direction: column; gap: 20px; padding: 24px; background: #faf7f2; border-radius: 16px; }
+      .cb-modehead { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+      .cb-modetabs { display: inline-flex; background: #efe9df; border-radius: 999px; padding: 4px; gap: 4px; }
+      .cb-modetabs button { display: inline-flex; align-items: center; gap: 6px; border: none; background: transparent; padding: 9px 18px; border-radius: 999px; font-size: 13.5px; font-weight: 600; color: #6b6255; cursor: pointer; transition: background .15s, color .15s; }
+      .cb-modetabs button.active { background: #ffffff; color: #3a2a1c; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+      .cb-cancel { border: 1px solid #e2dacb; background: #fff; color: #6b6255; border-radius: 10px; padding: 8px 16px; font-size: 13px; font-weight: 600; cursor: pointer; }
+      .cb-cancel:hover { background: #f3ede1; }
+
+      .cb-card { background: #ffffff; border: 1px solid #ece5d8; border-radius: 14px; padding: 22px 24px; }
+      .cb-card-head h3 { margin: 0 0 2px; font-size: 16px; font-weight: 700; color: #2c2318; }
+      .cb-card-head p { margin: 0 0 16px; font-size: 12.5px; color: #8a8072; }
+
+      .cb-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 18px; }
+      .cb-field { display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; font-weight: 600; color: #4a4033; }
+      .cb-field.full { grid-column: 1 / -1; }
+      .cb-field input, .cb-field select, .cb-field textarea { border: 1px solid #e2dacb; border-radius: 9px; padding: 10px 12px; font-size: 13.5px; font-weight: 400; color: #2c2318; background: #fffdfa; }
+      .cb-field input:focus, .cb-field select:focus, .cb-field textarea:focus { outline: none; border-color: #a8734c; box-shadow: 0 0 0 3px rgba(168,115,76,.15); }
+      .cb-field textarea { resize: vertical; font-family: inherit; }
+      .cb-muted { margin: 4px 0 0; font-size: 12px; color: #9a8f7f; }
+      .cb-count { color: #9a8f7f; font-weight: 500; }
+
+      .cb-students { display: flex; flex-direction: column; gap: 6px; max-height: 220px; overflow-y: auto; border: 1px solid #eee6d8; border-radius: 10px; padding: 8px; }
+      .cb-student { display: flex; align-items: center; gap: 10px; padding: 7px 8px; border-radius: 8px; cursor: pointer; font-weight: 400; }
+      .cb-student:hover { background: #faf5ea; }
+      .cb-student.selected { background: #f6ecdd; }
+      .cb-student span { display: flex; flex-direction: column; }
+      .cb-student strong { font-size: 12.5px; color: #2c2318; font-weight: 600; }
+      .cb-student small { font-size: 11px; color: #9a8f7f; }
+
+      .cb-filebtn button { display: inline-flex; align-items: center; gap: 7px; border: 1px dashed #d6cbb6; background: #fbf8f2; border-radius: 9px; padding: 9px 13px; font-size: 12.5px; font-weight: 600; color: #6b5b45; cursor: pointer; white-space: nowrap; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+      .cb-filebtn button:hover { border-color: #a8734c; color: #a8734c; }
+      .cb-filebtn.busy button { color: #a8734c; border-color: #a8734c; }
+      .cb-filebtn input { display: none; }
+      .cb-filebtn.compact button { padding: 6px 10px; max-width: 120px; font-size: 11.5px; }
+
+      .cb-sections { display: flex; flex-direction: column; gap: 12px; }
+      .cb-section { border: 1px solid #ece5d8; border-radius: 12px; overflow: hidden; background: #fffdfa; }
+      .cb-section-head { display: flex; align-items: center; gap: 10px; padding: 12px 14px; background: #f8f4ec; }
+      .cb-section-toggle { display: inline-flex; align-items: center; gap: 6px; border: none; background: transparent; cursor: pointer; padding: 0; font-size: 12px; font-weight: 700; color: #6b5b45; }
+      .cb-chev { transition: transform .15s; color: #9a8f7f; }
+      .cb-chev.open { transform: rotate(180deg); }
+      .cb-section-index { white-space: nowrap; }
+      .cb-section-name { flex: 1; border: 1px solid transparent; background: transparent; font-size: 14px; font-weight: 700; color: #2c2318; padding: 6px 8px; border-radius: 7px; }
+      .cb-section-name:focus { outline: none; border-color: #d6cbb6; background: #fff; }
+      .cb-section-meta { font-size: 11.5px; color: #9a8f7f; white-space: nowrap; }
+      .cb-iconbtn { border: none; background: transparent; color: #9a8f7f; cursor: pointer; padding: 6px; border-radius: 7px; display: inline-flex; }
+      .cb-iconbtn:hover { background: #f3e6e0; color: #b2452f; }
+      .cb-iconbtn.danger:hover { color: #b2452f; }
+
+      .cb-lessons { display: flex; flex-direction: column; gap: 10px; padding: 14px; }
+      .cb-lesson { border: 1px solid #eee6d8; border-radius: 10px; padding: 12px 14px; background: #ffffff; transition: border-color .2s, box-shadow .2s, background .2s; }
+      .cb-lesson.focused { position: relative; z-index: 1; border-color: #a8734c; background: #fffaf3; box-shadow: inset 0 0 0 2px rgba(168, 115, 76, .9), 0 6px 16px rgba(138, 59, 31, .1); }
+      .cb-lesson-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+      .cb-lesson-index { font-size: 11px; font-weight: 700; color: #a8734c; white-space: nowrap; }
+      .cb-lesson-title { flex: 1; border: 1px solid #e2dacb; border-radius: 8px; padding: 8px 10px; font-size: 13px; font-weight: 600; color: #2c2318; }
+      .cb-lesson-title:focus { outline: none; border-color: #a8734c; }
+      .cb-lesson-body { display: flex; flex-direction: column; gap: 12px; }
+      .cb-assetrow { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; }
+      .cb-inline-number { display: flex; flex-direction: column; gap: 4px; font-size: 11px; font-weight: 600; color: #6b6255; }
+      .cb-inline-number input { width: 90px; border: 1px solid #e2dacb; border-radius: 8px; padding: 8px 9px; font-size: 12.5px; }
+
+      .cb-tasks { border-top: 1px dashed #ece5d8; padding-top: 10px; }
+      .cb-tasks-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+      .cb-tasks-head span { font-size: 11.5px; font-weight: 700; color: #6b6255; text-transform: uppercase; letter-spacing: .03em; }
+      .cb-addtask { display: inline-flex; align-items: center; gap: 4px; border: none; background: transparent; color: #a8734c; font-size: 12px; font-weight: 700; cursor: pointer; padding: 3px 6px; border-radius: 6px; }
+      .cb-addtask:hover { background: #f6ecdd; }
+      .cb-task { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+      .cb-task-index { font-size: 11px; color: #9a8f7f; width: 14px; text-align: right; }
+      .cb-task-title { flex: 1; border: 1px solid #e2dacb; border-radius: 8px; padding: 7px 9px; font-size: 12.5px; }
+      .cb-task-time { width: 56px; border: 1px solid #e2dacb; border-radius: 8px; padding: 7px 6px; font-size: 12.5px; text-align: center; }
+      .cb-task-title:focus, .cb-task-time:focus { outline: none; border-color: #a8734c; }
+
+      .cb-addlesson, .cb-addsection { display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; border: 1px dashed #d6cbb6; background: #fbf8f2; color: #6b5b45; font-size: 12.5px; font-weight: 700; padding: 9px 14px; border-radius: 9px; cursor: pointer; }
+      .cb-addlesson:hover, .cb-addsection:hover { border-color: #a8734c; color: #a8734c; }
+      .cb-addsection { margin-top: 2px; }
+
+      .cb-footer { display: flex; align-items: center; justify-content: space-between; background: #fffdfa; border: 1px solid #ece5d8; border-radius: 14px; padding: 14px 20px; margin-top: 4px; }
+      .cb-footer-summary { font-size: 12.5px; color: #8a8072; font-weight: 600; }
+      .cb-save { border: none; background: #8a3b1f; color: #fff; font-size: 13.5px; font-weight: 700; padding: 11px 24px; border-radius: 10px; cursor: pointer; transition: background .15s; }
+      .cb-save:hover { background: #6e2f18; }
+      .cb-save:disabled { background: #d6cbb6; cursor: not-allowed; }
+
+      .cb-upload-card { display: flex; flex-direction: column; gap: 14px; }
+      .cb-upload-layout { display: grid; grid-template-columns: minmax(280px, 420px) minmax(0, 1fr); align-items: center; gap: 28px; }
+      .cb-upload-dropzone { width: min(100%, 420px); aspect-ratio: 1; margin: 0 auto; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: 28px; border: 2px dashed #d6cbb6; border-radius: 20px; background: #fffdfa; cursor: pointer; transition: border-color .15s, background .15s, transform .15s; }
+      .cb-upload-dropzone:hover, .cb-upload-dropzone.dragging { border-color: #a8734c; background: #fcf4e8; }
+      .cb-upload-dropzone.dragging { transform: scale(1.01); }
+      .cb-upload-copy { text-align: center; }
+      .cb-upload-copy h3 { margin: 0 0 5px; font-size: 16px; font-weight: 700; color: #2c2318; }
+      .cb-upload-copy p { margin: 0; font-size: 12px; color: #8a8072; }
+      .cb-upload-button { width: 160px; height: 160px; display: inline-flex; align-items: center; justify-content: center; border: none; background: #8a3b1f; color: #fff; border-radius: 18px; cursor: pointer; flex-shrink: 0; }
+      .cb-upload-button:hover { background: #6e2f18; }
+      .cb-upload-button:disabled { background: #d6cbb6; cursor: not-allowed; }
+
+      .cb-upload-progress { display: grid; gap: 7px; background: #f8f2e8; border: 1px solid #ece5d8; border-radius: 12px; padding: 12px 14px; }
+      .cb-upload-progress-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: #6b4a32; font-size: 12px; }
+      .cb-upload-progress-head span { color: #8a3b1f; font-size: 13px; font-weight: 800; }
+      .cb-upload-bar { display: block; height: 10px; background: #eadfce; border-radius: 999px; overflow: hidden; }
+      .cb-upload-bar span { display: block; height: 100%; background: linear-gradient(90deg, #a8734c, #8a3b1f); border-radius: inherit; transition: width .25s ease; position: relative; overflow: hidden; }
+      .cb-upload-bar span::after { content: ""; position: absolute; inset: 0; background: linear-gradient(110deg, transparent 20%, rgba(255,255,255,.45) 45%, transparent 70%); animation: cb-upload-shimmer 1.2s linear infinite; }
+      .cb-upload-progress small { color: #8a8072; font-size: 11px; }
+      @keyframes cb-upload-shimmer { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+
+      .cb-upload-result { display: flex; align-items: center; gap: 8px; background: #eef5ea; color: #366b3f; border-radius: 10px; padding: 10px 14px; font-size: 12.5px; }
+      .cb-upload-result strong { font-weight: 700; }
+      .cb-upload-result button { margin-left: auto; border: 1px solid #366b3f; background: #fff; color: #366b3f; font-size: 12px; font-weight: 700; padding: 6px 12px; border-radius: 8px; cursor: pointer; }
+
+      .cb-structure-heading { display: inline-flex; align-items: center; gap: 6px; color: #a8734c; font-size: 12px; font-weight: 700; }
+      .cb-structure { background: #faf6ee; border: 1px solid #ece5d8; border-radius: 10px; padding: 16px 18px; }
+      .cb-structure pre { margin: 0; overflow-x: auto; color: #4a4033; font: 12px/1.65 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre; }
+      .cb-structure p { margin: 4px 0 0; font-size: 11.5px; color: #8a8072; }
+
+      @media (max-width: 720px) {
+        .cb-grid { grid-template-columns: 1fr; }
+        .cb-page { padding: 16px; }
+        .cb-upload-layout { grid-template-columns: 1fr; }
+        .cb-upload-button { width: 132px; height: 132px; }
+        .cb-upload-dropzone { width: min(100%, 360px); }
+      }
+    `}</style>
   );
 }
 

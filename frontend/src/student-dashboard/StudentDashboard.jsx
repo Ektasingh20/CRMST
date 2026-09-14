@@ -170,12 +170,6 @@ const NAV_SECTIONS = [
     { id: "all-courses", label: "All Courses", icon: Icon.courses },
     { id: "my-courses", label: "My Courses", icon: Icon.myCourses },
   ]},
-  { label: "Learning", items: [
-    { id: "videos", label: "Videos", icon: Icon.video },
-    { id: "notes", label: "Notes", icon: Icon.notes },
-    { id: "assignments", label: "Assignments", icon: Icon.assignments },
-    { id: "progress", label: "My Progress", icon: Icon.progress },
-  ]},
   { label: "Account", items: [
     { id: "notifications", label: "Notifications", icon: Icon.bell },
     { id: "profile", label: "Profile", icon: Icon.user },
@@ -187,13 +181,28 @@ const PAGE_META = {
   "dashboard": { title: "Student Dashboard", sub: "Welcome back, Student" },
   "all-courses": { title: "All Courses", sub: "Every course offered by the organization" },
   "my-courses": { title: "My Courses", sub: "Courses you're currently enrolled in" },
-  "videos": { title: "Videos", sub: "Video lessons from your enrolled courses" },
-  "notes": { title: "Notes", sub: "Downloadable notes from your enrolled courses" },
-  "assignments": { title: "Assignments", sub: "Track and submit your coursework" },
-  "progress": { title: "My Progress", sub: "Your progress across enrolled courses" },
+  "course-player": { title: "Course Player", sub: "" },
   "notifications": { title: "Notifications", sub: "Recent updates and reminders" },
   "profile": { title: "Profile", sub: "Your account details" },
 };
+
+/* Minimum seconds a lesson video must play before it is allowed to auto-complete */
+const MIN_WATCH_SECONDS = 10;
+
+/* Unique id for a lesson across sections (two sections could reuse a lesson id) */
+function getLessonUID(lesson = {}) {
+  const section = String(lesson.section || "General").trim().toLowerCase() || "general";
+  return `${section}::${lesson.id || lesson.lessonId || ""}`;
+}
+
+function slugify(value) {
+  return String(value || "general").trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "general";
+}
+
+/* Mirrors the backend REST shape: /courses/:courseId/sections/:sectionSlug/lessons/:lessonId/:resource */
+function buildLessonPath(courseId, section, lessonId, resource) {
+  return `/courses/${courseId}/sections/${slugify(section)}/lessons/${lessonId}${resource ? `/${resource}` : ""}`;
+}
 
 /* ============================================================
    SMALL PRIMITIVES
@@ -237,10 +246,11 @@ function Btn({ children, variant = "outline", onClick, style, disabled }) {
   );
 }
 
-function CourseCard({ course, onOpen }) {
+function CourseCard({ course, onOpen, onContinue }) {
+  const activate = () => (course.enrolled ? (onContinue || onOpen)(course) : onOpen(course));
   return (
     <div
-      onClick={() => onOpen(course)}
+      onClick={activate}
       style={{
         background: C.card, border: `1px solid ${C.border}`, borderRadius: 18, padding: 20,
         boxShadow: "0 1px 2px rgba(33,28,46,0.03), 0 4px 14px rgba(33,28,46,0.04)",
@@ -267,7 +277,7 @@ function CourseCard({ course, onOpen }) {
       </div>
 
       <div style={{ display: "flex", gap: 8, marginTop: "auto" }}>
-        <Btn variant="primary" style={{ flex: 1 }} onClick={(e) => { e.stopPropagation(); onOpen(course); }}>
+        <Btn variant="primary" style={{ flex: 1 }} onClick={(e) => { e.stopPropagation(); activate(); }}>
           {course.enrolled ? "Continue Course" : "Explore Course"}
         </Btn>
       </div>
@@ -301,17 +311,32 @@ function Panel({ title, children, right }) {
    ============================================================ */
 function getLessonCompletion(courseId, lesson, lessonProgress) {
   const key = getLessonProgressKey(courseId, lesson);
-  const progress = lessonProgress[key] || {};
+  const progress = { ...(lesson.studentProgress || {}), ...(lessonProgress[key] || {}) };
+  const tasks = Array.isArray(lesson.tasks) ? lesson.tasks : [];
+  const allTasksCompleted = tasks.length === 0 || tasks.every((task, index) => progress.taskSubmissions?.[String(task.id || `task-${index + 1}`)]?.submitted === true);
   return {
-    completed: Boolean(progress.videoCompleted && progress.taskCompleted),
+    completed: Boolean(progress.completed || (progress.videoCompleted && progress.notesCompleted && allTasksCompleted)),
     videoCompleted: Boolean(progress.videoCompleted),
-    taskCompleted: Boolean(progress.taskCompleted),
+    notesCompleted: Boolean(progress.notesCompleted),
+    taskCompleted: allTasksCompleted,
   };
 }
 
 function getLessonProgressKey(courseId, lesson = {}) {
   const section = String(lesson.section || "General").trim().toLowerCase() || "general";
   return `${courseId}:${section}:${lesson.id || lesson.lessonId || ""}`;
+}
+
+function getLessonProgressRatio(lesson = {}, progressOverride = {}) {
+  const progress = { ...(lesson.studentProgress || {}), ...progressOverride };
+  const tasks = Array.isArray(lesson.tasks) ? lesson.tasks : [];
+  const taskSubmissions = progress.taskSubmissions || {};
+  const taskDone = tasks.filter((task, index) => taskSubmissions[String(task.id || `task-${index + 1}`)]?.submitted === true).length;
+  const total = 1 + (lesson.notesUrl ? 1 : 0) + tasks.length;
+  const done = (progress.videoCompleted ? 1 : 0)
+    + (lesson.notesUrl ? (progress.notesCompleted ? 1 : 0) : 0)
+    + taskDone;
+  return total ? done / total : 0;
 }
 
 function getNotificationEvaluation(notifications, courseId, lesson, task) {
@@ -325,14 +350,20 @@ function getNotificationEvaluation(notifications, courseId, lesson, task) {
 }
 
 function getCourseSectionGroups(course = {}, lessonProgress = {}) {
-  const lessons = Array.isArray(course.lessonsData) ? course.lessonsData : Array.isArray(course.lessons) ? course.lessons : [];
+  const directLessons = Array.isArray(course.lessonsData) ? course.lessonsData : Array.isArray(course.lessons) ? course.lessons : [];
+  const nestedLessons = Array.isArray(course.sections)
+    ? course.sections.flatMap((section) => (Array.isArray(section?.lessons)
+      ? section.lessons.map((lesson) => ({ ...lesson, section: lesson.section || section.name || section.title || "General" }))
+      : []))
+    : [];
+  const lessons = directLessons.length ? directLessons : nestedLessons;
   const groups = new Map();
 
   lessons.forEach((lesson) => {
     const sectionName = String(lesson.section || "General").trim() || "General";
     if (!groups.has(sectionName)) groups.set(sectionName, []);
     const state = getLessonCompletion(course.id || course._id, lesson, lessonProgress);
-    groups.get(sectionName).push({ ...lesson, ...state });
+    groups.get(sectionName).push({ ...lesson, courseId: course.id || course._id, ...state });
   });
 
   return [...groups.entries()].map(([name, list]) => ({
@@ -341,9 +372,8 @@ function getCourseSectionGroups(course = {}, lessonProgress = {}) {
   }));
 }
 
-function CourseModal({ course, onClose, onToast, onContinue, lessonProgress, onSelectSection }) {
+function CourseModal({ course, onClose, onToast, onContinue }) {
   if (!course) return null;
-  const groups = getCourseSectionGroups(course, lessonProgress);
 
   return (
     <div
@@ -383,39 +413,15 @@ function CourseModal({ course, onClose, onToast, onContinue, lessonProgress, onS
 
         {course.enrolled ? (
           <>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 18 }}>
               <div style={{ flex: 1, height: 7, background: "#f0ece2", borderRadius: 20, overflow: "hidden" }}>
                 <div style={{ width: `${course.progress}%`, height: "100%", background: C.accent, borderRadius: 20 }} />
               </div>
               <div style={{ fontSize: 12, fontWeight: 700, color: C.accent }}>{course.progress}%</div>
             </div>
-
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                <div style={{ fontSize: 12.5, color: C.textSecondary, marginBottom: 2 }}>Choose a section to begin.</div>
-                {groups.length ? groups.map((section) => (
-                  <button
-                    key={section.name}
-                    type="button"
-                    onClick={() => onSelectSection?.(course, section.name)}
-                    style={{
-                      width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
-                      background: C.pillBg, border: `1px solid ${C.pillBorder}`, borderRadius: 12,
-                      padding: "15px 16px", cursor: "pointer", textAlign: "left", color: C.text,
-                    }}
-                  >
-                    <span style={{ display: "flex", alignItems: "center", gap: 11, fontSize: 15, fontWeight: 700 }}>
-                      <Icon.pointer style={{ width: 19, height: 19, color: C.accent }} />
-                      {section.name}
-                    </span>
-                    <span style={{ display: "flex", alignItems: "center", gap: 8, color: C.textMuted, fontSize: 11.5 }}>
-                      {section.lessons.length} lesson{section.lessons.length === 1 ? "" : "s"}
-                      <Icon.chevronRight style={{ width: 15, height: 15 }} />
-                    </span>
-                  </button>
-                )) : (
-                  <div style={{ fontSize: 12.5, color: C.textSecondary }}>No sections are available for this course yet.</div>
-                )}
-            </div>
+            <Btn variant="primary" style={{ width: "100%" }} onClick={() => onContinue?.(course)}>
+              {course.progress > 0 ? "Continue Learning" : "Start Course"}
+            </Btn>
           </>
         ) : (
           <>
@@ -469,6 +475,312 @@ function ResourceModal({ resource, onClose, onUpload }) {
             <Btn variant="primary" disabled={!file || uploading} style={{ width: "100%", marginTop: 14 }} onClick={async () => { setUploading(true); try { await onUpload(file, resource.kind); onClose(); } finally { setUploading(false); } }}>{uploading ? "Uploading..." : "Submit PDF"}</Btn>
           </>
         ) : null}
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
+   COURSE PLAYER — Udemy / YouTube style playlist layout
+   ============================================================ */
+function CoursePlayer({ course, lessonProgress, activeLessonUID, activeTab, onSelectLesson, onSetTab, onMarkWatched, onMarkProgress, onOpenResource, onBack }) {
+  const groups = useMemo(() => getCourseSectionGroups(course, lessonProgress), [course, lessonProgress]);
+  const flatLessons = useMemo(() => groups.flatMap((g) => g.lessons), [groups]);
+  const currentLesson = flatLessons.find((l) => getLessonUID(l) === activeLessonUID) || flatLessons[0] || null;
+  const currentSectionName = currentLesson ? String(currentLesson.section || "General").trim() || "General" : null;
+  const currentModuleIndex = groups.findIndex((g) => g.name === currentSectionName);
+
+  const [expanded, setExpanded] = useState(() => {
+    const initial = {};
+    groups.forEach((g) => { initial[g.name] = true; });
+    return initial;
+  });
+  useEffect(() => {
+    if (currentSectionName) setExpanded((cur) => (cur[currentSectionName] ? cur : { ...cur, [currentSectionName]: true }));
+  }, [currentSectionName]);
+
+  useEffect(() => {}, [activeLessonUID]);
+
+  if (!currentLesson) {
+    return <div style={{ padding: 24, color: C.textSecondary }}>This course doesn't have any lessons yet.</div>;
+  }
+
+  const idx = flatLessons.findIndex((l) => getLessonUID(l) === activeLessonUID);
+  const prevLesson = idx > 0 ? flatLessons[idx - 1] : null;
+  const nextLesson = idx >= 0 && idx < flatLessons.length - 1 ? flatLessons[idx + 1] : null;
+
+  const totalLessons = flatLessons.length;
+  const completedLessons = flatLessons.filter((l) => l.completed).length;
+  const overallPercent = flatLessons.length
+    ? Math.round((flatLessons.reduce((sum, lesson) => sum + getLessonProgressRatio(lesson), 0) / flatLessons.length) * 100)
+    : Number(course.progress || 0);
+  const generatedSyllabus = groups
+    .map((section) => `${section.name}: ${section.lessons.map((lesson) => lesson.title).join(", ")}`)
+    .filter(Boolean)
+    .join(". ");
+  const courseSyllabus = course.syllabus && !String(course.syllabus).startsWith("Imported from folder:")
+    ? course.syllabus
+    : generatedSyllabus || course.syllabus || "Course syllabus is not available yet.";
+  const handleTimeUpdate = (e) => {
+    const t = e.currentTarget.currentTime || 0;
+    if (t >= MIN_WATCH_SECONDS && !currentLesson.videoCompleted) onMarkWatched(currentLesson);
+  };
+  const handleEnded = () => { if (!currentLesson.videoCompleted) onMarkWatched(currentLesson); };
+
+  const TABS = [
+    { id: "about", label: "About" },
+    { id: "notes", label: "Notes" },
+    { id: "tasks", label: "Tasks", count: (currentLesson.tasks || []).length },
+  ];
+  const activeContentTab = ["about", "notes", "tasks"].includes(activeTab) ? activeTab : "about";
+
+  return (
+    <div className="cp-wrap">
+      <style>{`
+        .cp-wrap { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 18px; align-items: stretch; margin: -22px -28px -46px; height: calc(100vh - 88px); min-height: 520px; overflow: hidden; }
+        .cp-rail { grid-column: 2; grid-row: 1; position: relative; align-self: stretch; min-height: 0; overflow: hidden; border-right: none !important; border-left: 1px solid rgba(178,147,118,0.14); }
+        .cp-main { grid-column: 1; grid-row: 1; }
+        @media (max-width: 980px) {
+          .cp-wrap { grid-template-columns: 1fr; margin: 0; height: auto; overflow: visible; }
+          .cp-rail { grid-column: 1; grid-row: 2; position: static; max-height: 360px; }
+          .cp-main { grid-column: 1; grid-row: 1; }
+        }
+      `}</style>
+
+      {/* LEFT RAIL — dark, matches the app's sidebar palette */}
+      <div className="cp-rail" style={{ background: `linear-gradient(180deg, ${C.sidebarBg}, #0c0c0e)`, borderRight: "1px solid rgba(178,147,118,0.14)", display: "flex", flexDirection: "column", height: "100%", minHeight: "100%" }}>
+        <button onClick={onBack} style={{ display: "flex", alignItems: "center", gap: 8, background: "none", border: "none", color: "rgba(255,255,255,0.7)", fontSize: 12, fontWeight: 700, padding: "18px 18px 4px", cursor: "pointer", fontFamily: "inherit" }}>
+          <Icon.chevronRight style={{ width: 13, height: 13, transform: "rotate(180deg)" }} /> Back to My Courses
+        </button>
+
+        <div style={{ display: "flex", gap: 12, alignItems: "flex-start", padding: "14px 18px 16px", borderBottom: "1px solid rgba(178,147,118,0.14)" }}>
+          <div style={{ width: 40, height: 40, borderRadius: 11, background: C.badgeBg, color: C.badgeIcon, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+            <Icon.courses style={{ width: 19, height: 19 }} />
+          </div>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 14, fontWeight: 800, color: "#fff", lineHeight: 1.25 }}>{course.title}</div>
+            <div style={{ fontSize: 10.5, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>Complete Course</div>
+          </div>
+        </div>
+
+        <div style={{ padding: "14px 18px", borderBottom: "1px solid rgba(178,147,118,0.14)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ flex: 1, height: 7, background: "rgba(255,255,255,0.08)", borderRadius: 20, overflow: "hidden" }}>
+              <div style={{ width: `${overallPercent}%`, height: "100%", background: "linear-gradient(90deg,#3f7a52,#57a06d)", borderRadius: 20, transition: "width .3s ease" }} />
+            </div>
+            <span style={{ fontSize: 11, fontWeight: 700, color: "rgba(255,255,255,0.72)", flexShrink: 0 }}>{overallPercent}% Complete</span>
+          </div>
+        </div>
+
+        <div style={{ flex: 1, overflowY: "auto", padding: "6px 0 14px" }}>
+          {groups.map((section, sIdx) => {
+            const isOpen = Boolean(expanded[section.name]);
+            const sectionDone = section.lessons.filter((l) => l.videoCompleted && l.taskCompleted).length;
+            return (
+              <div key={section.name}>
+                <button
+                  onClick={() => setExpanded((cur) => ({ ...cur, [section.name]: !cur[section.name] }))}
+                  style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "11px 18px", background: "transparent", border: "none", cursor: "pointer", textAlign: "left", fontFamily: "inherit" }}
+                >
+                  <span style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, fontWeight: 700, color: "#fff" }}>
+                    {isOpen ? <Icon.chevronDown style={{ width: 13, height: 13, color: "rgba(255,255,255,0.5)" }} /> : <Icon.chevronRight style={{ width: 13, height: 13, color: "rgba(255,255,255,0.5)" }} />}
+                    Module {sIdx + 1}: {section.name}
+                  </span>
+                  <span style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", flexShrink: 0 }}>{sectionDone} / {section.lessons.length}</span>
+                </button>
+                {isOpen && (
+                  <ul style={{ listStyle: "none", margin: 0, padding: "0 0 6px" }}>
+                    {section.lessons.map((lesson, i) => {
+                      const uid = getLessonUID(lesson);
+                      const active = uid === activeLessonUID;
+                      const done = lesson.videoCompleted && lesson.taskCompleted;
+                      return (
+                        <li key={uid}>
+                          <button
+                            onClick={() => onSelectLesson(uid)}
+                            style={{
+                              width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "9px 18px 9px 14px",
+                              background: active ? "linear-gradient(135deg, rgba(41,41,44,0.92), rgba(28,28,31,0.95))" : "transparent",
+                              border: "none", cursor: "pointer", textAlign: "left", fontFamily: "inherit",
+                              borderLeft: active ? `3px solid #d55c41` : "3px solid transparent",
+                            }}
+                          >
+                            <span style={{ width: 20, height: 20, borderRadius: "50%", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: done ? "rgba(63,122,82,0.22)" : active ? "rgba(213,92,65,0.22)" : "rgba(255,255,255,0.08)", color: done ? "#5fbd7c" : active ? "#e2734a" : "rgba(255,255,255,0.4)" }}>
+                              {done ? <Icon.check style={{ width: 11, height: 11 }} /> : active ? <Icon.play style={{ width: 9, height: 9 }} /> : <span style={{ width: 6, height: 6, borderRadius: "50%", background: "currentColor" }} />}
+                            </span>
+                            <span style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: active ? 700 : 500, color: active ? "#fff" : "rgba(255,255,255,0.78)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{i + 1}. {lesson.title}</span>
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* RIGHT — breadcrumb, video, tabs, meta */}
+      <div className="cp-main" style={{ padding: "22px 26px 32px", minWidth: 0, overflowY: "auto", height: "100%" }}>
+        <div style={{ fontSize: 11.5, color: C.textMuted, marginBottom: 6 }}>
+          {course.title} <span style={{ margin: "0 6px" }}>›</span> Module {Math.max(currentModuleIndex, 0) + 1}: {currentSectionName} <span style={{ margin: "0 6px" }}>›</span> Lecture {idx + 1}
+        </div>
+        <h2 style={{ margin: "0 0 16px", fontSize: 19, fontWeight: 800 }}>Lecture {idx + 1}: {currentLesson.title}</h2>
+
+        {currentLesson.videoUrl ? (
+          <video
+            key={activeLessonUID}
+            src={currentLesson.videoUrl}
+            controls
+            onTimeUpdate={handleTimeUpdate}
+            onEnded={handleEnded}
+            style={{ display: "block", width: "100%", maxHeight: "56vh", borderRadius: 14, background: "#111", boxShadow: "0 14px 40px rgba(20,15,10,0.18)" }}
+          />
+        ) : (
+          <div style={{ padding: "60px 0", textAlign: "center", color: "rgba(255,255,255,0.5)", background: "#111", borderRadius: 14 }}>
+            <Icon.lock style={{ width: 22, height: 22, marginBottom: 8 }} />
+            <div>No video is available for this lesson yet.</div>
+          </div>
+        )}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, marginTop: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: currentLesson.videoCompleted ? C.green : C.textMuted }}>
+            <Icon.check style={{ width: 14, height: 14, opacity: currentLesson.videoCompleted ? 1 : 0.35 }} />
+            {currentLesson.videoCompleted ? "Watched — notes & task unlocked" : `Watch at least ${MIN_WATCH_SECONDS}s to mark this lesson watched`}
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <Btn variant="outline" disabled={!prevLesson} onClick={() => prevLesson && onSelectLesson(getLessonUID(prevLesson))}>← Previous</Btn>
+            <Btn variant="outline" disabled={!nextLesson} onClick={() => nextLesson && onSelectLesson(getLessonUID(nextLesson))}>Next →</Btn>
+          </div>
+        </div>
+
+        {/* tab strip */}
+        <div style={{ display: "flex", gap: 4, marginTop: 22, borderBottom: `1px solid ${C.border}` }}>
+          {TABS.map((tab) => {
+            const active = activeContentTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => onSetTab(tab.id)}
+                style={{
+                  display: "flex", alignItems: "center", gap: 6, padding: "10px 16px", background: "transparent", border: "none",
+                  borderBottom: active ? `2px solid ${C.accent}` : "2px solid transparent",
+                  color: active ? C.accentDark : C.textSecondary, fontWeight: 700, fontSize: 12.5, cursor: "pointer", fontFamily: "inherit",
+                }}
+              >
+                {tab.label}
+                {tab.id === "tasks" && tab.count > 0 && (
+                  <span style={{ background: C.badgeBg, color: C.badgeIcon, borderRadius: 20, fontSize: 10, fontWeight: 800, padding: "1px 6px" }}>{tab.count}</span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* content + meta side panel */}
+        <div className="two-col" style={{ display: "grid", gridTemplateColumns: "1fr 220px", gap: 24, marginTop: 18 }}>
+          <div>
+            {activeContentTab === "about" && (
+              <>
+                <h4 style={{ margin: "0 0 8px", fontSize: 14 }}>About this lecture</h4>
+                <p style={{ margin: 0, fontSize: 13, lineHeight: 1.65, color: C.textSecondary }}>
+                  {courseSyllabus || currentLesson.description || `In this lecture, we cover ${currentLesson.title.toLowerCase()} as part of ${currentSectionName}. Watch the video, review the notes, then complete the linked task to mark this lesson done.`}
+                </p>
+              </>
+            )}
+            {activeContentTab === "notes" && (
+              <div>
+                <h4 style={{ margin: "0 0 8px", fontSize: 14 }}>{currentLesson.title} — Notes</h4>
+                {currentLesson.notesUrl ? (
+                  <Btn variant="primary" onClick={() => { onMarkProgress(currentLesson, { notesCompleted: true }); onOpenResource({ title: `${currentLesson.title} — Notes`, courseTitle: course.title, adminUrl: currentLesson.notesUrl, kind: "notes", courseId: course.id, lessonId: currentLesson.id }); }}>
+                    Open Notes PDF
+                  </Btn>
+                ) : (
+                  <p style={{ fontSize: 12.5, color: C.textMuted }}>No notes have been uploaded for this lesson yet.</p>
+                )}
+              </div>
+            )}
+            {activeContentTab === "tasks" && (
+              <TaskDropdownList lesson={currentLesson} course={course} onOpenResource={onOpenResource} />
+            )}
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 16, borderLeft: `1px solid ${C.border}`, paddingLeft: 20 }}>
+            <MetaRow icon={Icon.clock} label="Course duration" value={course.duration || "—"} />
+            <MetaRow icon={Icon.notes} label="Fees" value={course.fees || course.price || "—"} />
+            <MetaRow icon={Icon.clock} label="Duration seconds" value={currentLesson.durationSec ? `${currentLesson.durationSec} sec` : currentLesson.duration || "—"} />
+            <MetaRow icon={Icon.pointer} label="Topics" value={`${currentSectionName}, ${currentLesson.title}`} />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MetaRow({ icon: IconCmp, label, value }) {
+  return (
+    <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+      <IconCmp style={{ width: 15, height: 15, color: C.accent, marginTop: 1, flexShrink: 0 }} />
+      <div>
+        <div style={{ fontSize: 10.5, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.04em" }}>{label}</div>
+        <div style={{ fontSize: 12.5, fontWeight: 700, marginTop: 2 }}>{value}</div>
+      </div>
+    </div>
+  );
+}
+
+function TaskDropdownList({ lesson, course, onOpenResource }) {
+  const tasks = lesson.tasks || [];
+  const [openTaskId, setOpenTaskId] = useState(tasks[0]?.id || (tasks.length ? "task-1" : null));
+  if (!tasks.length) {
+    return <p style={{ fontSize: 12.5, color: C.textMuted }}>No tasks are assigned for this lesson.</p>;
+  }
+  return (
+    <div>
+      <h4 style={{ margin: "0 0 10px", fontSize: 14.5 }}>Tasks for {lesson.title}</h4>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {tasks.map((task, i) => {
+          const taskId = String(task.id || `task-${i + 1}`);
+          const isOpen = openTaskId === taskId;
+          const taskSubmission = lesson.studentProgress?.taskSubmissions?.[taskId];
+          const hasGrade = taskSubmission?.grade !== undefined && taskSubmission?.grade !== null && taskSubmission.grade !== "";
+          const status = hasGrade ? `Graded · ${taskSubmission.grade}/100` : taskSubmission?.submitted ? "Submitted" : "Pending";
+          return (
+            <div key={taskId} style={{ border: `1px solid ${C.pillBorder}`, borderRadius: 12, overflow: "hidden" }}>
+              <button
+                onClick={() => setOpenTaskId(isOpen ? null : taskId)}
+                style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "12px 14px", background: C.pillBg, border: "none", cursor: "pointer", textAlign: "left", fontFamily: "inherit" }}
+              >
+                <span style={{ fontSize: 12.5, fontWeight: 700 }}>{task.title || `Task ${i + 1}`}</span>
+                <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <Badge tone={hasGrade || status === "Submitted" ? "green" : "amber"}>{status}</Badge>
+                  {isOpen ? <Icon.chevronDown style={{ width: 13, height: 13 }} /> : <Icon.chevronRight style={{ width: 13, height: 13 }} />}
+                </span>
+              </button>
+              {isOpen && (
+                <div style={{ padding: 14, fontSize: 12, color: C.textSecondary }}>
+                  <p style={{ margin: "0 0 12px" }}>{task.description || "Complete this task and submit your work as a PDF."}</p>
+                  <Btn
+                    variant="primary"
+                    disabled={!lesson.videoCompleted}
+                    onClick={() => onOpenResource({
+                      title: task.title || lesson.title, courseTitle: course.title, adminUrl: task.pdfUrl, kind: "assignment",
+                      progressKey: getLessonProgressKey(course.id, lesson), courseId: course.id, lessonId: lesson.id, taskId, section: lesson.section,
+                    })}
+                  >
+                    {lesson.videoCompleted ? "Open Task" : "Watch the video first"}
+                  </Btn>
+                  {taskSubmission?.grade !== undefined && taskSubmission?.grade !== null && taskSubmission.grade !== "" && (
+                    <div style={{ marginTop: 14, padding: 12, borderRadius: 10, background: C.greenBg, color: C.green }}>
+                      <div style={{ fontWeight: 800 }}>Grade: {taskSubmission.grade}/100</div>
+                      {taskSubmission.feedback && <div style={{ marginTop: 5, color: C.textSecondary }}>Feedback: {taskSubmission.feedback}</div>}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -630,13 +942,18 @@ function initials(name) {
    MAIN APP
    ============================================================ */
 export default function StudentDashboard({ user, onLogout, courses = [], notifications = [], onRefreshNotifications, onReadNotification, onReadAllNotifications, uploadStudentResource, saveLessonProgress }) {
+  const recentCourseStorageKey = `crmst-recent-course-${user?.id || user?._id || "student"}`;
   const [activeNav, setActiveNav] = useState("dashboard");
   const [mobileOpen, setMobileOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [sidebarQuery, setSidebarQuery] = useState("");
   const [openCourse, setOpenCourse] = useState(null);
-  const [selectedLearningSection, setSelectedLearningSection] = useState(null);
-  const [openVideo, setOpenVideo] = useState(null);
+  const [playerCourseId, setPlayerCourseId] = useState(null);
+  const [playerLessonUID, setPlayerLessonUID] = useState(null);
+  const [playerTab, setPlayerTab] = useState("about");
+  const [recentCourseId, setRecentCourseId] = useState(() => {
+    try { return window.localStorage.getItem(recentCourseStorageKey) || ""; } catch { return ""; }
+  });
   const [openResource, setOpenResource] = useState(null);
   const [notifOpen, setNotifOpen] = useState(false);
   const notifs = notifications;
@@ -663,10 +980,9 @@ export default function StudentDashboard({ user, onLogout, courses = [], notific
       lessons: course.totalLessons || lessons.length,
       lessonsData: lessons,
       enrolled: Boolean(studentId && studentIds.includes(studentId)),
-      progress: lessons.length ? Math.round((lessons.reduce((total, lesson) => {
-        const progress = { ...(lesson.studentProgress || {}), ...(lessonProgress[getLessonProgressKey(course.id, lesson)] || {}) };
-        return total + [progress.videoCompleted, progress.taskCompleted].filter(Boolean).length;
-      }, 0) / (lessons.length * 3)) * 100) : 0,
+      progress: lessons.length ? Math.round((lessons.reduce((total, lesson) => (
+        total + getLessonProgressRatio(lesson, lessonProgress[getLessonProgressKey(course.id, lesson)] || {})
+      ), 0) / lessons.length) * 100) : 0,
     };
   }), [courses, studentId, lessonProgress]);
 
@@ -683,17 +999,16 @@ export default function StudentDashboard({ user, onLogout, courses = [], notific
   }, [catalogCourses, query]);
 
   const enrolledCourses = catalogCourses.filter(c => c.enrolled);
+  const recentCourse = enrolledCourses.find((course) => String(course.id) === String(recentCourseId)) || enrolledCourses[0] || null;
   const enrolledLessons = enrolledCourses.flatMap((course) => course.lessonsData.map((lesson) => {
     const progress = { ...(lesson.studentProgress || {}), ...(lessonProgress[getLessonProgressKey(course.id, lesson)] || {}) };
     const videoCompleted = Boolean(progress.videoCompleted);
     const assignmentCompleted = Boolean(progress.taskCompleted);
-    const completed = Boolean(videoCompleted && assignmentCompleted);
-    return { ...lesson, courseTitle: course.title, courseId: course.id, completed, locked: false, videoCompleted, assignmentCompleted, studentProgress: progress };
+    const notesCompleted = Boolean(progress.notesCompleted);
+    const completed = Boolean(progress.completed || (videoCompleted && notesCompleted && assignmentCompleted));
+    return { ...lesson, courseTitle: course.title, courseId: course.id, completed, locked: false, videoCompleted, notesCompleted, assignmentCompleted, studentProgress: progress };
   }));
-  const visibleLessons = selectedLearningSection
-    ? enrolledLessons.filter((lesson) => String(lesson.section || "General").trim() === selectedLearningSection)
-    : [];
-  const allAssignments = enrolledLessons.flatMap((lesson) => (lesson.tasks || []).map((task) => ({
+  const assignments = enrolledLessons.flatMap((lesson) => (lesson.tasks || []).map((task) => ({
     ...task,
     lessonTitle: lesson.title,
     courseTitle: lesson.courseTitle,
@@ -704,61 +1019,43 @@ export default function StudentDashboard({ user, onLogout, courses = [], notific
     taskCompleted: lesson.assignmentCompleted,
     completed: lesson.completed,
   })));
-  const assignments = selectedLearningSection
-    ? allAssignments.filter((task) => String(task.section || "General").trim() === selectedLearningSection)
-    : allAssignments;
-  const visibleAssignments = selectedLearningSection ? assignments : [];
-  const markLessonComplete = (video) => {
-    const key = getLessonProgressKey(video.courseId, video);
-    Promise.resolve(saveLessonProgress?.(video.courseId, video.id, true, studentId, video.section))
+  const markLessonProgress = (lesson, patch) => {
+    const key = getLessonProgressKey(lesson.courseId, lesson);
+    Promise.resolve(saveLessonProgress?.(lesson.courseId, lesson.id, patch, studentId, lesson.section))
       .then((savedProgress) => {
         if (!savedProgress) return;
         setLessonProgress((current) => ({
           ...current,
-          [key]: { ...(current[key] || {}), ...savedProgress, videoCompleted: true },
+          [key]: { ...(current[key] || {}), ...savedProgress },
         }));
       })
       .catch(() => {});
     setLessonProgress((current) => {
-      const next = {
-        ...current,
-        [key]: { ...(current[key] || {}), videoCompleted: true },
-      };
+      const next = { ...current, [key]: { ...(current[key] || {}), ...patch } };
       window.localStorage.setItem(`crmst-progress-${studentId}`, JSON.stringify(next));
       return next;
     });
-    showToast("Video completed. Notes and assignment unlocked.");
-  };
-  const continueCourse = (course) => {
-    setOpenCourse(course);
+    if (patch.videoCompleted) showToast("Video watched. Notes and task unlocked.");
   };
 
-  const openLessonInModal = (course, lesson) => {
-    if (!lesson) return;
+  const pickDefaultLessonUID = (course) => {
+    const groups = getCourseSectionGroups(course, lessonProgress);
+    const flat = groups.flatMap((g) => g.lessons);
+    const next = flat.find((l) => !l.completed);
+    return getLessonUID(next || flat[0] || {});
+  };
+
+  const openCoursePlayer = (course, lessonUID) => {
     setOpenCourse(null);
-    if (lesson.videoUrl) {
-      setOpenVideo({ ...lesson, courseTitle: course.title, courseId: course.id, onEnded: () => { markLessonComplete({ ...lesson, courseId: course.id }); setOpenVideo(null); } });
-      return;
-    }
-    if (lesson.notesUrl) {
-      setOpenResource({ title: `${lesson.title} — Notes`, courseTitle: course.title, adminUrl: lesson.notesUrl, kind: "notes", courseId: course.id, lessonId: lesson.id });
-      return;
-    }
-    if (Array.isArray(lesson.tasks) && lesson.tasks.length) {
-      const task = lesson.tasks[0];
-      setOpenResource({ title: task.title || lesson.title, courseTitle: course.title, adminUrl: task.pdfUrl, kind: "assignment", progressKey: getLessonProgressKey(course.id, lesson), courseId: course.id, lessonId: lesson.id, taskId: task.id, section: lesson.section });
-      return;
-    }
-    showToast("This lesson has no video, notes, or assignment yet.");
+    setRecentCourseId(course.id);
+    try { window.localStorage.setItem(recentCourseStorageKey, String(course.id)); } catch {}
+    setPlayerCourseId(course.id);
+    setPlayerLessonUID(lessonUID || pickDefaultLessonUID(course));
+    setPlayerTab("about");
+    setActiveNav("course-player");
+    setMobileOpen(false);
   };
-  const goToNextLearningSection = (course) => {
-    setOpenCourse(course);
-  };
-  const selectCourseSection = (course, sectionName) => {
-    setSelectedLearningSection(sectionName);
-    setOpenCourse(null);
-    handleNav("videos");
-  };
+  const playerCourse = catalogCourses.find((c) => c.id === playerCourseId) || null;
   const unreadCount = notifs.filter(n => !n.read).length;
   useEffect(() => {
     if (!onRefreshNotifications) return undefined;
@@ -920,12 +1217,47 @@ export default function StudentDashboard({ user, onLogout, courses = [], notific
                       {item.id === "notifications" && unreadCount > 0 && (
                         <span style={{ marginLeft: "auto", background: "#e2734a", color: "#fff", fontSize: 10, fontWeight: 700, borderRadius: 10, padding: "1px 6px" }}>{unreadCount}</span>
                       )}
-                      {["all-courses", "my-courses", "assignments"].includes(item.id) && !(item.id === "notifications" && unreadCount > 0) && (
+                      {["all-courses", "my-courses"].includes(item.id) && !(item.id === "notifications" && unreadCount > 0) && (
                         <Icon.chevronRight style={{ width: 13, height: 13, opacity: 0.45, marginLeft: "auto" }} />
                       )}
                     </div>
                   );
                 })}
+                {section.label === "Student" && enrolledCourses.length > 0 && !sidebarQuery.trim() && (
+                  <>
+                    <div style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.16em", color: C.sidebarLabel, fontWeight: 800, padding: "16px 10px 8px" }}>Recent Course</div>
+                    {recentCourse ? [recentCourse].map((c) => {
+                      const isCurrent = activeNav === "course-player" && playerCourseId === c.id;
+                      return (
+                        <div
+                          key={`recent-${c.id}`}
+                          onClick={() => openCoursePlayer(c)}
+                          style={{
+                            padding: "10px 12px", borderRadius: 14, marginBottom: 6, cursor: "pointer",
+                            background: isCurrent ? "linear-gradient(135deg, rgba(41,41,44,0.92), rgba(28,28,31,0.95))" : "rgba(255,255,255,0.03)",
+                            border: isCurrent ? "1px solid rgba(215,86,56,0.48)" : "1px solid rgba(255,255,255,0.06)",
+                          }}
+                          onMouseEnter={(e) => { if (!isCurrent) e.currentTarget.style.background = C.sidebarHover; }}
+                          onMouseLeave={(e) => { if (!isCurrent) e.currentTarget.style.background = "rgba(255,255,255,0.03)"; }}
+                        >
+                          <div style={{ fontSize: 12, fontWeight: 700, color: "#fff", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.title}</div>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
+                            <div style={{ flex: 1, height: 5, background: "rgba(255,255,255,0.1)", borderRadius: 20, overflow: "hidden" }}>
+                              <div style={{ width: `${c.progress}%`, height: "100%", background: "#d55c41", borderRadius: 20 }} />
+                            </div>
+                            <span style={{ fontSize: 10, color: "rgba(255,255,255,0.55)", flexShrink: 0 }}>{c.progress}%</span>
+                          </div>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); openCoursePlayer(c); }}
+                            style={{ marginTop: 8, width: "100%", background: "rgba(213,92,65,0.16)", border: "1px solid rgba(215,86,56,0.4)", color: "#e2734a", borderRadius: 9, padding: "6px 0", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}
+                          >
+                            Continue Learning
+                          </button>
+                        </div>
+                      );
+                    }) : null}
+                  </>
+                )}
               </div>
             ))}
           </nav>
@@ -948,10 +1280,12 @@ export default function StudentDashboard({ user, onLogout, courses = [], notific
               <button className="sd-menu-toggle" onClick={() => setMobileOpen(true)} style={{ display: "none", background: "none", border: `1px solid ${C.border}`, borderRadius: 8, width: 34, height: 34, alignItems: "center", justifyContent: "center", color: C.textSecondary, cursor: "pointer" }}>
                 <Icon.menu style={{ width: 16, height: 16 }} />
               </button>
-              <div>
-                <h1 style={{ fontSize: 17, margin: 0, fontWeight: 700 }}>{meta.title}</h1>
-                <p style={{ margin: "2px 0 0", fontSize: 12, color: C.textSecondary }}>{meta.sub}</p>
-              </div>
+              {activeNav !== "course-player" && (
+                <div>
+                  <h1 style={{ fontSize: 17, margin: 0, fontWeight: 700 }}>{meta.title}</h1>
+                  <p style={{ margin: "2px 0 0", fontSize: 12, color: C.textSecondary }}>{meta.sub}</p>
+                </div>
+              )}
             </div>
 
             <div style={{ display: "flex", alignItems: "center", gap: 14, position: "relative" }}>
@@ -1001,11 +1335,11 @@ export default function StudentDashboard({ user, onLogout, courses = [], notific
               <>
                 <WelcomeBanner name={studentName} />
                 <SummaryCards courses={catalogCourses} assignments={assignments} />
-                <ContinueLearning course={enrolledCourses[0]} onOpen={continueCourse} />
+                <ContinueLearning course={recentCourse} onOpen={(course) => openCoursePlayer(course)} />
 
                 <SectionHead title="All Courses" right={<a href="#" onClick={(e) => { e.preventDefault(); handleNav("all-courses"); }} style={{ fontSize: 12, color: C.accent, fontWeight: 700 }}>View all</a>} />
                 <div className="courses-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16, marginBottom: 26 }}>
-                  {catalogCourses.map(c => <CourseCard key={c.id} course={c} onOpen={setOpenCourse} />)}
+                  {catalogCourses.map(c => <CourseCard key={c.id} course={c} onOpen={setOpenCourse} onContinue={openCoursePlayer} />)}
                 </div>
 
                 <SectionHead title="Recent Assignments & Activity" />
@@ -1031,7 +1365,7 @@ export default function StudentDashboard({ user, onLogout, courses = [], notific
                   />
                 </div>
                 <div className="courses-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }}>
-                  {filteredCourses.length ? filteredCourses.map(c => <CourseCard key={c.id} course={c} onOpen={setOpenCourse} />) : (
+                  {filteredCourses.length ? filteredCourses.map(c => <CourseCard key={c.id} course={c} onOpen={setOpenCourse} onContinue={openCoursePlayer} />) : (
                     <div style={{ gridColumn: "1 / -1", textAlign: "center", padding: "40px 0", color: C.textSecondary, fontSize: 13 }}>No courses match "{query}".</div>
                   )}
                 </div>
@@ -1040,109 +1374,27 @@ export default function StudentDashboard({ user, onLogout, courses = [], notific
 
             {activeNav === "my-courses" && (
               <div className="courses-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }}>
-                {enrolledCourses.map(c => <CourseCard key={c.id} course={c} onOpen={setOpenCourse} />)}
+                {enrolledCourses.map(c => <CourseCard key={c.id} course={c} onOpen={setOpenCourse} onContinue={openCoursePlayer} />)}
               </div>
             )}
 
-            {activeNav === "videos" && (
-              <Panel title={selectedLearningSection ? `${selectedLearningSection} Videos` : "Course Videos"}>
-                <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
-                  {visibleLessons.map((lesson, i) => (
-                    <li key={`${lesson.courseId}:${String(lesson.section || "General").trim().toLowerCase()}:${lesson.id || i}`} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 20px", borderBottom: i === visibleLessons.length - 1 ? "none" : `1px solid ${C.border}` }}>
-                      <div style={{ width: 34, height: 34, borderRadius: 9, background: lesson.videoUrl ? C.badgeBg : "#f1ede4", color: lesson.videoUrl ? C.badgeIcon : C.textMuted, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                        {lesson.videoUrl ? <Icon.play style={{ width: 15, height: 15 }} /> : <Icon.lock style={{ width: 14, height: 14 }} />}
-                      </div>
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontSize: 13, fontWeight: 700 }}>{lesson.title}</div>
-                        <div style={{ fontSize: 11.5, color: C.textMuted }}>{lesson.courseTitle}</div>
-                      </div>
-                      {lesson.videoUrl ? <Btn variant="primary" onClick={() => setOpenVideo({ ...lesson, onEnded: () => { markLessonComplete(lesson); setOpenVideo(null); } })}>{lesson.videoCompleted ? "Completed" : "Watch"}</Btn> : <Btn variant="outline" disabled>Unavailable</Btn>}
-                    </li>
-                  ))}
-                </ul>
-                {!visibleLessons.length && <div style={{ padding: 24, color: C.textSecondary }}>No videos are available for this section.</div>}
-              </Panel>
-            )}
-
-            {activeNav === "notes" && (
-              <Panel title={selectedLearningSection ? `${selectedLearningSection} Notes` : "Course Notes"}>
-                <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
-                  {visibleLessons.map((lesson, i) => (
-                    <li key={`${lesson.courseId}:${String(lesson.section || "General").trim().toLowerCase()}:${lesson.id || i}`} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 20px", borderBottom: i === visibleLessons.length - 1 ? "none" : `1px solid ${C.border}`, opacity: lesson.videoCompleted ? 1 : 0.62 }}>
-                      <div style={{ width: 34, height: 34, borderRadius: 9, background: lesson.videoCompleted ? C.badgeBg : "#f1ede4", color: lesson.videoCompleted ? C.badgeIcon : C.textMuted, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                        <Icon.notes style={{ width: 15, height: 15 }} />
-                      </div>
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontSize: 13, fontWeight: 700 }}>{lesson.title} — Notes</div>
-                        <div style={{ fontSize: 11.5, color: C.textMuted }}>{lesson.videoCompleted ? "Notes unlocked" : "Watch the video to unlock notes"}</div>
-                      </div>
-                      <Btn variant="outline" disabled={!lesson.videoCompleted} onClick={() => setOpenResource({ title: `${lesson.title} — Notes`, courseTitle: lesson.courseTitle, adminUrl: lesson.notesUrl, kind: "notes", courseId: lesson.courseId, lessonId: lesson.id })}>View PDF</Btn>
-                    </li>
-                  ))}
-                </ul>
-                {!visibleLessons.length && <div style={{ padding: 24, color: C.textSecondary }}>No notes are available for this section.</div>}
-              </Panel>
-            )}
-
-            {activeNav === "assignments" && (
-              <Panel title={selectedLearningSection ? `${selectedLearningSection} Assignments` : "Assignments"}>
-                {selectedLearningSection ? <AssignmentsTable rows={visibleAssignments.map((task) => ({ ...task, name: task.title, course: task.courseTitle, due: "-", status: !task.videoCompleted ? "Open after video" : (task.taskCompleted ? "Completed" : "Open") }))} onOpen={(task) => task.videoCompleted && setOpenResource({ title: task.title, courseTitle: task.courseTitle, adminUrl: task.pdfUrl, kind: "assignment", progressKey: `${task.courseId}:${String(task.section || "General").trim().toLowerCase()}:${task.lessonId}`, courseId: task.courseId, lessonId: task.lessonId, taskId: task.id, section: task.section })} /> : <div style={{ padding: 24, color: C.textSecondary }}>Choose a section to view its assignments.</div>}
-              </Panel>
-            )}
-
-            {activeNav === "progress" && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-                {enrolledCourses.filter((c) => !selectedLearningSection || c.lessonsData.some((lesson) => String(lesson.section || "General").trim() === selectedLearningSection)).map(c => {
-                  const progressLessons = selectedLearningSection
-                    ? enrolledLessons.filter((lesson) => lesson.courseId === c.id && String(lesson.section || "General").trim() === selectedLearningSection)
-                    : enrolledLessons.filter((lesson) => lesson.courseId === c.id);
-                  const progressUnits = progressLessons.reduce((total, lesson) => total + [lesson.videoCompleted, lesson.assignmentCompleted].filter(Boolean).length, 0);
-                  const progressPercent = progressLessons.length ? Math.round((progressUnits / (progressLessons.length * 3)) * 100) : 0;
-                  return (
-                  <div key={c.id} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 18, padding: 20, boxShadow: "0 1px 2px rgba(33,28,46,0.03), 0 4px 14px rgba(33,28,46,0.04)" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
-                      <div>
-                        <h4 style={{ margin: 0, fontSize: 14.5, fontWeight: 700 }}>{selectedLearningSection || c.title}</h4>
-                        {selectedLearningSection && <div style={{ marginTop: 3, fontSize: 11.5, color: C.textMuted }}>{c.title}</div>}
-                      </div>
-                      <span style={{ fontSize: 13, fontWeight: 700, color: C.accent }}>{progressPercent}%</span>
-                    </div>
-                    <div style={{ height: 8, background: "#f0ece2", borderRadius: 20, overflow: "hidden", marginBottom: 8 }}>
-                      <div style={{ width: `${progressPercent}%`, height: "100%", background: C.accent, borderRadius: 20 }} />
-                    </div>
-                    <div style={{ fontSize: 12, color: C.textSecondary }}>
-                      {selectedLearningSection ? `${selectedLearningSection} lessons: ${progressLessons.length}` : `Lessons available: ${c.lessons}`}
-                    </div>
-                    {selectedLearningSection ? (
-                      <div style={{ marginTop: 18, paddingTop: 16, borderTop: `1px solid ${C.border}` }}>
-                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-                          <strong style={{ fontSize: 13.5 }}>Assignment evaluations</strong>
-                          <span style={{ fontSize: 11, color: C.textMuted }}>{progressLessons.reduce((count, lesson) => count + (lesson.tasks || []).length, 0)} task(s)</span>
-                        </div>
-                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 10 }}>
-                          {progressLessons.flatMap((lesson) => (lesson.tasks || []).map((task, taskIndex) => ({ lesson, task, taskIndex }))).map(({ lesson, task, taskIndex }) => {
-                            const notificationEvaluation = getNotificationEvaluation(notifications, c.id, lesson, task);
-                            const grade = lesson.studentProgress?.grade ?? notificationEvaluation?.grade;
-                            const feedback = lesson.studentProgress?.feedback || notificationEvaluation?.feedback || "";
-                            const evaluated = grade !== null && grade !== undefined || Boolean(feedback);
-                            return (
-                              <div key={`${c.id}:${String(lesson.section || "General").toLowerCase()}:${lesson.id}:${task.id || taskIndex}`} style={{ minHeight: 132, display: "flex", flexDirection: "column", justifyContent: "space-between", padding: "13px 14px", background: evaluated ? C.greenBg : C.pillBg, border: `1px solid ${evaluated ? "rgba(63,122,82,0.22)" : C.pillBorder}`, borderRadius: 11 }}>
-                                <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
-                                  <div><div style={{ fontSize: 10.5, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.04em" }}>{selectedLearningSection} · {lesson.title}</div><div style={{ marginTop: 3, fontSize: 13, fontWeight: 700 }}>{task.title || `Task ${taskIndex + 1}`}</div></div>
-                                  <span style={{ flexShrink: 0, padding: "5px 9px", borderRadius: 999, background: evaluated ? "rgba(63,122,82,0.12)" : "rgba(168,113,10,0.12)", color: evaluated ? C.green : C.amber, fontSize: 10.5, fontWeight: 700 }}>{evaluated ? `${grade ?? "-"}/100` : "Waiting for grade"}</span>
-                                </div>
-                                <div style={{ marginTop: 8, fontSize: 11.5, color: C.textSecondary }}>{feedback || (lesson.assignmentCompleted ? "Submitted. Your admin evaluation will appear here." : "Complete and submit this task to receive feedback.")}</div>
-                              </div>
-                            );
-                          })}
-                          {!progressLessons.some((lesson) => (lesson.tasks || []).length) && <div style={{ fontSize: 11.5, color: C.textMuted }}>No assignments are available in this section.</div>}
-                        </div>
-                      </div>
-                    ) : <div style={{ marginTop: 14, fontSize: 11.5, color: C.textMuted }}>Choose a section from My Courses to view its assignment evaluations.</div>}
-                  </div>
-                  );
-                })}
-              </div>
+            {activeNav === "course-player" && (
+              playerCourse ? (
+                <CoursePlayer
+                  course={playerCourse}
+                  lessonProgress={lessonProgress}
+                  activeLessonUID={playerLessonUID}
+                  activeTab={playerTab}
+                  onSelectLesson={(uid) => { setPlayerLessonUID(uid); setPlayerTab("about"); }}
+                  onSetTab={setPlayerTab}
+                  onMarkWatched={(lesson) => markLessonProgress(lesson, { videoCompleted: true })}
+                  onMarkProgress={markLessonProgress}
+                  onOpenResource={setOpenResource}
+                  onBack={() => handleNav("my-courses")}
+                />
+              ) : (
+                <div style={{ padding: 24, color: C.textSecondary }}>Select a course from My Courses to start learning.</div>
+              )
             )}
 
             {activeNav === "notifications" && (
@@ -1197,14 +1449,12 @@ export default function StudentDashboard({ user, onLogout, courses = [], notific
         course={openCourse}
         onClose={() => setOpenCourse(null)}
         onToast={showToast}
-        onContinue={goToNextLearningSection}
-        lessonProgress={lessonProgress}
-        onSelectSection={selectCourseSection}
+        onContinue={openCoursePlayer}
       />
-      <VideoModal video={openVideo} onClose={() => setOpenVideo(null)} />
       <ResourceModal resource={openResource} onClose={() => setOpenResource(null)} onUpload={async (file, kind) => {
+        let savedProgress = null;
         if (uploadStudentResource && openResource?.courseId && openResource?.lessonId && openResource?.taskId) {
-          await uploadStudentResource(file, openResource.courseId, openResource.lessonId, openResource.taskId, kind, studentId, openResource.section);
+          savedProgress = await uploadStudentResource(file, openResource.courseId, openResource.lessonId, openResource.taskId, kind, studentId, openResource.section);
         }
         const key = openResource?.progressKey;
         if (key && kind === "assignment") setLessonProgress((current) => {
@@ -1212,7 +1462,7 @@ export default function StudentDashboard({ user, onLogout, courses = [], notific
             ...current,
             [key]: {
               ...(current[key] || {}),
-              taskCompleted: true,
+              ...(savedProgress || {}),
             },
           };
           window.localStorage.setItem(`crmst-progress-${studentId}`, JSON.stringify(next));
