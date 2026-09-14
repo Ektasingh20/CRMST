@@ -57,6 +57,14 @@
   grid-column: 1 / -1;
 }
 
+.add-lead-panel {
+  padding: 12px 20px 20px;
+}
+
+.add-lead-panel .form-grid {
+  align-items: start;
+}
+
 .form-section-title {
   grid-column: 1 / -1;
   margin: 8px 0 4px;
@@ -73,6 +81,104 @@
   justify-content: flex-end;
   gap: 12px;
   margin-top: 18px;
+}
+
+.check-clock-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 18px;
+  border: 1px solid var(--line-soft);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.check-clock-label,
+.check-times {
+  color: var(--text-soft);
+  font-size: 0.82rem;
+}
+
+.check-clock-label {
+  display: block;
+}
+
+.check-clock-time {
+  display: block;
+  margin-top: 4px;
+  font-size: 1.35rem;
+}
+
+.check-clock-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-soft);
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.attendance-state-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+
+.attendance-state-dot.active {
+  background: var(--success);
+  box-shadow: 0 0 0 4px var(--success-soft);
+}
+
+.check-times {
+  display: flex;
+  gap: 24px;
+  margin-top: 16px;
+}
+
+.check-times strong {
+  color: var(--text);
+}
+
+.attendance-action-button {
+  width: 104px;
+  height: 104px;
+  border: 0;
+  border-radius: 50%;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  background: linear-gradient(145deg, #2c9b70, #17634b);
+  color: white;
+  box-shadow: 0 14px 26px rgba(31, 111, 88, 0.24);
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 800;
+  transition: transform 160ms ease, box-shadow 160ms ease;
+}
+
+.attendance-action-button.checkout {
+  background: linear-gradient(145deg, var(--brand), var(--brand-deep));
+  box-shadow: 0 14px 26px rgba(141, 94, 56, 0.24);
+}
+
+.attendance-action-button.completed {
+  background: #9d9188;
+  box-shadow: none;
+  cursor: default;
+}
+
+.attendance-action-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 18px 30px rgba(62, 43, 28, 0.2);
+}
+
+.attendance-action-button.completed:hover {
+  transform: none;
+  box-shadow: none;
 }
 
 /* Inline "quick-add" bar used above tables (Call List / Leads / Tasks) */
@@ -161,8 +267,22 @@
     grid-template-columns: 1fr;
   }
 
+  .add-lead-panel {
+    padding: 12px 16px 16px;
+  }
+
   .quick-add-bar {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .check-clock-panel,
+  .check-times {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .attendance-action-button {
+    align-self: center;
   }
 }

@@ -89,9 +89,10 @@ const IconPhone = (p) => (
 );
 const IconWhatsapp = (p) => (
   <Icon {...p}>
-    <path d="M20 12a8 8 0 1 1-3.6-6.7" />
-    <path d="M20 12a8 8 0 0 1-11.9 6.9L4 20l1.2-4A8 8 0 0 1 20 12Z" />
-    <path d="M9.5 9.5c0 3 2 5 5 5" />
+    <path d="M20 11.5a8 8 0 0 1-11.8 7L4 20l1.5-3.9A8 8 0 1 1 20 11.5Z" />
+    <path d="M9.2 8.8c.2 2.7 2 4.7 4.8 5.1" />
+    <path d="m9.4 8.8 1.2 1.8-.9 1" />
+    <path d="m14 13.9 1.5-.9 1.7 1.1" />
   </Icon>
 );
 const IconUsers = (p) => (
@@ -271,9 +272,54 @@ const PROGRAM_CATEGORY = {
   "STIP Program": "STIP",
 };
 
-const CALL_STATUS_OPTIONS = ["Not Called", "Connected", "Not Connected", "Busy", "Switched Off", "Invalid Number"];
+const TRAINING_CALL_LIST_PROGRAMS = [
+  "Front End Development Foundation",
+  "Back End Development",
+  "Full Stack Development",
+  "Video Editing",
+  "AutoCAD (2D & 3D)",
+  "Wordpress Web Design",
+  "Android App Development",
+  "VFX & ANIMATION",
+  "Graphics & Visual Designing",
+  "Adobe Photoshop",
+  "CorelDraw",
+  "Digital marketing",
+  "Adobe Illustrator",
+  "3D INTERIOR EXTERIOR DESIGN",
+];
+
+const SERVICE_CALL_LIST_SERVICES = [
+  "Website Development",
+  "Android & iOS App Development",
+  "Graphic Designing",
+  "Branding & Brand Promotion",
+  "Digital Marketing",
+  "VFX & Animation",
+  "CRM Solutions",
+  "Cloud Solutions",
+  "Marketing Tools & Automation",
+  "Content Creation & Copywriting",
+  "UI/UX Design",
+  "Social Media Management",
+  "E-commerce Development & Management",
+  "Performance Marketing",
+  "Influencer Marketing",
+  "Photography & Videography",
+  "Public Relations (PR)",
+  "Bulk Marketing (Highlighted Service)",
+];
+
+function getCallListCategory(program) {
+  if (SERVICE_CALL_LIST_SERVICES.includes(program)) return "Services";
+  if (TRAINING_CALL_LIST_PROGRAMS.includes(program)) return "Training";
+  return PROGRAM_CATEGORY[program];
+}
+
+const CALL_STATUS_OPTIONS = ["Choose", "Pending", "Follow Up", "Completed"];
 const INTERACTION_TYPES = ["Call", "WhatsApp", "Email", "Walk-in", "Reference"];
 const INTEREST_STATUS_OPTIONS = ["Hot", "Warm", "Cold", "Not Interested", "Converted"];
+const CALL_LIST_INTEREST_STATUS_OPTIONS = ["Choose", "Interested", "Not Interested"];
 const LEAD_SOURCES = ["Website", "Reference", "Walk-in", "Social Media", "Cold Call", "Advertisement"];
 const LEAD_STAGES = ["New", "Contacted", "Qualified", "Proposal", "Won", "Lost"];
 const TASK_STATUSES = ["To Do", "In Progress", "Done"];
@@ -623,7 +669,7 @@ function DashboardTab({ contacts, leads, tasks, leaveRequests, onNavigate }) {
     }));
 
   const quickActions = [
-    { label: "Add Contact", tab: "calllist", icon: <IconPhone size={20} /> },
+    { label: "Add Contact", tab: "servicecalllist", icon: <IconPhone size={20} /> },
     { label: "Add Lead", tab: "leads", icon: <IconUsers size={20} /> },
     { label: "New Task", tab: "tasks", icon: <IconTasks size={20} /> },
     { label: "Mark Attendance", tab: "markattendance", icon: <IconAttendance size={20} /> },
@@ -738,9 +784,9 @@ function emptyContactForm() {
     name: "",
     contact: "",
     program: PROGRAMS[0],
-    callStatus: "Not Called",
+    callStatus: "Choose",
     interactionType: "Call",
-    interestStatus: "Warm",
+    interestStatus: "Choose",
     remark: "",
     active: true,
   };
@@ -827,7 +873,7 @@ function ContactFormModal({ initial, onClose, onSave }) {
         <button className="ghost-button" onClick={onClose}>
           Cancel
         </button>
-        <button className="primary-button" onClick={handleSave}>
+        <button className="primary-button" onClick={() => onSave(form)}>
           <IconCheck size={16} /> Save Contact
         </button>
       </div>
@@ -835,14 +881,12 @@ function ContactFormModal({ initial, onClose, onSave }) {
   );
 }
 
-function CallListTab({ contacts, setContacts, showToast }) {
+function CallListTab({ contacts, setContacts, showToast, category, title, addLabel, currentUser }) {
   const [search, setSearch] = useState("");
   const [programFilter, setProgramFilter] = useState("All");
   const [callStatusFilter, setCallStatusFilter] = useState("All");
   const [interestFilter, setInterestFilter] = useState("All");
-  const [activeFilter, setActiveFilter] = useState("All");
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
+  const [dateFilter, setDateFilter] = useState("");
   const [sortKey, setSortKey] = useState("date");
   const [sortDir, setSortDir] = useState("desc");
   const [page, setPage] = useState(1);
@@ -850,6 +894,7 @@ function CallListTab({ contacts, setContacts, showToast }) {
 
   const filtered = useMemo(() => {
     let rows = contacts.filter((c) => {
+      const matchesCategory = !category || getCallListCategory(c.program) === category;
       const matchesSearch =
         !search.trim() ||
         c.name.toLowerCase().includes(search.trim().toLowerCase()) ||
@@ -857,10 +902,8 @@ function CallListTab({ contacts, setContacts, showToast }) {
       const matchesProgram = programFilter === "All" || c.program === programFilter;
       const matchesCallStatus = callStatusFilter === "All" || c.callStatus === callStatusFilter;
       const matchesInterest = interestFilter === "All" || c.interestStatus === interestFilter;
-      const matchesActive = activeFilter === "All" || (activeFilter === "Active" ? c.active : !c.active);
-      const matchesFrom = !dateFrom || c.date >= dateFrom;
-      const matchesTo = !dateTo || c.date <= dateTo;
-      return matchesSearch && matchesProgram && matchesCallStatus && matchesInterest && matchesActive && matchesFrom && matchesTo;
+      const matchesDate = !dateFilter || c.date === dateFilter;
+      return matchesCategory && matchesSearch && matchesProgram && matchesCallStatus && matchesInterest && matchesDate;
     });
     rows = rows.sort((a, b) => {
       let av = a[sortKey];
@@ -874,7 +917,7 @@ function CallListTab({ contacts, setContacts, showToast }) {
       return 0;
     });
     return rows;
-  }, [contacts, search, programFilter, callStatusFilter, interestFilter, activeFilter, dateFrom, dateTo, sortKey, sortDir]);
+  }, [contacts, category, search, programFilter, callStatusFilter, interestFilter, dateFilter, sortKey, sortDir]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / CONTACT_PAGE_SIZE));
   const pageRows = filtered.slice((page - 1) * CONTACT_PAGE_SIZE, page * CONTACT_PAGE_SIZE);
@@ -931,14 +974,25 @@ function CallListTab({ contacts, setContacts, showToast }) {
     setModalState(null);
   };
 
+  const resetFilters = () => {
+    setSearch("");
+    setProgramFilter("All");
+    setCallStatusFilter("All");
+    setInterestFilter("All");
+    setDateFilter("");
+    setSortKey("date");
+    setSortDir("desc");
+    setPage(1);
+  };
+
   const isSnoozed = (c) => c.snoozeUntil && c.snoozeUntil > todayISO();
 
   return (
     <div className="panel">
       <div className="panel-head">
-        <h3>Daily Contacts / Call List</h3>
+        <h3>{title}</h3>
         <button className="primary-button" onClick={() => setModalState(emptyContactForm())}>
-          <IconPlus size={16} /> Add Contact
+          <IconPlus size={16} /> {addLabel}
         </button>
       </div>
 
@@ -956,8 +1010,8 @@ function CallListTab({ contacts, setContacts, showToast }) {
         </div>
         <div className="toolbar-filters">
           <select value={programFilter} onChange={(e) => setProgramFilter(e.target.value)}>
-            <option value="All">All Programs</option>
-            {PROGRAMS.map((p) => (
+            <option value="All">All {category === "Services" ? "Services" : category === "Training" ? "Training Programs" : "Programs"}</option>
+            {(category === "Services" ? SERVICE_CALL_LIST_SERVICES : category === "Training" ? TRAINING_CALL_LIST_PROGRAMS : [...SERVICE_CALL_LIST_SERVICES, ...TRAINING_CALL_LIST_PROGRAMS]).map((p) => (
               <option key={p}>{p}</option>
             ))}
           </select>
@@ -969,20 +1023,12 @@ function CallListTab({ contacts, setContacts, showToast }) {
           </select>
           <select value={interestFilter} onChange={(e) => setInterestFilter(e.target.value)}>
             <option value="All">All Interest</option>
-            {INTEREST_STATUS_OPTIONS.map((p) => (
+            {CALL_LIST_INTEREST_STATUS_OPTIONS.map((p) => (
               <option key={p}>{p}</option>
             ))}
           </select>
-          <select value={activeFilter} onChange={(e) => setActiveFilter(e.target.value)}>
-            <option>All</option>
-            <option>Active</option>
-            <option>Inactive</option>
-          </select>
-          <div className="date-chip">
-            <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
-            <span>–</span>
-            <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
-          </div>
+          <input type="date" value={dateFilter} onChange={(e) => setDateFilter(e.target.value)} />
+          <button type="button" className="ghost-button compact" onClick={resetFilters}>Reset</button>
         </div>
       </div>
 
@@ -998,18 +1044,17 @@ function CallListTab({ contacts, setContacts, showToast }) {
                 Name {sortKey === "name" ? (sortDir === "asc" ? "↑" : "↓") : ""}
               </th>
               <th>Contact</th>
-              <th>Call</th>
-              <th>WhatsApp</th>
+              <th>Call / WhatsApp</th>
+              <th>CRM Executive Name</th>
               <th>Call Status</th>
-              <th>Interaction Type</th>
               <th>Interest Status</th>
-              <th>Program / Service</th>
+              <th>{category === "Services" ? "Service" : "Program"}</th>
               <th>Remark</th>
               <th>Action</th>
             </tr>
           </thead>
           <tbody>
-            {pageRows.length === 0 && <EmptyRow colSpan={12} text="No contacts match the selected filters." />}
+            {pageRows.length === 0 && <EmptyRow colSpan={11} text={`No ${category.toLowerCase()} contacts match the selected filters.`} />}
             {pageRows.map((c, idx) => (
               <tr key={c.id} style={{ opacity: c.active ? 1 : 0.55 }}>
                 <td>{(page - 1) * CONTACT_PAGE_SIZE + idx + 1}</td>
@@ -1025,19 +1070,20 @@ function CallListTab({ contacts, setContacts, showToast }) {
                 </td>
                 <td>{c.contact}</td>
                 <td>
-                  <button className="row-icon-btn call" title="Call" onClick={() => handleCall(c)}>
-                    <IconPhone size={16} />
-                  </button>
+                  <div className="row-actions">
+                    <button className="row-icon-btn call" title="Call" onClick={() => handleCall(c)}>
+                      <IconPhone size={16} />
+                    </button>
+                    <button className="row-icon-btn whatsapp" title="WhatsApp" onClick={() => handleWhatsapp(c)}>
+                      <IconWhatsapp size={16} />
+                    </button>
+                  </div>
                 </td>
-                <td>
-                  <button className="row-icon-btn whatsapp" title="WhatsApp" onClick={() => handleWhatsapp(c)}>
-                    <IconWhatsapp size={16} />
-                  </button>
-                </td>
+                <td>{c.crmExecutiveName || c.createdByName || c.createdBy || currentUser?.name || "-"}</td>
                 <td>
                   <select
                     className="inline-select"
-                    value={c.callStatus}
+                    value={CALL_STATUS_OPTIONS.includes(c.callStatus) ? c.callStatus : "Choose"}
                     onChange={(e) => updateContact(c.id, { callStatus: e.target.value })}
                   >
                     {CALL_STATUS_OPTIONS.map((s) => (
@@ -1048,26 +1094,32 @@ function CallListTab({ contacts, setContacts, showToast }) {
                 <td>
                   <select
                     className="inline-select"
-                    value={c.interactionType}
-                    onChange={(e) => updateContact(c.id, { interactionType: e.target.value })}
+                    value={CALL_LIST_INTEREST_STATUS_OPTIONS.includes(c.interestStatus) ? c.interestStatus : "Choose"}
+                    onChange={(e) => updateContact(c.id, { interestStatus: e.target.value })}
                   >
-                    {INTERACTION_TYPES.map((s) => (
+                    {CALL_LIST_INTEREST_STATUS_OPTIONS.map((s) => (
                       <option key={s}>{s}</option>
                     ))}
                   </select>
                 </td>
                 <td>
                   <select
-                    className="inline-select"
-                    value={c.interestStatus}
-                    onChange={(e) => updateContact(c.id, { interestStatus: e.target.value })}
+                    className="inline-select call-list-program-select"
+                    value={c.program || ""}
+                    onChange={(e) => updateContact(c.id, { program: e.target.value })}
+                    aria-label={category === "Services" ? "Service" : "Program"}
                   >
-                    {INTEREST_STATUS_OPTIONS.map((s) => (
-                      <option key={s}>{s}</option>
+                    <option value="">
+                      {category === "Services" ? "Select Service" : "Select Program"}
+                    </option>
+                    {!((category === "Services" ? SERVICE_CALL_LIST_SERVICES : TRAINING_CALL_LIST_PROGRAMS).includes(c.program)) && c.program ? (
+                      <option value={c.program}>{c.program}</option>
+                    ) : null}
+                    {(category === "Services" ? SERVICE_CALL_LIST_SERVICES : TRAINING_CALL_LIST_PROGRAMS).map((option) => (
+                      <option key={option} value={option}>{option}</option>
                     ))}
                   </select>
                 </td>
-                <td>{c.program}</td>
                 <td>
                   <div className="remark-cell">
                     <input
@@ -1091,15 +1143,6 @@ function CallListTab({ contacts, setContacts, showToast }) {
                         <IconSnooze size={16} />
                       </button>
                     )}
-                    <span
-                      className="status-toggle"
-                      title={c.active ? "Mark Inactive" : "Mark Active"}
-                      onClick={() => updateContact(c.id, { active: !c.active })}
-                    >
-                      <span className={clsx("status-toggle-track", c.active && "on")}>
-                        <span className="status-toggle-thumb" />
-                      </span>
-                    </span>
                     <button className="row-icon-btn delete" title="Delete" onClick={() => handleDelete(c)}>
                       <IconTrash size={16} />
                     </button>
@@ -1134,22 +1177,117 @@ function emptyLeadForm() {
   };
 }
 
+function AddLeadTab({ setLeads, showToast, currentUser }) {
+  const enteredBy = currentUser
+    ? `${currentUser.name || currentUser.username || "User"} (${currentUser.position || currentUser.role || "User"})`
+    : "";
+  const interestOptions = (type) => type === "Training" ? TRAINING_CALL_LIST_PROGRAMS : type === "Service" ? SERVICE_CALL_LIST_SERVICES : ["Internship"];
+  const [form, setForm] = useState({
+    name: "", phone: "", email: "", alternatePhone: "", city: "Ajmer", company: "",
+    type: "Training", interest: TRAINING_CALL_LIST_PROGRAMS[0], value: "", status: "Pending", leadSource: "Website",
+    assignedTo: TEAM_MEMBERS[0], assignedDate: todayISO(), notes: "",
+  });
+  const set = (key, value) => setForm((current) => ({ ...current, [key]: value }));
+
+  const handleSave = (event) => {
+    event.preventDefault();
+    if (!form.name.trim()) return showToast("Full name is required");
+    if (!/^[6-9]\d{9}$/.test(form.phone.trim())) return showToast("Enter a valid 10-digit mobile number");
+    if (!form.city.trim()) return showToast("City is required");
+    if (!form.interest) return showToast("Interest is required");
+
+    setLeads((previous) => [{
+      id: genId("lead"), name: form.name.trim(), contact: form.phone.trim(), program: form.interest,
+      source: form.leadSource, stage: form.status === "Interested" ? "Qualified" : form.status === "Not Interested" ? "Lost" : "New",
+      value: Number(form.value || 0), assignedTo: form.assignedTo, enteredBy,
+      ...form, createdDate: todayISO(), lastActivity: todayISO(),
+    }, ...previous]);
+    setForm({ ...form, name: "", phone: "", email: "", alternatePhone: "", company: "", interest: TRAINING_CALL_LIST_PROGRAMS[0], value: "", notes: "" });
+    showToast("Lead added");
+  };
+
+  return (
+    <div className="panel add-lead-panel">
+      <form className="form-grid" onSubmit={handleSave}>
+        <p className="form-section-title">Contact Information</p>
+        <div className="field"><span>Full name *</span><input value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="Enter the lead's full name here" /></div>
+        <div className="field"><span>Phone *</span><input value={form.phone} onChange={(e) => set("phone", e.target.value.replace(/\D/g, "").slice(0, 10))} placeholder="Enter the lead's phone number here" maxLength={10} /></div>
+        <div className="field"><span>Email</span><input type="email" value={form.email} onChange={(e) => set("email", e.target.value)} placeholder="Enter the lead's email here" /></div>
+        <div className="field"><span>Alternate Phone</span><input value={form.alternatePhone} onChange={(e) => set("alternatePhone", e.target.value.replace(/\D/g, "").slice(0, 10))} placeholder="Enter an alternate phone number here" /></div>
+        <div className="field"><span>City *</span><input value={form.city} onChange={(e) => set("city", e.target.value)} placeholder="Enter the city here" /></div>
+        <div className="field"><span>Company / Organization</span><input value={form.company} onChange={(e) => set("company", e.target.value)} placeholder="Enter the company or organization here" /></div>
+
+        <p className="form-section-title">Lead Information</p>
+        <div className="field"><span>Lead Type *</span><select value={form.type} onChange={(e) => { const type = e.target.value; setForm((current) => ({ ...current, type, interest: interestOptions(type)[0] })); }}><option>Training</option><option>Service</option><option>Internship</option></select></div>
+        <div className="field"><span>Interest *</span><select value={form.interest} onChange={(e) => set("interest", e.target.value)}>{interestOptions(form.type).map((program) => <option key={program}>{program}</option>)}</select></div>
+        <div className="field"><span>Value</span><input type="number" min="0" value={form.value} onChange={(e) => set("value", e.target.value)} placeholder="Enter the estimated value here" /></div>
+        <div className="field"><span>Lead Source *</span><select value={form.leadSource} onChange={(e) => set("leadSource", e.target.value)}>{["Website", "Referral", "Facebook", "Instagram", "Google", "Walk-in", "Phone Call", "Other"].map((source) => <option key={source}>{source}</option>)}</select></div>
+        <div className="field"><span>Status *</span><select value={form.status} onChange={(e) => set("status", e.target.value)}><option>Pending</option><option>Interested</option><option>Not Interested</option></select></div>
+
+        <p className="form-section-title">Assignment</p>
+        <div className="field"><span>Entered By *</span><input value={enteredBy} readOnly /></div>
+        <div className="field"><span>Assigned To *</span><select value={form.assignedTo} onChange={(e) => set("assignedTo", e.target.value)}>{TEAM_MEMBERS.map((member) => <option key={member}>{member}</option>)}</select></div>
+        <div className="field"><span>Assigned Date</span><input type="date" value={form.assignedDate} onChange={(e) => set("assignedDate", e.target.value)} /></div>
+
+        <p className="form-section-title">Additional Information</p>
+        <div className="field span-full"><span>Lead Notes / Remarks</span><textarea value={form.notes} onChange={(e) => set("notes", e.target.value)} placeholder="Enter lead notes or requirements here" rows={4} /></div>
+        <div className="form-actions span-full"><button className="primary-button" type="submit"><IconCheck size={16} /> Save lead</button></div>
+      </form>
+    </div>
+  );
+}
+
+function AssignedLeadsTab({ leads, currentUser }) {
+  const currentUserId = String(currentUser?.id || currentUser?._id || "").trim();
+  const assignedLeads = leads.filter((lead) => String(lead.assignedTo || "").trim() === currentUserId);
+
+  return (
+    <div className="panel">
+      <div className="panel-head">
+        <div>
+          <h3>Assigned Leads</h3>
+          <p className="panel-subtitle">Leads assigned to {currentUser?.name || currentUser?.username || "you"}</p>
+        </div>
+        <span className="badge info">{assignedLeads.length}</span>
+      </div>
+      <div className="table-wrap">
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Sr No</th>
+              <th>Name</th>
+              <th>Contact</th>
+              <th>Interest</th>
+              <th>Status</th>
+              <th>Value (₹)</th>
+              <th>Entered By</th>
+              <th>Assigned Date</th>
+            </tr>
+          </thead>
+          <tbody>
+            {!assignedLeads.length && <EmptyRow colSpan={8} text="No leads have been assigned to you yet." />}
+            {assignedLeads.map((lead, index) => (
+              <tr key={lead.id || lead._id || `${lead.name}-${index}`}>
+                <td>{index + 1}</td>
+                <td><strong>{lead.name || "-"}</strong></td>
+                <td>{lead.phone || lead.contact || "-"}</td>
+                <td>{lead.interest || lead.program || "-"}</td>
+                <td><span className="badge info">{lead.status || lead.stage || "Pending"}</span></td>
+                <td>₹{Number(lead.value || 0).toLocaleString("en-IN")}</td>
+                <td>{lead.enteredBy || lead.crmExecutive || "-"}</td>
+                <td>{formatDisplayDate(lead.assignedDate)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function LeadFormModal({ initial, onClose, onSave }) {
   const [form, setForm] = useState(initial);
-  const [errors, setErrors] = useState({});
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
-
-  const handleSave = () => {
-    const nextErrors = {};
-    if (!form.name.trim()) nextErrors.name = "Name is required";
-    if (!form.contact.trim()) nextErrors.contact = "Contact is required";
-    if (!form.value || Number(form.value) <= 0) nextErrors.value = "Enter a valid deal value";
-    if (Object.keys(nextErrors).length) {
-      setErrors(nextErrors);
-      return;
-    }
-    onSave({ ...form, value: Number(form.value) });
-  };
 
   return (
     <Modal title={initial.id ? "Edit Lead" : "Add Lead"} onClose={onClose}>
@@ -1157,56 +1295,44 @@ function LeadFormModal({ initial, onClose, onSave }) {
         <div className="field">
           <span>Full Name</span>
           <input value={form.name} onChange={(e) => set("name", e.target.value)} />
-          {errors.name && <span className="field-error">{errors.name}</span>}
         </div>
         <div className="field">
           <span>Contact Number</span>
-          <input value={form.contact} onChange={(e) => set("contact", e.target.value)} />
-          {errors.contact && <span className="field-error">{errors.contact}</span>}
+          <input value={form.contact || ""} onChange={(e) => set("contact", e.target.value)} />
         </div>
         <div className="field">
           <span>Program / Service</span>
-          <select value={form.program} onChange={(e) => set("program", e.target.value)}>
-            {PROGRAMS.map((p) => (
+          <select value={form.program || ""} onChange={(e) => set("program", e.target.value)}>
+            {[...new Set([...PROGRAMS, ...SERVICE_CALL_LIST_SERVICES, ...TRAINING_CALL_LIST_PROGRAMS])].map((p) => (
               <option key={p}>{p}</option>
             ))}
           </select>
         </div>
         <div className="field">
-          <span>Lead Source</span>
-          <select value={form.source} onChange={(e) => set("source", e.target.value)}>
-            {LEAD_SOURCES.map((p) => (
-              <option key={p}>{p}</option>
-            ))}
+          <span>Interest Type</span>
+          <select value={form.interestType || "Interested"} onChange={(e) => set("interestType", e.target.value)}>
+            <option>Interested</option>
+            <option>Not Interested</option>
           </select>
         </div>
         <div className="field">
-          <span>Stage</span>
-          <select value={form.stage} onChange={(e) => set("stage", e.target.value)}>
-            {LEAD_STAGES.map((p) => (
-              <option key={p}>{p}</option>
-            ))}
+          <span>Status</span>
+          <select value={form.status || "Pending"} onChange={(e) => set("status", e.target.value)}>
+            <option>Pending</option>
+            <option>Approved</option>
+            <option>Rejected</option>
           </select>
-        </div>
-        <div className="field">
-          <span>Deal Value (₹)</span>
-          <input type="number" min="0" value={form.value} onChange={(e) => set("value", e.target.value)} />
-          {errors.value && <span className="field-error">{errors.value}</span>}
         </div>
         <div className="field span-full">
-          <span>Assigned To</span>
-          <select value={form.assignedTo} onChange={(e) => set("assignedTo", e.target.value)}>
-            {TEAM_MEMBERS.map((p) => (
-              <option key={p}>{p}</option>
-            ))}
-          </select>
+          <span>Remark</span>
+          <textarea value={form.remark || ""} onChange={(e) => set("remark", e.target.value)} />
         </div>
       </div>
       <div className="form-actions">
         <button className="ghost-button" onClick={onClose}>
           Cancel
         </button>
-        <button className="primary-button" onClick={handleSave}>
+        <button className="primary-button" onClick={() => onSave(form)}>
           <IconCheck size={16} /> Save Lead
         </button>
       </div>
@@ -1216,31 +1342,30 @@ function LeadFormModal({ initial, onClose, onSave }) {
 
 function LeadsTab({ leads, setLeads, showToast }) {
   const [search, setSearch] = useState("");
-  const [stageFilter, setStageFilter] = useState("All");
+  const [statusFilter, setStatusFilter] = useState("All");
   const [programFilter, setProgramFilter] = useState("All");
   const [modalState, setModalState] = useState(null);
 
-  const stageCounts = LEAD_STAGES.reduce((acc, s) => {
-    acc[s] = leads.filter((l) => l.stage === s).length;
-    return acc;
-  }, {});
-  const stageColors = {
-    New: "color-5",
-    Contacted: "color-3",
-    Qualified: "color-4",
-    Proposal: "color-3",
-    Won: "color-2",
-    Lost: "color-1",
+  const emptyLead = {
+    id: null,
+    createdDate: todayISO(),
+    program: PROGRAMS[0],
+    name: "",
+    contact: "",
+    interestType: "Interested",
+    remark: "",
+    status: "Pending",
   };
 
   const filtered = leads.filter((l) => {
-    const matchesSearch = !search.trim() || l.name.toLowerCase().includes(search.trim().toLowerCase()) || l.contact.includes(search.trim());
-    const matchesStage = stageFilter === "All" || l.stage === stageFilter;
+    const query = search.trim().toLowerCase();
+    const matchesSearch = !query || (l.name || "").toLowerCase().includes(query) || (l.contact || "").includes(query);
+    const matchesStatus = statusFilter === "All" || (l.status || "Pending") === statusFilter;
     const matchesProgram = programFilter === "All" || l.program === programFilter;
-    return matchesSearch && matchesStage && matchesProgram;
+    return matchesSearch && matchesStatus && matchesProgram;
   });
 
-  const updateLead = (id, patch) => setLeads((prev) => prev.map((l) => (l.id === id ? { ...l, ...patch, lastActivity: todayISO() } : l)));
+  const updateLead = (id, patch) => setLeads((prev) => prev.map((l) => (l.id === id ? { ...l, ...patch } : l)));
   const handleDelete = (l) => {
     if (window.confirm(`Delete lead "${l.name}"?`)) {
       setLeads((prev) => prev.filter((x) => x.id !== l.id));
@@ -1252,10 +1377,7 @@ function LeadsTab({ leads, setLeads, showToast }) {
       updateLead(form.id, form);
       showToast("Lead updated");
     } else {
-      setLeads((prev) => [
-        { ...form, id: genId("lead"), createdDate: todayISO(), lastActivity: todayISO() },
-        ...prev,
-      ]);
+      setLeads((prev) => [{ ...form, id: genId("lead") }, ...prev]);
       showToast("Lead added");
     }
     setModalState(null);
@@ -1264,22 +1386,10 @@ function LeadsTab({ leads, setLeads, showToast }) {
   return (
     <div className="panel">
       <div className="panel-head">
-        <h3>Lead Management</h3>
-        <button className="primary-button" onClick={() => setModalState(emptyLeadForm())}>
+        <h3>Leads</h3>
+        <button className="primary-button" onClick={() => setModalState(emptyLead)}>
           <IconPlus size={16} /> Add Lead
         </button>
-      </div>
-
-      <div className="pipeline-stages">
-        {LEAD_STAGES.map((s) => (
-          <div className="pipeline-stage" key={s}>
-            <div className="pipeline-stage-header">
-              <span className={clsx("pipeline-dot", stageColors[s])} />
-              <span>{s}</span>
-            </div>
-            <span className="pipeline-count">{stageCounts[s] || 0}</span>
-          </div>
-        ))}
       </div>
 
       <div className="module-toolbar">
@@ -1288,15 +1398,15 @@ function LeadsTab({ leads, setLeads, showToast }) {
           <input placeholder="Search leads by name or contact" value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
         <div className="toolbar-filters">
-          <select value={stageFilter} onChange={(e) => setStageFilter(e.target.value)}>
-            <option value="All">All Stages</option>
-            {LEAD_STAGES.map((s) => (
-              <option key={s}>{s}</option>
-            ))}
+          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+            <option value="All">All Statuses</option>
+            <option>Pending</option>
+            <option>Approved</option>
+            <option>Rejected</option>
           </select>
           <select value={programFilter} onChange={(e) => setProgramFilter(e.target.value)}>
-            <option value="All">All Programs</option>
-            {PROGRAMS.map((p) => (
+            <option value="All">All Services / Programs</option>
+            {[...new Set([...PROGRAMS, ...SERVICE_CALL_LIST_SERVICES, ...TRAINING_CALL_LIST_PROGRAMS])].map((p) => (
               <option key={p}>{p}</option>
             ))}
           </select>
@@ -1307,52 +1417,46 @@ function LeadsTab({ leads, setLeads, showToast }) {
         <table className="table">
           <thead>
             <tr>
-              <th>Sr No</th>
+              <th>S. No.</th>
+              <th>Lead Create Date</th>
+              <th>Service / Program</th>
               <th>Name</th>
-              <th>Contact</th>
-              <th>Program</th>
-              <th>Source</th>
-              <th>Stage</th>
-              <th>Value (₹)</th>
-              <th>Assigned To</th>
-              <th>Last Activity</th>
-              <th>Action</th>
+              <th>Interest Type</th>
+              <th>Remark</th>
+              <th>Status</th>
+              <th>Edit</th>
+              <th>Call Now</th>
             </tr>
           </thead>
           <tbody>
-            {filtered.length === 0 && <EmptyRow colSpan={10} text="No leads match the selected filters." />}
+            {filtered.length === 0 && <EmptyRow colSpan={9} text="No leads match the selected filters." />}
             {filtered.map((l, idx) => (
               <tr key={l.id}>
                 <td>{idx + 1}</td>
+                <td>{formatDisplayDate(l.createdDate)}</td>
+                <td>{l.program || "-"}</td>
+                <td><strong>{l.name || "-"}</strong></td>
+                <td>{l.interestType || l.interest || "Interested"}</td>
                 <td>
-                  <div className="person-cell">
-                    <span className="avatar soft">{l.name.charAt(0)}</span>
-                    <strong>{l.name}</strong>
+                  <div className="remark-cell">
+                    <input
+                      value={l.remark || l.notes || ""}
+                      placeholder="Add remark"
+                      onChange={(e) => updateLead(l.id, { remark: e.target.value })}
+                    />
                   </div>
                 </td>
-                <td>{l.contact}</td>
-                <td>{l.program}</td>
-                <td>{l.source}</td>
                 <td>
-                  <select className="inline-select" value={l.stage} onChange={(e) => updateLead(l.id, { stage: e.target.value })}>
-                    {LEAD_STAGES.map((s) => (
-                      <option key={s}>{s}</option>
-                    ))}
+                  <select className="inline-select" value={l.status || "Pending"} onChange={(e) => updateLead(l.id, { status: e.target.value })}>
+                    <option>Pending</option>
+                    <option>Approved</option>
+                    <option>Rejected</option>
                   </select>
                 </td>
-                <td>₹{Number(l.value).toLocaleString("en-IN")}</td>
-                <td>{l.assignedTo}</td>
-                <td>{formatDisplayDate(l.lastActivity)}</td>
                 <td>
-                  <div className="row-actions">
-                    <button className="row-icon-btn edit" title="Edit" onClick={() => setModalState(l)}>
-                      <IconEdit size={16} />
-                    </button>
-                    <button className="row-icon-btn delete" title="Delete" onClick={() => handleDelete(l)}>
-                      <IconTrash size={16} />
-                    </button>
-                  </div>
+                  <button className="row-icon-btn edit" title="Edit" onClick={() => setModalState(l)}><IconEdit size={16} /></button>
                 </td>
+                <td><button className="row-icon-btn call" title="Call now" onClick={() => { window.location.href = `tel:${l.contact || ""}`; }}><IconPhone size={16} /></button></td>
               </tr>
             ))}
           </tbody>
@@ -1366,7 +1470,7 @@ function LeadsTab({ leads, setLeads, showToast }) {
 
 /* ============================ SALES REPORTS TAB ============================ */
 
-function SalesReportsTab({ contacts, leads, showToast }) {
+function SalesReportsTab({ contacts, showToast }) {
   const [program, setProgram] = useState("All");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
@@ -1378,25 +1482,12 @@ function SalesReportsTab({ contacts, leads, showToast }) {
     return matchesProgram && matchesFrom && matchesTo;
   });
 
-  // last 6 months bar chart of contacts logged
-  const months = [];
-  const now = new Date();
-  for (let i = 5; i >= 0; i--) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    months.push({ key: `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`, label: d.toLocaleDateString("en-US", { month: "short" }) });
-  }
-  const monthCounts = months.map((m) => ({
-    ...m,
-    count: contacts.filter((c) => monthKeyOf(c.date) === m.key).length,
-  }));
-  const maxMonthCount = Math.max(1, ...monthCounts.map((m) => m.count));
-
-  const programBreakdown = PROGRAMS.map((p) => ({
-    program: p,
-    count: contacts.filter((c) => c.program === p).length,
-  })).filter((r) => r.count > 0);
-  const totalForBreakdown = Math.max(1, programBreakdown.reduce((a, b) => a + b.count, 0));
-  const barColors = ["color-1", "color-2", "color-3", "color-4", "color-5"];
+  const categories = ["Services", "Training", "Internship", "STIP"];
+  const categorySummary = categories.map((category) => {
+    const rows = filteredContacts.filter((contact) => getCallListCategory(contact.program) === category);
+    const converted = rows.filter((contact) => ["Converted", "Approved"].includes(contact.interestStatus)).length;
+    return { category, total: rows.length, converted, rate: rows.length ? Math.round((converted / rows.length) * 100) : 0 };
+  });
 
   const reportRows = PROGRAMS.map((p) => {
     const total = filteredContacts.filter((c) => c.program === p).length;
@@ -1443,35 +1534,17 @@ function SalesReportsTab({ contacts, leads, showToast }) {
         </div>
       </div>
 
-      <div className="dashboard-grid two-up">
-        <div className="sales-chart">
-          <div className="sales-chart-header">
-            <strong>Contacts logged — last 6 months</strong>
-          </div>
-          <div className="sales-bars">
-            {monthCounts.map((m) => (
-              <div className="sales-bar-wrap" key={m.key}>
-                <div className="sales-bar" style={{ height: `${(m.count / maxMonthCount) * 100}%` }} title={`${m.count}`} />
-                <span className="sales-bar-label">{m.label}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-        <div className="source-list">
-          <strong style={{ display: "block", marginBottom: 6 }}>Program Breakdown</strong>
-          {programBreakdown.map((r, idx) => (
-            <div className="source-row" key={r.program}>
-              <span>{r.program}</span>
-              <div className="source-bar">
-                <div
-                  className={clsx("source-fill", barColors[idx % barColors.length])}
-                  style={{ width: `${(r.count / totalForBreakdown) * 100}%` }}
-                />
-              </div>
-              <strong>{r.count}</strong>
-            </div>
-          ))}
-        </div>
+      <div className="stats-grid compact four-up">
+        {categorySummary.map((summary) => (
+          <StatCard
+            key={summary.category}
+            icon={<IconSummary size={18} />}
+            tone="blue"
+            value={summary.total}
+            label={`${summary.category} Contacts`}
+            hint={`${summary.converted} converted · ${summary.rate}% rate`}
+          />
+        ))}
       </div>
 
       <div className="table-wrap" style={{ padding: "0 20px 20px" }}>
@@ -1496,90 +1569,6 @@ function SalesReportsTab({ contacts, leads, showToast }) {
             ))}
           </tbody>
         </table>
-      </div>
-    </div>
-  );
-}
-
-/* ============================= SALES SUMMARY TAB =========================== */
-
-function SalesSummaryTab({ contacts }) {
-  const categories = ["Services", "Training", "Internship", "STIP"];
-  const categoryTone = { Services: "rose", Training: "blue", Internship: "green", STIP: "violet" };
-
-  const summary = categories.map((cat) => {
-    const rows = contacts.filter((c) => PROGRAM_CATEGORY[c.program] === cat);
-    const converted = rows.filter((c) => c.interestStatus === "Converted").length;
-    const hot = rows.filter((c) => c.interestStatus === "Hot").length;
-    return {
-      category: cat,
-      total: rows.length,
-      converted,
-      hot,
-      rate: rows.length ? Math.round((converted / rows.length) * 100) : 0,
-    };
-  });
-
-  const programRows = PROGRAMS.map((p) => {
-    const rows = contacts.filter((c) => c.program === p);
-    const converted = rows.filter((c) => c.interestStatus === "Converted").length;
-    const hot = rows.filter((c) => c.interestStatus === "Hot").length;
-    return { program: p, total: rows.length, converted, hot, rate: rows.length ? Math.round((converted / rows.length) * 100) : 0 };
-  }).filter((r) => r.total > 0);
-
-  return (
-    <div>
-      <div className="stats-grid">
-        {summary.map((s) => (
-          <StatCard
-            key={s.category}
-            icon={<IconSummary size={20} />}
-            tone={categoryTone[s.category]}
-            value={s.total}
-            label={`${s.category} Contacts`}
-            hint={`${s.converted} converted · ${s.rate}% rate`}
-          />
-        ))}
-      </div>
-
-      <div className="panel">
-        <div className="panel-head">
-          <h3>Program-wise Conversion Summary</h3>
-        </div>
-        <div className="table-wrap">
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Program / Service</th>
-                <th>Category</th>
-                <th>Total Contacts</th>
-                <th>Hot Leads</th>
-                <th>Converted</th>
-                <th>Conversion Rate</th>
-              </tr>
-            </thead>
-            <tbody>
-              {programRows.length === 0 && <EmptyRow colSpan={6} text="No contacts logged yet." />}
-              {programRows.map((r) => (
-                <tr key={r.program}>
-                  <td>{r.program}</td>
-                  <td>
-                    <span className="badge info">{PROGRAM_CATEGORY[r.program]}</span>
-                  </td>
-                  <td>{r.total}</td>
-                  <td>{r.hot}</td>
-                  <td>{r.converted}</td>
-                  <td>
-                    <div className="mini-bar" style={{ margin: "0 0 4px" }}>
-                      <i style={{ width: `${r.rate}%` }} />
-                    </div>
-                    {r.rate}%
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
       </div>
     </div>
   );
@@ -1800,9 +1789,10 @@ function TasksTab({ tasks, setTasks, showToast }) {
 function MarkAttendanceTab({ attendance, setAttendance, showToast }) {
   const today = todayISO();
   const todaysRecord = attendance.find((a) => a.date === today);
-  const [status, setStatus] = useState(todaysRecord?.status || "Present");
-  const [checkIn, setCheckIn] = useState(todaysRecord?.checkIn || "09:30 AM");
-  const [checkOut, setCheckOut] = useState(todaysRecord?.checkOut || "");
+  const [currentTime, setCurrentTime] = useState(() => new Date());
+  const checkIn = todaysRecord?.checkIn && todaysRecord.checkIn !== "-" ? todaysRecord.checkIn : "";
+  const checkOut = todaysRecord?.checkOut && todaysRecord.checkOut !== "-" ? todaysRecord.checkOut : "";
+  const formatTime = (date) => date.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
 
   const monthRows = attendance.filter((a) => monthKeyOf(a.date) === currentMonthKey());
   const counts = ATTENDANCE_STATUSES.reduce((acc, s) => {
@@ -1810,15 +1800,28 @@ function MarkAttendanceTab({ attendance, setAttendance, showToast }) {
     return acc;
   }, {});
 
-  const handleSave = () => {
+  useEffect(() => {
+    const timer = window.setInterval(() => setCurrentTime(new Date()), 30000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const handleCheckIn = () => {
+    if (checkIn) return;
+    const time = formatTime(new Date());
     setAttendance((prev) => {
-      const exists = prev.some((a) => a.date === today);
-      if (exists) {
-        return prev.map((a) => (a.date === today ? { ...a, status, checkIn, checkOut } : a));
-      }
-      return [{ id: genId("att"), date: today, status, checkIn, checkOut }, ...prev];
+      const exists = prev.some((record) => record.date === today);
+      if (exists) return prev.map((record) => (record.date === today ? { ...record, status: "Present", checkIn: time, checkOut: "" } : record));
+      return [{ id: genId("att"), date: today, status: "Present", checkIn: time, checkOut: "" }, ...prev];
     });
-    showToast("Attendance saved for today");
+    showToast("Checked in successfully");
+  };
+
+  const handleCheckOut = () => {
+    if (!checkIn || checkOut) return;
+    setAttendance((prev) => {
+      return prev.map((a) => (a.date === today ? { ...a, checkOut: formatTime(new Date()) } : a));
+    });
+    showToast("Checked out successfully");
   };
 
   return (
@@ -1831,31 +1834,33 @@ function MarkAttendanceTab({ attendance, setAttendance, showToast }) {
 
       <div className="panel">
         <div className="panel-head">
-          <h3>Mark Today's Attendance — {formatDisplayDate(today)}</h3>
+          <h3>Today's Check In / Check Out — {formatDisplayDate(today)}</h3>
         </div>
         <div style={{ padding: 20 }}>
-          <div className="form-grid">
-            <div className="field">
-              <span>Attendance Status</span>
-              <select value={status} onChange={(e) => setStatus(e.target.value)}>
-                {ATTENDANCE_STATUSES.map((s) => (
-                  <option key={s}>{s}</option>
-                ))}
-              </select>
+          <div className="check-clock-panel">
+            <div>
+              <span className="check-clock-label">Current time</span>
+              <strong className="check-clock-time">{formatTime(currentTime)}</strong>
             </div>
-            <div className="field">
-              <span>Check-in Time</span>
-              <input value={checkIn} onChange={(e) => setCheckIn(e.target.value)} placeholder="09:30 AM" />
-            </div>
-            <div className="field">
-              <span>Check-out Time</span>
-              <input value={checkOut} onChange={(e) => setCheckOut(e.target.value)} placeholder="06:30 PM" />
+            <div className="check-clock-status">
+              <span className={clsx("attendance-state-dot", checkIn && !checkOut && "active")} />
+              <span>{checkOut ? "Day completed" : checkIn ? "Currently checked in" : "Not checked in"}</span>
             </div>
           </div>
           <div className="form-actions">
-            <button className="primary-button" onClick={handleSave}>
-              <IconCheck size={16} /> Save Attendance
+            <button
+              className={clsx("attendance-action-button", checkIn && !checkOut && "checkout", checkOut && "completed")}
+              onClick={checkOut ? undefined : checkIn ? handleCheckOut : handleCheckIn}
+              disabled={Boolean(checkOut)}
+              title={checkOut ? "Attendance completed" : checkIn ? "Check out" : "Check in"}
+            >
+              {checkOut ? <IconCheck size={24} /> : checkIn ? <IconLogout size={24} /> : <IconCheck size={24} />}
+              <span>{checkOut ? "Completed" : checkIn ? "Check Out" : "Check In"}</span>
             </button>
+          </div>
+          <div className="check-times">
+            <span>Check in: <strong>{checkIn || "Not recorded"}</strong></span>
+            <span>Check out: <strong>{checkOut || "Not recorded"}</strong></span>
           </div>
         </div>
       </div>
@@ -2234,10 +2239,11 @@ const NAV_GROUPS = [
   {
     label: "Sales Ops",
     items: [
-      { key: "calllist", label: "Call List", icon: IconPhone },
+      { key: "servicecalllist", label: "Service Call List", icon: IconPhone },
+      { key: "trainingcalllist", label: "Training Call List", icon: IconPhone },
       { key: "leads", label: "Leads", icon: IconUsers },
-      { key: "salesreports", label: "Sales Reports", icon: IconChart },
-      { key: "salessummary", label: "Sales Summary", icon: IconSummary },
+      { key: "assignedleads", label: "Assigned Leads", icon: IconUsers },
+      { key: "salesreports", label: "Sales Report", icon: IconChart },
     ],
   },
   {
@@ -2260,9 +2266,11 @@ const NAV_GROUPS = [
 
 const TAB_TITLES = {
   dashboard: ["Dashboard", "Overview of your CRM performance"],
-  calllist: ["Call List", "Daily contacts for IT Services, Training, Internship & STIP"],
-  leads: ["Leads", "Manage your sales pipeline"],
-  salesreports: ["Sales Reports", "Program-wise performance and trends"],
+  servicecalllist: ["Service Call List", "Daily contacts for IT services"],
+  trainingcalllist: ["Training Call List", "Daily contacts for training programs"],
+  leads: ["Leads", "Follow-up contacts converted to leads"],
+  assignedleads: ["Assigned Leads", "Leads assigned to you"],
+  salesreports: ["Sales Report", "Simple sales performance overview"],
   tasks: ["Tasks", "Create, assign and track work"],
   salessummary: ["Sales Summary", "Services, Training, Internship & STIP performance"],
   settings: ["Settings", "Profile, preferences and security"],
@@ -2354,7 +2362,7 @@ function Sidebar({ activeTab, onNavigate, collapsed, onToggleCollapse, mobileOpe
 
 /* ================================ MAIN EXPORT ================================ */
 
-export default function CrmExecutiveDashboard({ initialTab = "dashboard", onLogout, currentUser }) {
+export default function CrmExecutiveDashboard({ initialTab = "dashboard", onLogout, currentUser, leads: externalLeads = [] }) {
   const [activeTab, setActiveTab] = useState(initialTab);
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -2386,7 +2394,11 @@ export default function CrmExecutiveDashboard({ initialTab = "dashboard", onLogo
   };
 
   const badges = {
-    calllist: contacts.filter((c) => c.active && (c.snoozeUntil ? c.snoozeUntil <= todayISO() : c.callStatus === "Not Called")).length || null,
+    servicecalllist:
+      contacts.filter((c) => getCallListCategory(c.program) === "Services" && c.active && (c.snoozeUntil ? c.snoozeUntil <= todayISO() : c.callStatus === "Not Called")).length || null,
+    trainingcalllist:
+      contacts.filter((c) => getCallListCategory(c.program) === "Training" && c.active && (c.snoozeUntil ? c.snoozeUntil <= todayISO() : c.callStatus === "Not Called")).length || null,
+    leads: leads.length || null,
     tasks: tasks.filter((t) => t.status !== "Done").length || null,
     leaverequest: leaveRequests.filter((l) => l.status === "Pending").length || null,
   };
@@ -2454,15 +2466,32 @@ export default function CrmExecutiveDashboard({ initialTab = "dashboard", onLogo
                 onNavigate={handleNavigate}
               />
             )}
-            {activeTab === "calllist" && (
-              <CallListTab contacts={contacts} setContacts={setContacts} showToast={showToast} />
+            {activeTab === "servicecalllist" && (
+              <CallListTab
+                contacts={contacts}
+                setContacts={setContacts}
+                showToast={showToast}
+                category="Services"
+                title="Daily Service Contacts / Call List"
+                addLabel="Add Service Contact"
+                currentUser={currentUser}
+              />
+            )}
+            {activeTab === "trainingcalllist" && (
+              <CallListTab
+                contacts={contacts}
+                setContacts={setContacts}
+                showToast={showToast}
+                category="Training"
+                title="Daily Training Contacts / Call List"
+                addLabel="Add Training Contact"
+                currentUser={currentUser}
+              />
             )}
             {activeTab === "leads" && <LeadsTab leads={leads} setLeads={setLeads} showToast={showToast} />}
-            {activeTab === "salesreports" && (
-              <SalesReportsTab contacts={contacts} leads={leads} showToast={showToast} />
-            )}
+            {activeTab === "assignedleads" && <AssignedLeadsTab leads={externalLeads} currentUser={currentUser} />}
+            {activeTab === "salesreports" && <SalesReportsTab contacts={contacts} showToast={showToast} />}
             {activeTab === "tasks" && <TasksTab tasks={tasks} setTasks={setTasks} showToast={showToast} />}
-            {activeTab === "salessummary" && <SalesSummaryTab contacts={contacts} />}
             {activeTab === "settings" && (
               <SettingsTab
                 profile={profile}

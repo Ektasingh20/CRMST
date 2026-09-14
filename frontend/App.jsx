@@ -1,4 +1,5 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import * as XLSX from "xlsx";
 import {
   Activity,
   ArrowRight,
@@ -34,6 +35,7 @@ import {
   ListTodo,
   LockKeyhole,
   Menu,
+  MessageCircle,
   Megaphone,
   MonitorSmartphone,
   Palette,
@@ -46,6 +48,7 @@ import {
   Sparkles,
   Target,
   TrendingUp,
+  Trash2,
   Upload,
   User,
   UserPlus,
@@ -55,7 +58,6 @@ import {
   X,
   Eye,
   EyeOff,
-  Trash2,
   FileText,
   Plus,
   FolderUp,
@@ -316,6 +318,7 @@ const sidebarSections = [
       { id: "crm", label: "All Leads", icon: PhoneCall },
       { id: "co-approved", label: "Assigned Leads", icon: CheckCheck },
       { id: "sales-report", label: "CRM Reports", icon: Activity },
+      { id: "crm-upload", label: "Upload CRM Data", icon: Upload },
     ],
   },
   {
@@ -1197,6 +1200,14 @@ function App() {
   const [folderUploadState, setFolderUploadState] = useState(null);
   const [openSectionIds, setOpenSectionIds] = useState([]);
   const [focusedLessonId, setFocusedLessonId] = useState("");
+  const [crmUploadRows, setCrmUploadRows] = useState(() => {
+    try {
+      const saved = window.localStorage.getItem("admin-crm-upload-rows");
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
 
   const [settingsForm, setSettingsForm] = useState({ name: "", email: "", phone: "", emergencyContact: "", maritalStatus: "", education: "", dept: "", position: "", role: "", joined: "", state: "", branch: "", branchCode: "", address: "", username: "", imageUrl: "", imagePublicId: "" });
   const [passwordForm, setPasswordForm] = useState({ current: "", new: "", confirm: "" });
@@ -1289,12 +1300,21 @@ function App() {
     status: "Pending",
     source: "Website",
     leadSource: "Website",
+    enteredBy: "",
     assignedTo: "1",
     assignedDate: new Date().toISOString().slice(0, 10),
     notes: "",
   });
   const [editingLeadId, setEditingLeadId] = useState(null);
   const [editingLeadReturnPage, setEditingLeadReturnPage] = useState("sales-approved");
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("admin-crm-upload-rows", JSON.stringify(crmUploadRows));
+    } catch {
+      /* Ignore unavailable browser storage. */
+    }
+  }, [crmUploadRows]);
 
   useEffect(() => {
     // load local fallback immediately
@@ -1645,6 +1665,9 @@ function App() {
   }, [users]);
 
   const activeUsers = users.filter((user) => user.status === "Active");
+  const enteredBy = currentUser
+    ? `${currentUser.name || currentUser.username || "User"} (${currentUser.position || currentUser.role || "User"})`
+    : "";
   const studentUsers = useMemo(() => users.filter((user) => {
     const role = String(user?.role || "").trim().toLowerCase();
     const department = String(user?.dept || user?.department || "").trim().toLowerCase();
@@ -3137,6 +3160,10 @@ function App() {
       notify("Lead source is required.");
       return;
     }
+    if (!enteredBy) {
+      notify("Unable to identify the logged-in user.");
+      return;
+    }
     if (!assignedTo) {
       notify("Please assign the lead to a user.");
       return;
@@ -3180,6 +3207,7 @@ function App() {
       status: "Pending",
       source: "Website",
       leadSource: "Website",
+      enteredBy,
       assignedTo: String(activeUsers[0]?.id ?? 1),
       assignedDate: new Date().toISOString().slice(0, 10),
       notes: "",
@@ -3202,6 +3230,7 @@ function App() {
       status: lead.status || "Pending",
       source: lead.source || lead.leadSource || "Website",
       leadSource: lead.leadSource || lead.source || "Website",
+      enteredBy: lead.enteredBy || lead.crmExecutive || "",
       assignedTo: String(lead.assignedTo || activeUsers[0]?.id || 1),
       assignedDate: lead.assignedDate || new Date().toISOString().slice(0, 10),
       notes: lead.notes || "",
@@ -3549,10 +3578,11 @@ function App() {
       <ErrorBoundary>
         <CrmExecutiveDashboard
           user={currentUser}
-          leads={leads.filter((lead) => lead?._id)}
+          leads={leads}
           onUpdateLead={updateCrmLead}
           onCreateLead={createCrmLead}
           onLogout={logout}
+          currentUser={currentUser}
         />
         {toast ? <div className="toast">{toast}</div> : null}
       </ErrorBoundary>
@@ -4141,6 +4171,10 @@ function App() {
             </Panel>
           )}
 
+          {activePage === "crm-upload" && (
+            <CrmUploadDataPage rows={crmUploadRows} setRows={setCrmUploadRows} users={users} />
+          )}
+
           {activePage === "user-create" && (
             <Panel title={editingUserId ? "Edit user" : "Create new user"}>
               <form className="form-grid" onSubmit={addMember} autoComplete="off">
@@ -4357,7 +4391,7 @@ function App() {
 
           {activePage === "sales-add" && (
             <Panel title={editingLeadId ? "Edit lead" : "Add new lead"}>
-              <form className="form-grid" onSubmit={addLead}>
+              <form className="form-grid add-lead-form" onSubmit={addLead}>
                 <div className="form-section">
                   <p className="form-section-title">Contact Information</p>
                   <Field label="Full name *">
@@ -4498,6 +4532,9 @@ function App() {
 
                 <div className="form-section">
                   <p className="form-section-title">Assignment</p>
+                  <Field label="Entered By *">
+                    <input value={enteredBy} readOnly />
+                  </Field>
                   <Field label="Assigned To *">
                     <select
                       value={createLead.assignedTo}
@@ -6135,7 +6172,239 @@ function Panel({ title, children }) {
   );
 }
 
-function CourseViewSurface({ course, onClose, onEdit, onEditLesson, onDeleteCourse, onDeleteLesson }) {
+function CrmUploadDataPage({ rows, setRows, users }) {
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [selectedEmployee, setSelectedEmployee] = useState("");
+  const [dateFilter, setDateFilter] = useState("");
+  const [employeeFilter, setEmployeeFilter] = useState("All");
+  const [uploadError, setUploadError] = useState("");
+  const [selectedIds, setSelectedIds] = useState([]);
+
+  const normalizeHeader = (value) => String(value || "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+
+  const handleFileChange = (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setSelectedFile(file);
+    setUploadError("");
+  };
+
+  const handleUpload = async () => {
+    if (!selectedEmployee) {
+      setUploadError("Please select an employee.");
+      return;
+    }
+    if (!selectedFile) {
+      setUploadError("Please choose an Excel or CSV file.");
+      return;
+    }
+    try {
+      const workbook = XLSX.read(await selectedFile.arrayBuffer(), { type: "array" });
+      const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+      const sourceRows = XLSX.utils.sheet_to_json(firstSheet, { defval: "" });
+      if (!sourceRows.length) throw new Error("The selected file does not contain any rows.");
+
+      const headers = Object.keys(sourceRows[0]);
+      const nameHeader = headers.find((header) => normalizeHeader(header) === "name");
+      const numberHeader = headers.find((header) => ["number", "contact", "phone", "mobile", "phonenumber"].includes(normalizeHeader(header)));
+      if (!nameHeader || !numberHeader) throw new Error("The Excel file must contain name and number fields.");
+
+      const importedRows = sourceRows
+        .map((row, index) => ({
+          id: `crm-upload-${Date.now()}-${index}`,
+          date: new Date().toISOString().slice(0, 10),
+          name: String(row[nameHeader] || "").trim(),
+          number: String(row[numberHeader] || "").trim(),
+          assignedTo: selectedEmployee,
+          callStatus: "Not Called",
+          interestStatus: "Cold",
+          program: "-",
+          remark: "",
+          snoozed: false,
+        }))
+        .filter((row) => row.name || row.number);
+
+      if (!importedRows.length) throw new Error("No usable name and number rows were found.");
+      setRows((currentRows) => [...currentRows, ...importedRows]);
+      setSelectedFile(null);
+      setSelectedEmployee("");
+      setUploadError("");
+    } catch (error) {
+      setUploadError(error.message || "Unable to read this Excel file.");
+    }
+  };
+
+  const visibleRows = rows.filter((row) => {
+    const matchesDate = !dateFilter || row.date === dateFilter;
+    const matchesEmployee = employeeFilter === "All" || row.assignedTo === employeeFilter;
+    return matchesDate && matchesEmployee;
+  });
+  const allVisibleSelected = visibleRows.length > 0 && visibleRows.every((row) => selectedIds.includes(row.id));
+
+  const updateRow = (id, patch) => {
+    setRows((currentRows) => currentRows.map((row) => (row.id === id ? { ...row, ...patch } : row)));
+  };
+
+  const editRow = (row) => {
+    const name = window.prompt("Name", row.name);
+    if (name === null) return;
+    const number = window.prompt("Contact number", row.number);
+    if (number === null) return;
+    updateRow(row.id, { name: name.trim(), number: number.trim() });
+  };
+
+  const deleteRow = (row) => {
+    if (!window.confirm(`Delete ${row.name || "this contact"}?`)) return;
+    setRows((currentRows) => currentRows.filter((item) => item.id !== row.id));
+    setSelectedIds((currentIds) => currentIds.filter((id) => id !== row.id));
+  };
+
+  const toggleSelected = (id) => {
+    setSelectedIds((currentIds) => currentIds.includes(id) ? currentIds.filter((item) => item !== id) : [...currentIds, id]);
+  };
+
+  const toggleSelectAll = () => {
+    setSelectedIds((currentIds) => {
+      if (allVisibleSelected) return currentIds.filter((id) => !visibleRows.some((row) => row.id === id));
+      return [...new Set([...currentIds, ...visibleRows.map((row) => row.id)])];
+    });
+  };
+
+  const deleteSelected = () => {
+    if (!selectedIds.length) return;
+    if (!window.confirm(`Delete ${selectedIds.length} selected record${selectedIds.length === 1 ? "" : "s"}?`)) return;
+    setRows((currentRows) => currentRows.filter((row) => !selectedIds.includes(row.id)));
+    setSelectedIds([]);
+  };
+
+  return (
+    <div className="crm-upload-page">
+      <section className="panel">
+        <div className="panel-head crm-upload-section-title">
+          <span className="crm-upload-section-icon"><Upload size={19} /></span>
+          <h3>Upload New Call List</h3>
+        </div>
+        <div className="crm-upload-form">
+          <label className="field">
+            <span>Assign to Employee:</span>
+            <select value={selectedEmployee} onChange={(event) => setSelectedEmployee(event.target.value)}>
+              <option value="">Select Employee</option>
+              {users.map((user) => <option key={user.id || user._id} value={user.id || user._id}>{user.name || user.username}</option>)}
+            </select>
+          </label>
+          <label className="field">
+            <span>Upload Call List (CSV/XLSX):</span>
+            <input type="file" accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv" onChange={handleFileChange} />
+          </label>
+          <button type="button" className="primary-button crm-upload-button" onClick={handleUpload}>
+            <Upload size={17} /> Upload
+          </button>
+          {uploadError && <p className="field-error crm-upload-error">{uploadError}</p>}
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="panel-head crm-upload-section-title">
+          <span className="crm-upload-section-icon"><ContactRound size={19} /></span>
+          <h3>Call List Records Directory</h3>
+          {selectedIds.length > 0 && (
+            <button type="button" className="crm-upload-delete-selected" onClick={deleteSelected}>
+              <Trash2 size={15} /> Delete Selected ({selectedIds.length})
+            </button>
+          )}
+        </div>
+        <div className="crm-directory-filters">
+          <label className="field">
+            <span>Filter by Date:</span>
+            <input type="date" value={dateFilter} onChange={(event) => setDateFilter(event.target.value)} />
+          </label>
+          <label className="field">
+            <span>Filter by CRM Employee:</span>
+            <select value={employeeFilter} onChange={(event) => setEmployeeFilter(event.target.value)}>
+              <option value="All">All CRM Employees</option>
+              {users.map((user) => <option key={user.id || user._id} value={user.id || user._id}>{user.name || user.username}</option>)}
+            </select>
+          </label>
+          <button type="button" className="primary-button crm-filter-button" onClick={() => { setDateFilter(dateFilter); setEmployeeFilter(employeeFilter); }}>
+            <Search size={16} /> Filter
+          </button>
+        </div>
+        <div className="table-wrap crm-call-list-table-wrap">
+          <table className="table crm-call-list-table">
+            <thead>
+              <tr>
+                <th className="crm-upload-selection-cell">
+                  <input type="checkbox" checked={allVisibleSelected} onChange={toggleSelectAll} aria-label="Select all records" />
+                </th>
+                <th>Sr No</th>
+                <th>Date</th>
+                <th>Name</th>
+                <th>Contact</th>
+                <th>Call</th>
+                <th>Call Status</th>
+                <th>Interest Status</th>
+                <th>Program</th>
+                <th>Remark</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {!visibleRows.length && (
+                <tr><td colSpan={11} className="panel-empty">No call list records found.</td></tr>
+              )}
+              {visibleRows.map((row, index) => (
+                <tr key={row.id}>
+                  <td className="crm-upload-selection-cell">
+                    <input type="checkbox" checked={selectedIds.includes(row.id)} onChange={() => toggleSelected(row.id)} aria-label={`Select ${row.name || "record"}`} />
+                  </td>
+                  <td>{index + 1}</td>
+                  <td>{formatAdminDate(row.date)}</td>
+                  <td><strong>{row.name || "-"}</strong></td>
+                  <td>{row.number || "-"}</td>
+                  <td>
+                    <button type="button" className="row-icon-btn call" title="Call" onClick={() => { window.location.href = `tel:${row.number}`; }}>
+                      <PhoneCall size={16} />
+                    </button>
+                  </td>
+                  <td>
+                    <select className="inline-select" value={row.callStatus || "Not Called"} onChange={(event) => updateRow(row.id, { callStatus: event.target.value })}>
+                      {[
+                        "Not Called", "Connected", "Not Connected", "Busy", "Switched Off", "Invalid Number",
+                      ].map((status) => <option key={status}>{status}</option>)}
+                    </select>
+                  </td>
+                  <td>
+                    <select className="inline-select" value={row.interestStatus || "Cold"} onChange={(event) => updateRow(row.id, { interestStatus: event.target.value })}>
+                      {["Hot", "Warm", "Cold", "Not Interested", "Converted"].map((status) => <option key={status}>{status}</option>)}
+                    </select>
+                  </td>
+                  <td>{row.program || "-"}</td>
+                  <td><input className="crm-remark-input" value={row.remark || ""} placeholder="Add remark" onChange={(event) => updateRow(row.id, { remark: event.target.value })} /></td>
+                  <td>
+                    <div className="row-actions">
+                      <button type="button" className="row-icon-btn edit" title="Edit" onClick={() => editRow(row)}><Edit3 size={16} /></button>
+                      <button type="button" className="row-icon-btn snooze" title={row.snoozed ? "Resume" : "Snooze"} onClick={() => updateRow(row.id, { snoozed: !row.snoozed })}><Clock3 size={16} /></button>
+                      <button type="button" className="row-icon-btn delete" title="Delete" onClick={() => deleteRow(row)}><Trash2 size={16} /></button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function formatAdminDate(value) {
+  if (!value) return "-";
+  const date = new Date(`${value}T00:00:00`);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+}
+
+function CourseViewSurface({ course, onClose, onEdit, onEditLesson, onNextLesson, onDeleteCourse, onDeleteLesson }) {
   const lessons = Array.isArray(course?.lessons) ? course.lessons : [];
   const backendSectionNames = Array.isArray(course?.sections)
     ? course.sections
@@ -6839,18 +7108,23 @@ function Field({ label, children }) {
 }
 
 function LeadsTable({ leads, users, onEdit }) {
+  const getAssignedName = (lead) => users.find((user) => String(user.id || user._id) === String(lead.assignedTo))?.name ?? lead.assignedTo ?? "-";
+  const getCrmExecutiveName = (lead) => lead.crmExecutiveName || lead.createdByName || lead.createdBy || lead.generatedBy || "-";
   return (
     <div className="table-wrap">
       <table className="table">
         <thead>
           <tr>
             <th>Name</th>
+            <th>Contact</th>
+            <th>Call / WhatsApp</th>
             <th>Type</th>
             <th>Interest</th>
             <th>Value</th>
             <th>Source</th>
             <th>Status</th>
             <th>Assigned to</th>
+            <th>CRM Executive Name</th>
             <th>Assigned Date</th>
             <th>Action</th>
           </tr>
@@ -6864,6 +7138,17 @@ function LeadsTable({ leads, users, onEdit }) {
                   <strong>{lead.name}</strong>
                 </div>
               </td>
+              <td>{lead.phone || lead.contact || "-"}</td>
+              <td>
+                <div className="row-actions admin-lead-contact-actions">
+                  <button type="button" className="row-icon-btn call" title="Call" onClick={() => { window.location.href = `tel:${lead.phone || lead.contact || ""}`; }}>
+                    <PhoneCall size={15} />
+                  </button>
+                  <button type="button" className="row-icon-btn whatsapp" title="WhatsApp" onClick={() => window.open(`https://wa.me/91${lead.phone || lead.contact || ""}`, "_blank", "noopener,noreferrer")}>
+                    <MessageCircle size={15} />
+                  </button>
+                </div>
+              </td>
               <td>{lead.type}</td>
               <td>{lead.interest}</td>
               <td>{formatCurrency(lead.value)}</td>
@@ -6871,7 +7156,8 @@ function LeadsTable({ leads, users, onEdit }) {
               <td>
                 <span className={badgeClass(lead.status)}>{lead.status}</span>
               </td>
-              <td>{users.find((user) => String(user.id || user._id) === String(lead.assignedTo))?.name ?? lead.assignedTo ?? "-"}</td>
+              <td>{getAssignedName(lead)}</td>
+              <td>{getCrmExecutiveName(lead)}</td>
               <td>{formatDateDDMMYYYY(lead.assignedDate)}</td>
               <td>
                 <button type="button" className="ghost-button compact" onClick={() => onEdit?.(lead)}>
