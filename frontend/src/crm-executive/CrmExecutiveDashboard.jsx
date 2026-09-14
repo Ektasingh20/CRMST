@@ -316,10 +316,11 @@ function getCallListCategory(program) {
   return PROGRAM_CATEGORY[program];
 }
 
-const CALL_STATUS_OPTIONS = ["Choose", "Pending", "Follow Up", "Completed"];
+const CALL_STATUS_OPTIONS = ["Select Status", "Pending", "Follow Up", "Completed"];
 const INTERACTION_TYPES = ["Call", "WhatsApp", "Email", "Walk-in", "Reference"];
-const INTEREST_STATUS_OPTIONS = ["Hot", "Warm", "Cold", "Not Interested", "Converted"];
-const CALL_LIST_INTEREST_STATUS_OPTIONS = ["Choose", "Interested", "Not Interested"];
+const INTEREST_STATUS_OPTIONS = ["Select Status", "Hot", "Warm", "Cold", "Not Interested", "Converted"];
+const CALL_LIST_INTEREST_STATUS_OPTIONS = ["Select Status", "Interested", "Not Interested"];
+const CRM_EXEC_LEADS_STORAGE_KEY = "crmExec.adminLeads";
 const LEAD_SOURCES = ["Website", "Reference", "Walk-in", "Social Media", "Cold Call", "Advertisement"];
 const LEAD_STAGES = ["New", "Contacted", "Qualified", "Proposal", "Won", "Lost"];
 const TASK_STATUSES = ["To Do", "In Progress", "Done"];
@@ -784,9 +785,9 @@ function emptyContactForm() {
     name: "",
     contact: "",
     program: PROGRAMS[0],
-    callStatus: "Choose",
+    callStatus: "Select Status",
     interactionType: "Call",
-    interestStatus: "Choose",
+    interestStatus: "Select Status",
     remark: "",
     active: true,
   };
@@ -881,7 +882,7 @@ function ContactFormModal({ initial, onClose, onSave }) {
   );
 }
 
-function CallListTab({ contacts, setContacts, showToast, category, title, addLabel, currentUser }) {
+function CallListTab({ contacts, setContacts, showToast, category, title, addLabel, currentUser, onContactChange }) {
   const [search, setSearch] = useState("");
   const [programFilter, setProgramFilter] = useState("All");
   const [callStatusFilter, setCallStatusFilter] = useState("All");
@@ -935,7 +936,12 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
   };
 
   const updateContact = (id, patch) => {
-    setContacts((prev) => prev.map((c) => (c.id === id ? { ...c, ...patch } : c)));
+    setContacts((prev) => prev.map((c) => {
+      if (c.id !== id) return c;
+      const updated = { ...c, ...patch };
+      onContactChange?.(updated);
+      return updated;
+    }));
   };
 
   const handleCall = (c) => {
@@ -960,6 +966,7 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
   const handleDelete = (c) => {
     if (window.confirm(`Delete contact "${c.name}"? This cannot be undone.`)) {
       setContacts((prev) => prev.filter((x) => x.id !== c.id));
+      onContactChange?.({ ...c, deleted: true });
       showToast("Contact deleted");
     }
   };
@@ -968,7 +975,9 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
       updateContact(form.id, form);
       showToast("Contact updated");
     } else {
-      setContacts((prev) => [{ ...form, id: genId("contact"), snoozeUntil: null }, ...prev]);
+      const created = { ...form, id: genId("contact"), snoozeUntil: null };
+      setContacts((prev) => [created, ...prev]);
+      onContactChange?.(created);
       showToast("Contact added");
     }
     setModalState(null);
@@ -1083,7 +1092,7 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
                 <td>
                   <select
                     className="inline-select"
-                    value={CALL_STATUS_OPTIONS.includes(c.callStatus) ? c.callStatus : "Choose"}
+                    value={CALL_STATUS_OPTIONS.includes(c.callStatus) ? c.callStatus : "Select Status"}
                     onChange={(e) => updateContact(c.id, { callStatus: e.target.value })}
                   >
                     {CALL_STATUS_OPTIONS.map((s) => (
@@ -1094,7 +1103,7 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
                 <td>
                   <select
                     className="inline-select"
-                    value={CALL_LIST_INTEREST_STATUS_OPTIONS.includes(c.interestStatus) ? c.interestStatus : "Choose"}
+                    value={CALL_LIST_INTEREST_STATUS_OPTIONS.includes(c.interestStatus) ? c.interestStatus : "Select Status"}
                     onChange={(e) => updateContact(c.id, { interestStatus: e.target.value })}
                   >
                     {CALL_LIST_INTEREST_STATUS_OPTIONS.map((s) => (
@@ -1786,10 +1795,14 @@ function TasksTab({ tasks, setTasks, showToast }) {
 
 /* ============================ MARK ATTENDANCE TAB =========================== */
 
-function MarkAttendanceTab({ attendance, setAttendance, showToast }) {
+function MarkAttendanceTab({ attendance, setAttendance, showToast, profile }) {
   const today = todayISO();
-  const todaysRecord = attendance.find((a) => a.date === today);
+  const [sessionStarted, setSessionStarted] = useState(false);
+  const sessionDateRef = useRef(today);
+  const todaysRecord = sessionStarted ? attendance.find((a) => a.date === today) : null;
   const [currentTime, setCurrentTime] = useState(() => new Date());
+  const [status, setStatus] = useState(todaysRecord?.status || "");
+  const [remark, setRemark] = useState(todaysRecord?.remark || "");
   const checkIn = todaysRecord?.checkIn && todaysRecord.checkIn !== "-" ? todaysRecord.checkIn : "";
   const checkOut = todaysRecord?.checkOut && todaysRecord.checkOut !== "-" ? todaysRecord.checkOut : "";
   const formatTime = (date) => date.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
@@ -1805,14 +1818,23 @@ function MarkAttendanceTab({ attendance, setAttendance, showToast }) {
     return () => window.clearInterval(timer);
   }, []);
 
+  useEffect(() => {
+    if (sessionDateRef.current === today) return;
+    sessionDateRef.current = today;
+    setSessionStarted(false);
+    setStatus("");
+    setRemark("");
+  }, [today]);
+
   const handleCheckIn = () => {
-    if (checkIn) return;
+    if (checkIn || !status) return;
     const time = formatTime(new Date());
     setAttendance((prev) => {
       const exists = prev.some((record) => record.date === today);
-      if (exists) return prev.map((record) => (record.date === today ? { ...record, status: "Present", checkIn: time, checkOut: "" } : record));
-      return [{ id: genId("att"), date: today, status: "Present", checkIn: time, checkOut: "" }, ...prev];
+      if (exists) return prev.map((record) => (record.date === today ? { ...record, status, remark, checkIn: time, checkOut: "" } : record));
+      return [{ id: genId("att"), date: today, status, remark, checkIn: time, checkOut: "" }, ...prev];
     });
+    setSessionStarted(true);
     showToast("Checked in successfully");
   };
 
@@ -1826,42 +1848,37 @@ function MarkAttendanceTab({ attendance, setAttendance, showToast }) {
 
   return (
     <div>
-      <div className="stats-grid compact three-up">
-        <StatCard icon={<IconCheck size={20} />} tone="green" value={counts.Present || 0} label="Present Days" hint="This month" />
-        <StatCard icon={<IconLeave size={20} />} tone="amber" value={counts["On Leave"] || 0} label="Leave Days" hint="This month" />
-        <StatCard icon={<IconAttendance size={20} />} tone="blue" value={counts["Work From Home"] || 0} label="WFH Days" hint="This month" />
-      </div>
-
       <div className="panel">
         <div className="panel-head">
-          <h3>Today's Check In / Check Out — {formatDisplayDate(today)}</h3>
+          <h3>Mark Attendance</h3>
         </div>
-        <div style={{ padding: 20 }}>
-          <div className="check-clock-panel">
-            <div>
-              <span className="check-clock-label">Current time</span>
-              <strong className="check-clock-time">{formatTime(currentTime)}</strong>
-            </div>
-            <div className="check-clock-status">
-              <span className={clsx("attendance-state-dot", checkIn && !checkOut && "active")} />
-              <span>{checkOut ? "Day completed" : checkIn ? "Currently checked in" : "Not checked in"}</span>
-            </div>
-          </div>
-          <div className="form-actions">
-            <button
-              className={clsx("attendance-action-button", checkIn && !checkOut && "checkout", checkOut && "completed")}
-              onClick={checkOut ? undefined : checkIn ? handleCheckOut : handleCheckIn}
-              disabled={Boolean(checkOut)}
-              title={checkOut ? "Attendance completed" : checkIn ? "Check out" : "Check in"}
-            >
-              {checkOut ? <IconCheck size={24} /> : checkIn ? <IconLogout size={24} /> : <IconCheck size={24} />}
-              <span>{checkOut ? "Completed" : checkIn ? "Check Out" : "Check In"}</span>
-            </button>
-          </div>
-          <div className="check-times">
-            <span>Check in: <strong>{checkIn || "Not recorded"}</strong></span>
-            <span>Check out: <strong>{checkOut || "Not recorded"}</strong></span>
-          </div>
+        <div className="crm-attendance-form">
+          <label className="crm-attendance-field">
+            <span>Employee Name</span>
+            <input value={profile?.name || "CRM Executive"} readOnly />
+          </label>
+          <label className="crm-attendance-field">
+            <span>Select Status</span>
+            <select value={status} onChange={(event) => setStatus(event.target.value)} disabled={Boolean(checkIn)}>
+              <option value="">Select Status</option>
+              <option value="Present">Present</option>
+              <option value="Absent">Absent</option>
+            </select>
+          </label>
+          <label className="crm-attendance-field">
+            <span>Remark</span>
+            <input value={remark} onChange={(event) => setRemark(event.target.value)} placeholder="Remark (optional)" disabled={Boolean(checkIn)} />
+          </label>
+          <button
+            className={clsx("crm-attendance-submit", checkIn && !checkOut && "checkout", checkOut && "completed")}
+            onClick={checkOut ? undefined : checkIn ? handleCheckOut : handleCheckIn}
+            disabled={Boolean(checkOut) || (!checkIn && !status)}
+          >
+            {checkOut ? "Completed" : checkIn ? "Check Out" : "Check In"}
+          </button>
+        </div>
+        <div className="crm-attendance-clock">
+          Current time: <strong>{formatTime(currentTime)}</strong>
         </div>
       </div>
     </div>
@@ -1886,7 +1903,7 @@ function AttendanceReportTab({ attendance, showToast }) {
       showToast("No records for the selected month");
       return;
     }
-    downloadCSV(`attendance-${monthFilter}.csv`, rows.map((r) => ({ Date: formatDisplayDate(r.date), Status: r.status, "Check In": r.checkIn, "Check Out": r.checkOut })));
+    downloadCSV(`attendance-${monthFilter}.csv`, rows.map((r) => ({ Date: formatDisplayDate(r.date), Status: r.status, "Punch In Time": r.checkIn, "Punch Out Time": r.checkOut })));
     showToast("Attendance report exported");
   };
 
@@ -1915,8 +1932,8 @@ function AttendanceReportTab({ attendance, showToast }) {
             <tr>
               <th>Date</th>
               <th>Status</th>
-              <th>Check In</th>
-              <th>Check Out</th>
+              <th>Punch In Time</th>
+              <th>Punch Out Time</th>
             </tr>
           </thead>
           <tbody>
@@ -1940,8 +1957,8 @@ function AttendanceReportTab({ attendance, showToast }) {
                     {r.status}
                   </span>
                 </td>
-                <td>{r.checkIn}</td>
-                <td>{r.checkOut}</td>
+                <td>{r.checkIn || "Not recorded"}</td>
+                <td>{r.checkOut || "Not recorded"}</td>
               </tr>
             ))}
           </tbody>
@@ -2362,7 +2379,72 @@ function Sidebar({ activeTab, onNavigate, collapsed, onToggleCollapse, mobileOpe
 
 /* ================================ MAIN EXPORT ================================ */
 
-export default function CrmExecutiveDashboard({ initialTab = "dashboard", onLogout, currentUser, leads: externalLeads = [] }) {
+function normalizeSourceContact(row) {
+  return {
+    id: String(row.id || row._id || `source-contact-${Date.now()}-${Math.random()}`),
+    date: row.date || todayISO(),
+    name: row.name || "",
+    contact: row.contact || row.number || row.phone || "",
+    callStatus: row.callStatus || "Select Status",
+    interactionType: row.interactionType || "Call",
+    interestStatus: row.interestStatus || "Select Status",
+    program: row.program && row.program !== "-" ? row.program : row.category || "IT Services",
+    remark: row.remark || "",
+    active: row.active !== false && !row.snoozed,
+    snoozeUntil: row.snoozeUntil || null,
+    crmExecutiveName: row.crmExecutiveName || row.assignedToName || "",
+    sourceRecord: true,
+  };
+}
+
+function mergeSourceRecords(currentRecords, sourceRecords, normalize) {
+  if (!sourceRecords.length) return currentRecords;
+  const sourceIds = new Set(sourceRecords.map((record) => String(record.id)));
+  const locallyCreated = currentRecords.filter((record) => !sourceIds.has(String(record.id)) && !record.sourceRecord);
+  const existingById = new Map(currentRecords.map((record) => [String(record.id), record]));
+  const synced = sourceRecords.map((record) => ({
+    ...existingById.get(String(record.id)),
+    ...record,
+  }));
+  return [...synced, ...locallyCreated];
+}
+
+function isLeadContact(contact) {
+  return CALL_STATUS_OPTIONS.slice(1).includes(contact.callStatus)
+    || CALL_LIST_INTEREST_STATUS_OPTIONS.slice(1).includes(contact.interestStatus);
+}
+
+function leadFromContact(contact) {
+  return {
+    id: `contact-lead-${contact.id}`,
+    sourceContactId: String(contact.id),
+    createdDate: contact.date || todayISO(),
+    program: contact.program || "",
+    name: contact.name || "",
+    contact: contact.contact || "",
+    clientSourceName: contact.name || "",
+    executiveName: contact.crmExecutiveName || "",
+    leadName: contact.program || "",
+    leadStatus: [contact.callStatus, contact.interestStatus]
+      .filter((status) => status && status !== "Select Status")
+      .join(" / "),
+    interestType: "Interested",
+    interest: "Interested",
+    remark: contact.remark || "",
+    status: contact.callStatus !== "Select Status" ? contact.callStatus : contact.interestStatus,
+    operationRemarks: contact.operationRemarks || "",
+    stage: "New",
+    sourceRecord: true,
+  };
+}
+
+export default function CrmExecutiveDashboard({
+  initialTab = "dashboard",
+  onLogout,
+  currentUser,
+  leads: externalLeads = [],
+  sourceContacts = [],
+}) {
   const [activeTab, setActiveTab] = useState(initialTab);
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -2378,6 +2460,45 @@ export default function CrmExecutiveDashboard({ initialTab = "dashboard", onLogo
     ...(currentUser || {}),
   }));
   const [preferences, setPreferences] = useLocalStorageState("crmExec.preferences", DEFAULT_PREFERENCES);
+
+  const qualifiedLeadsInitialized = useRef(false);
+
+  useEffect(() => {
+    const qualifiedLeads = contacts.filter(isLeadContact).map(leadFromContact);
+    setLeads((current) => {
+      const manualLeads = qualifiedLeadsInitialized.current
+        ? current.filter((lead) => !lead.sourceRecord && !lead.sourceContactId)
+        : [];
+      qualifiedLeadsInitialized.current = true;
+      return [...qualifiedLeads, ...manualLeads];
+    });
+  }, [contacts, setLeads]);
+
+  const syncContactLead = (contact) => {
+    setLeads((current) => {
+      const sourceContactId = String(contact.id);
+      const withoutExisting = current.filter((lead) => String(lead.sourceContactId || "") !== sourceContactId);
+      if (contact.deleted || !isLeadContact(contact)) return withoutExisting;
+      return [leadFromContact(contact), ...withoutExisting];
+    });
+  };
+
+  useEffect(() => {
+    const sourceLeads = contacts.filter(isLeadContact).map(leadFromContact);
+    try {
+      window.localStorage.setItem(CRM_EXEC_LEADS_STORAGE_KEY, JSON.stringify(sourceLeads));
+      window.dispatchEvent(new CustomEvent("crmExecLeadsChanged", { detail: sourceLeads }));
+    } catch (error) {
+      /* Ignore unavailable browser storage. */
+    }
+  }, [contacts]);
+
+  useEffect(() => {
+    const normalizedContacts = sourceContacts.map(normalizeSourceContact).filter((contact) => contact.name || contact.contact);
+    if (normalizedContacts.length) {
+      setContacts((current) => mergeSourceRecords(current, normalizedContacts, normalizeSourceContact));
+    }
+  }, [sourceContacts, setContacts]);
 
   const handleNavigate = (tab) => {
     setActiveTab(tab);
@@ -2475,6 +2596,7 @@ export default function CrmExecutiveDashboard({ initialTab = "dashboard", onLogo
                 title="Daily Service Contacts / Call List"
                 addLabel="Add Service Contact"
                 currentUser={currentUser}
+                onContactChange={syncContactLead}
               />
             )}
             {activeTab === "trainingcalllist" && (
@@ -2486,6 +2608,7 @@ export default function CrmExecutiveDashboard({ initialTab = "dashboard", onLogo
                 title="Daily Training Contacts / Call List"
                 addLabel="Add Training Contact"
                 currentUser={currentUser}
+                onContactChange={syncContactLead}
               />
             )}
             {activeTab === "leads" && <LeadsTab leads={leads} setLeads={setLeads} showToast={showToast} />}
@@ -2502,7 +2625,7 @@ export default function CrmExecutiveDashboard({ initialTab = "dashboard", onLogo
               />
             )}
             {activeTab === "markattendance" && (
-              <MarkAttendanceTab attendance={attendance} setAttendance={setAttendance} showToast={showToast} />
+              <MarkAttendanceTab attendance={attendance} setAttendance={setAttendance} showToast={showToast} profile={profile} />
             )}
             {activeTab === "attendancereport" && (
               <AttendanceReportTab attendance={attendance} showToast={showToast} />

@@ -577,7 +577,8 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding-top: 20px;
+  padding: 34px 0 52px;
+  width: 100%;
 }
 
 .itd-shift-badge {
@@ -600,6 +601,92 @@
   color: var(--text-muted);
   font-size: 13px;
   margin-bottom: 20px;
+}
+
+.itd-attendance-form-card {
+  width: min(100%, 1100px);
+  display: grid;
+  grid-template-columns: 1.15fr 1.15fr 1.15fr 1fr;
+  align-items: end;
+  gap: 20px;
+  padding: 16px 24px 14px;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-card);
+}
+
+.itd-attendance-field {
+  display: grid;
+  gap: 8px;
+  color: var(--text-dark);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.itd-attendance-field input,
+.itd-attendance-field select {
+  width: 100%;
+  min-height: 38px;
+  padding: 0 11px;
+  border: 1px solid #d9dfe7;
+  border-radius: 5px;
+  background: #fff;
+  color: var(--text-dark);
+  font: inherit;
+  outline: none;
+}
+
+.itd-attendance-field input:focus,
+.itd-attendance-field select:focus {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px var(--blue-bg);
+}
+
+.itd-attendance-field input:disabled,
+.itd-attendance-field select:disabled {
+  background: #eef0f3;
+  color: var(--text-muted);
+}
+
+.itd-attendance-submit {
+  min-height: 38px;
+  border: 0;
+  border-radius: 5px;
+  background: var(--blue);
+  color: #fff;
+  font: inherit;
+  font-weight: 600;
+}
+
+.itd-attendance-submit.checkout {
+  background: var(--red);
+}
+
+.itd-attendance-submit:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.itd-attendance-times {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 22px;
+  margin-top: 18px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.itd-attendance-times strong {
+  color: var(--text-dark);
+}
+
+.itd-attendance-complete {
+  margin: 16px 0 0;
+  color: var(--green);
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .itd-clock {
@@ -1261,6 +1348,10 @@
     padding: 24px;
   }
 
+  .itd-attendance-form-card {
+    grid-template-columns: 1fr 1fr;
+  }
+
   .itd-punch-btn {
     width: 140px;
     height: 140px;
@@ -1285,5 +1376,16 @@
   }
   .itd-topbar {
     padding: 12px 16px;
+  }
+
+  .itd-attendance-form-card {
+    grid-template-columns: 1fr;
+    padding: 16px;
+  }
+
+  .itd-attendance-times {
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
   }
 }

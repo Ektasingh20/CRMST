@@ -163,6 +163,7 @@ const STUDENT_COURSES_STORAGE_KEY = "crmst-student-courses-v2.txt";
 const STUDENT_COURSES_CACHE_TTL_MS = 5 * 60 * 1000;
 const STUDENT_NOTIFICATIONS_STORAGE_KEY = "crmst-student-notifications-v2.txt";
 const STUDENT_NOTIFICATIONS_CACHE_TTL_MS = 5 * 60 * 1000;
+const CRM_EXEC_LEADS_STORAGE_KEY = "crmExec.adminLeads";
 
 function isCrmExecutive(role) {
   return ["crm executive", "crm_executive"].includes(String(role || "").trim().toLowerCase());
@@ -1307,6 +1308,47 @@ function App() {
   });
   const [editingLeadId, setEditingLeadId] = useState(null);
   const [editingLeadReturnPage, setEditingLeadReturnPage] = useState("sales-approved");
+
+  useEffect(() => {
+    const applyExecutiveLeads = (items) => {
+      if (!Array.isArray(items)) return;
+      setLeads((current) => [
+        ...current.filter((lead) => !lead.crmExecSource && !lead.sourceContactId),
+        ...items.map((lead) => ({ ...lead, crmExecSource: true })),
+      ]);
+    };
+    const readExecutiveLeads = () => {
+      try {
+        const saved = window.localStorage.getItem(CRM_EXEC_LEADS_STORAGE_KEY);
+        applyExecutiveLeads(saved ? JSON.parse(saved) : []);
+      } catch {
+        /* Ignore malformed browser-only CRM executive data. */
+      }
+    };
+    const handleExecutiveLeads = (event) => applyExecutiveLeads(event.detail);
+    readExecutiveLeads();
+    window.addEventListener("crmExecLeadsChanged", handleExecutiveLeads);
+    window.addEventListener("storage", readExecutiveLeads);
+    return () => {
+      window.removeEventListener("crmExecLeadsChanged", handleExecutiveLeads);
+      window.removeEventListener("storage", readExecutiveLeads);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    try {
+      const saved = window.localStorage.getItem(CRM_EXEC_LEADS_STORAGE_KEY);
+      const executiveLeads = saved ? JSON.parse(saved) : [];
+      if (!Array.isArray(executiveLeads)) return;
+      setLeads((current) => [
+        ...current.filter((lead) => !lead.crmExecSource && !lead.sourceContactId),
+        ...executiveLeads.map((lead) => ({ ...lead, crmExecSource: true })),
+      ]);
+    } catch {
+      /* Ignore malformed browser-only CRM executive data. */
+    }
+  }, [currentUser, leadsLoadedFromBackend]);
 
   useEffect(() => {
     try {
@@ -3240,6 +3282,17 @@ function App() {
     setActivePage("sales-add");
   }
 
+  function saveFrontendLead(lead) {
+    setLeads((current) => current.map((item) => String(item.id) === String(lead.id) ? { ...item, ...lead } : item));
+    notify("Lead saved in the frontend.");
+  }
+
+  function deleteFrontendLead(lead) {
+    if (!window.confirm(`Delete lead "${lead.name || lead.clientSourceName || "this lead"}"?`)) return;
+    setLeads((current) => current.filter((item) => String(item.id) !== String(lead.id)));
+    notify("Lead deleted from the frontend.");
+  }
+
   function editUser(user) {
     setCreateUserForm({
       name: user.name || "",
@@ -3579,6 +3632,7 @@ function App() {
         <CrmExecutiveDashboard
           user={currentUser}
           leads={leads}
+          sourceContacts={crmUploadRows}
           onUpdateLead={updateCrmLead}
           onCreateLead={createCrmLead}
           onLogout={logout}
@@ -4167,7 +4221,7 @@ function App() {
 
           {activePage === "crm" && (
             <Panel title={`All company leads (${leads.length})`}>
-              <LeadsTable leads={leads} users={users} onEdit={editApprovedLead} />
+              <LeadsTable leads={leads} users={users} onEdit={editApprovedLead} onSave={saveFrontendLead} onDelete={deleteFrontendLead} />
             </Panel>
           )}
 
@@ -7107,7 +7161,8 @@ function Field({ label, children }) {
   );
 }
 
-function LeadsTable({ leads, users, onEdit }) {
+function LeadsTable({ leads, users, onEdit, onSave, onDelete }) {
+  const [operationDrafts, setOperationDrafts] = useState({});
   const getAssignedName = (lead) => users.find((user) => String(user.id || user._id) === String(lead.assignedTo))?.name ?? lead.assignedTo ?? "-";
   const getCrmExecutiveName = (lead) => lead.crmExecutiveName || lead.createdByName || lead.createdBy || lead.generatedBy || "-";
   return (
@@ -7115,30 +7170,23 @@ function LeadsTable({ leads, users, onEdit }) {
       <table className="table">
         <thead>
           <tr>
-            <th>Name</th>
+            <th>Sr. No.</th>
+            <th>Lead</th>
             <th>Contact</th>
-            <th>Call / WhatsApp</th>
-            <th>Type</th>
-            <th>Interest</th>
-            <th>Value</th>
-            <th>Source</th>
-            <th>Status</th>
-            <th>Assigned to</th>
-            <th>CRM Executive Name</th>
-            <th>Assigned Date</th>
-            <th>Action</th>
+            <th>Client/Source Name</th>
+            <th>Executive Name</th>
+            <th>Remark</th>
+            <th>Lead Name</th>
+            <th>Lead Status</th>
+            <th>Operation/Remarks</th>
+            <th>Actions</th>
           </tr>
         </thead>
         <tbody>
-          {leads.map((lead) => (
+          {leads.map((lead, index) => (
             <tr key={lead.id}>
-              <td>
-                <div className="person-cell">
-                  <div className="avatar soft">{initials(lead.name)}</div>
-                  <strong>{lead.name}</strong>
-                </div>
-              </td>
-              <td>{lead.phone || lead.contact || "-"}</td>
+              <td>{index + 1}</td>
+              <td><strong>{lead.name || lead.clientSourceName || "-"}</strong></td>
               <td>
                 <div className="row-actions admin-lead-contact-actions">
                   <button type="button" className="row-icon-btn call" title="Call" onClick={() => { window.location.href = `tel:${lead.phone || lead.contact || ""}`; }}>
@@ -7149,20 +7197,25 @@ function LeadsTable({ leads, users, onEdit }) {
                   </button>
                 </div>
               </td>
-              <td>{lead.type}</td>
-              <td>{lead.interest}</td>
-              <td>{formatCurrency(lead.value)}</td>
-              <td>{lead.source || lead.leadSource || "-"}</td>
+              <td>{lead.clientSourceName || lead.source || lead.leadSource || lead.name || "-"}</td>
+              <td>{lead.executiveName || getCrmExecutiveName(lead) || getAssignedName(lead)}</td>
+              <td>{lead.remark || lead.notes || "-"}</td>
+              <td>{lead.leadName || lead.program || lead.interest || lead.type || "-"}</td>
+              <td><span className={badgeClass(lead.leadStatus || lead.status || "Select Status")}>{lead.leadStatus || lead.status || "Select Status"}</span></td>
               <td>
-                <span className={badgeClass(lead.status)}>{lead.status}</span>
+                <input
+                  className="crm-remark-input"
+                  value={operationDrafts[lead.id] ?? lead.operationRemarks ?? ""}
+                  placeholder="Add operation remark"
+                  onChange={(event) => setOperationDrafts((current) => ({ ...current, [lead.id]: event.target.value }))}
+                />
               </td>
-              <td>{getAssignedName(lead)}</td>
-              <td>{getCrmExecutiveName(lead)}</td>
-              <td>{formatDateDDMMYYYY(lead.assignedDate)}</td>
               <td>
-                <button type="button" className="ghost-button compact" onClick={() => onEdit?.(lead)}>
-                  <Edit3 size={14} /> Edit
-                </button>
+                <div className="row-actions">
+                  <button type="button" className="row-icon-btn edit" title="Edit" onClick={() => onEdit?.(lead)}><Edit3 size={14} /></button>
+                  <button type="button" className="row-icon-btn" title="Save" onClick={() => onSave?.({ ...lead, operationRemarks: operationDrafts[lead.id] ?? lead.operationRemarks ?? "" })}><CheckCheck size={14} /></button>
+                  <button type="button" className="row-icon-btn delete" title="Delete" onClick={() => onDelete?.(lead)}><Trash2 size={14} /></button>
+                </div>
               </td>
             </tr>
           ))}

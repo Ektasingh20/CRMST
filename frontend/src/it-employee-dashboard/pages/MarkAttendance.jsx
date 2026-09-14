@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { IconClock } from "../Icons";
+import { employee } from "../data";
 
 function formatTime(date) {
   let h = date.getHours();
@@ -12,8 +12,10 @@ function formatTime(date) {
 
 export default function MarkAttendance() {
   const [now, setNow] = useState(new Date());
-  const [punchedIn, setPunchedIn] = useState(true);
-  const [firstPunchIn] = useState("09:15 AM");
+  const [punchedIn, setPunchedIn] = useState(false);
+  const [status, setStatus] = useState("");
+  const [remark, setRemark] = useState("");
+  const [firstPunchIn, setFirstPunchIn] = useState(null);
   const [finalPunchOut, setFinalPunchOut] = useState(null);
 
   useEffect(() => {
@@ -24,11 +26,14 @@ export default function MarkAttendance() {
   const { time, ampm } = formatTime(now);
 
   const handlePunch = () => {
+    if (!punchedIn && !status) return;
     if (punchedIn) {
       const { time: t, ampm: a } = formatTime(new Date());
       setFinalPunchOut(`${t.slice(0, 5)} ${a}`);
       setPunchedIn(false);
     } else {
+      const { time: t, ampm: a } = formatTime(new Date());
+      setFirstPunchIn(`${t.slice(0, 5)} ${a}`);
       setFinalPunchOut(null);
       setPunchedIn(true);
     }
@@ -44,38 +49,44 @@ export default function MarkAttendance() {
   return (
     <div className="itd-page">
       <div className="itd-attendance-wrap">
-        <span className="itd-shift-badge">
-          {punchedIn ? "● SHIFT IN PROGRESS" : "SHIFT ENDED"}
-        </span>
         <h2>Mark Attendance</h2>
-        <p className="sub">{dateStr}</p>
+        <p className="sub">{dateStr} · Current time {time} {ampm}</p>
 
-        <div className="itd-clock">
-          {time} <span className="ampm">{ampm}</span>
-        </div>
-
-        <div className="itd-punch-card">
-          <button className="itd-punch-btn" onClick={handlePunch}>
-            <IconClock width={28} height={28} />
-            <span className="big">{punchedIn ? "PUNCH OUT" : "PUNCH IN"}</span>
-            <span className="small">{punchedIn ? "Record Exit Time" : "Record Entry Time"}</span>
+        <div className="itd-attendance-form-card">
+          <label className="itd-attendance-field">
+            <span>Employee Name</span>
+            <input value={employee.fullName} readOnly />
+          </label>
+          <label className="itd-attendance-field">
+            <span>Select Status</span>
+            <select value={status} onChange={(event) => setStatus(event.target.value)} disabled={punchedIn}>
+              <option value="">Select Status</option>
+              <option value="Present">Present</option>
+              <option value="Absent">Absent</option>
+            </select>
+          </label>
+          <label className="itd-attendance-field">
+            <span>Remark</span>
+            <input
+              value={remark}
+              onChange={(event) => setRemark(event.target.value)}
+              placeholder="Remark (optional)"
+              disabled={punchedIn}
+            />
+          </label>
+          <button className={`itd-attendance-submit ${punchedIn ? "checkout" : ""}`} onClick={handlePunch} disabled={!punchedIn && !status}>
+            {punchedIn ? "Check Out" : "Check In"}
           </button>
-
-          <div className="itd-punch-info">
-            <div className="box">
-              <div className="k">FIRST PUNCH-IN</div>
-              <div className="v done">{firstPunchIn}</div>
-              <div className="n">Recorded &amp; Verified</div>
-            </div>
-            <div className="box">
-              <div className="k">FINAL PUNCH-OUT</div>
-              <div className={`v ${finalPunchOut ? "done" : "pending"}`}>
-                {finalPunchOut || "--:-- --"}
-              </div>
-              <div className="n">{finalPunchOut ? "Recorded & Verified" : "Awaiting Tap"}</div>
-            </div>
-          </div>
         </div>
+
+        <div className="itd-attendance-times">
+          <span>Punch In: <strong>{firstPunchIn || "Not recorded"}</strong></span>
+          <span>Punch Out: <strong>{finalPunchOut || "Not recorded"}</strong></span>
+          <span>Status: <strong>{status || "Not selected"}</strong></span>
+        </div>
+        {finalPunchOut && (
+          <p className="itd-attendance-complete">Attendance recorded successfully.</p>
+        )}
       </div>
     </div>
   );
