@@ -18,7 +18,7 @@ function matches(data, filter = {}) {
 class Document {
   constructor(Model, ref, data) { Object.assign(this, data, { _Model: Model, _ref: ref, _id: ref.id }); }
   toObject() { const { _Model, _ref, ...data } = this; return data; }
-  async save() { const { _id, ...data } = this.toObject(); await this._ref.set(data, { merge: true }); return this; }
+  async save() { const { _id, ...data } = this.toObject(); await this._ref.set(data, { merge: true }); this._Model._invalidateCache(); return this; }
 }
 
 class Query {
@@ -28,8 +28,7 @@ class Query {
   limit(count) { this.limitCount = Number(count) || 0; return this; }
   select() { return this; }
   async exec() {
-    const snapshot = await this.Model.collection.get();
-    let rows = snapshot.docs.map((doc) => new Document(this.Model, doc.ref, doc.data())).filter((doc) => matches(doc, this.filter));
+    let rows = (await this.Model._getCachedDocuments()).filter((doc) => matches(doc, this.filter));
     if (this.sortSpec) {
       const [field, direction] = Object.entries(this.sortSpec)[0] || [];
       rows.sort((a, b) => String(a[field] ?? "").localeCompare(String(b[field] ?? "")) * (direction < 0 ? -1 : 1));
@@ -41,9 +40,27 @@ class Query {
 }
 
 export function createCollectionModel(collectionName, modelName) {
+  const cacheTtlMs = 30 * 1000;
+  let cachedDocuments = null;
+  let cachedAt = 0;
+  let cachePromise = null;
   const Model = {
     modelName,
     get collection() { return getFirestore().collection(collectionName); },
+    async _getCachedDocuments() {
+      if (!cachedDocuments || Date.now() - cachedAt >= cacheTtlMs) {
+        if (!cachePromise) {
+          cachePromise = Model.collection.get().then((snapshot) => {
+            cachedDocuments = snapshot.docs.map((doc) => new Document(Model, doc.ref, doc.data()));
+            cachedAt = Date.now();
+            return cachedDocuments;
+          }).finally(() => { cachePromise = null; });
+        }
+        await cachePromise;
+      }
+      return cachedDocuments;
+    },
+    _invalidateCache() { cachedDocuments = null; cachedAt = 0; cachePromise = null; },
     find(filter = {}) { return new Query(Model, filter); },
     async findOne(filter = {}) {
       const entries = Object.entries(filter);
@@ -66,6 +83,7 @@ export function createCollectionModel(collectionName, modelName) {
       const docId = data.id ? String(data.id) : undefined;
       const ref = docId ? Model.collection.doc(docId) : Model.collection.doc();
       await ref.set({ ...data });
+      Model._invalidateCache();
       return new Document(Model, ref, data);
     },
 
@@ -77,7 +95,7 @@ export function createCollectionModel(collectionName, modelName) {
       if (!item) return Model.create(values);
       Object.assign(item, values); await item.save(); return item;
     },
-    async findOneAndDelete(filter) { const item = await Model.findOne(filter); if (item) await item._ref.delete(); return item; },
+    async findOneAndDelete(filter) { const item = await Model.findOne(filter); if (item) { await item._ref.delete(); Model._invalidateCache(); } return item; },
     async updateMany(filter, update) {
       const items = await Model.find(filter); const values = update.$set || update;
       await Promise.all(items.map(async (item) => { Object.assign(item, values); await item.save(); }));

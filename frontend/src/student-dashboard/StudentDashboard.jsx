@@ -1059,8 +1059,15 @@ export default function StudentDashboard({ user, onLogout, courses = [], notific
   const unreadCount = notifs.filter(n => !n.read).length;
   useEffect(() => {
     if (!onRefreshNotifications) return undefined;
-    const interval = window.setInterval(onRefreshNotifications, 15000);
-    return () => window.clearInterval(interval);
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") onRefreshNotifications();
+    };
+    const interval = window.setInterval(refreshWhenVisible, 60000);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
   }, [onRefreshNotifications]);
 
   const markAllRead = () => onReadAllNotifications?.();

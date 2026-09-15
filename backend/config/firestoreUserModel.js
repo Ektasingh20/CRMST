@@ -50,12 +50,16 @@ class Document {
 // Reads scan every users/<dept>/members/<username> doc via a collectionGroup query,
 // then filter client-side exactly like the old flat model did.
 class Query {
-  constructor(Model, filter = {}) { this.Model = Model; this.filter = filter; this.sortSpec = null; this.skipCount = 0; this.limitCount = null; }
+  constructor(Model, filter = {}, directRef = null) { this.Model = Model; this.filter = filter; this.directRef = directRef; this.sortSpec = null; this.skipCount = 0; this.limitCount = null; }
   sort(spec) { this.sortSpec = spec; return this; }
   skip(count) { this.skipCount = Number(count) || 0; return this; }
   limit(count) { this.limitCount = Number(count) || 0; return this; }
   select() { return this; }
   async exec() {
+    if (this.directRef) {
+      const snapshot = await this.directRef.get();
+      return snapshot.exists ? [new Document(this.Model, snapshot.ref, snapshot.data())] : [];
+    }
     const snapshot = await getFirestore().collectionGroup("members").get();
     let rows = snapshot.docs
       .filter((doc) => doc.ref.path.startsWith("users/")) // scope to the users tree only
@@ -76,7 +80,13 @@ export function createUserModel() {
     modelName: "User",
     find(filter = {}) { return new Query(Model, filter); },
     async findOne(filter = {}) { return (await Model.find(filter).limit(1))[0] || null; },
-    findById(id) { return new Query(Model, { _id: String(id) }).limit(1); },
+    findById(id, dept = "") {
+      if (dept) {
+        const ref = getFirestore().collection("users").doc(deptSlug(dept)).collection("members").doc(String(id));
+        return new Query(Model, {}, ref).limit(1);
+      }
+      return new Query(Model, { _id: String(id) }).limit(1);
+    },
 
     // users/<deptSlug>/members/<deptSlug_NN>
     async create(data) {

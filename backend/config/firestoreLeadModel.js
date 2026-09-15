@@ -49,6 +49,7 @@ class Document {
   async save() {
     const { _id, ...data } = this.toObject();
     await this._ref.set(data, { merge: true });
+    this._Model._invalidateCache();
     return this;
   }
 }
@@ -68,14 +69,7 @@ class Query {
   select() { return this; }
 
   async exec() {
-    const rootDocuments = await getFirestore().collection("leads").listDocuments();
-    const collectionPromises = (await Promise.all(rootDocuments.map((typeRef) =>
-      typeRef.listCollections().then((collections) => collections.map((collection) => collection.get()))
-    ))).flat();
-    const nestedSnapshots = await Promise.all(collectionPromises);
-    let rows = nestedSnapshots
-      .flatMap((snapshot) => snapshot.docs)
-      .map((doc) => new Document(this.Model, doc.ref, doc.data()))
+    let rows = (await this.Model._getCachedDocuments())
       .filter((doc) => matches(doc, this.filter));
 
     if (this.sortSpec) {
@@ -97,8 +91,32 @@ function dateId(date = new Date()) {
 }
 
 export function createLeadModel() {
+  const cacheTtlMs = 5 * 60 * 1000;
+  let cachedDocuments = null;
+  let cachedAt = 0;
+  let cachePromise = null;
   const Model = {
     modelName: "Lead",
+    async _getCachedDocuments() {
+      if (!cachedDocuments || Date.now() - cachedAt >= cacheTtlMs) {
+        if (!cachePromise) {
+          cachePromise = getFirestore().collection("leads").listDocuments().then(async (rootDocuments) => {
+            const collectionPromises = (await Promise.all(rootDocuments.map((typeRef) =>
+              typeRef.listCollections().then((collections) => collections.map((collection) => collection.get()))
+            ))).flat();
+            const nestedSnapshots = await Promise.all(collectionPromises);
+            cachedDocuments = nestedSnapshots
+              .flatMap((snapshot) => snapshot.docs)
+              .map((doc) => new Document(Model, doc.ref, doc.data()));
+            cachedAt = Date.now();
+            return cachedDocuments;
+          }).finally(() => { cachePromise = null; });
+        }
+        await cachePromise;
+      }
+      return cachedDocuments;
+    },
+    _invalidateCache() { cachedDocuments = null; cachedAt = 0; cachePromise = null; },
     find(filter = {}) { return new Query(Model, filter); },
     async findOne(filter = {}) { return (await Model.find(filter).limit(1))[0] || null; },
     findById(id) { return new Query(Model, { _id: String(id) }).limit(1); },
@@ -134,6 +152,7 @@ export function createLeadModel() {
         createdDocument = new Document(Model, ref, payload);
       });
 
+      Model._invalidateCache();
       return createdDocument;
     },
 
@@ -148,7 +167,7 @@ export function createLeadModel() {
     },
     async findOneAndDelete(filter) {
       const item = await Model.findOne(filter);
-      if (item) await item._ref.delete();
+      if (item) { await item._ref.delete(); Model._invalidateCache(); }
       return item;
     },
   };

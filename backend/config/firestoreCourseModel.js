@@ -1,12 +1,20 @@
 import { FieldValue, getFirestore } from "firebase-admin/firestore";
 
-const COURSES_CACHE_TTL_MS = 60 * 1000;
-let coursesCache = null;
-let coursesCacheAt = 0;
+const COURSES_CACHE_TTL_MS = 5 * 60 * 1000;
+const coursesCache = new Map();
+const coursesCachePromises = new Map();
+const initializedEnrollments = new Set();
+const TASK_SUBMISSIONS_CACHE_TTL_MS = 60 * 1000;
+let taskSubmissionsCache = null;
+let taskSubmissionsCacheAt = 0;
+let taskSubmissionsCachePromise = null;
 
 function invalidateCoursesCache() {
-  coursesCache = null;
-  coursesCacheAt = 0;
+  coursesCache.clear();
+  coursesCachePromises.clear();
+  taskSubmissionsCache = null;
+  taskSubmissionsCacheAt = 0;
+  taskSubmissionsCachePromise = null;
 }
 
 function sectionDocumentId(sectionName) {
@@ -211,22 +219,28 @@ export function assembleCourseResponse(courseData = {}, lessons = [], sections =
   };
 }
 
-export async function listCourses() {
-  if (coursesCache && Date.now() - coursesCacheAt < COURSES_CACHE_TTL_MS) {
-    return coursesCache;
+export async function listCourses(studentId = "") {
+  const cacheKey = String(studentId || "");
+  const cached = coursesCache.get(cacheKey);
+  if (cached && Date.now() - cached.fetchedAt < COURSES_CACHE_TTL_MS) {
+    return cached.items;
   }
 
-  const snapshot = await getFirestore().collection("courses").get();
-  const courses = await Promise.all(snapshot.docs.map(async (courseDoc) => {
-    // Read nested documents without requiring manually-created Firebase records
-    // to contain order fields, then apply a stable fallback order in memory.
-    const lessons = await readCourseLessons(courseDoc.ref);
-    const sections = await readCourseSections(courseDoc.ref);
-    return { id: courseDoc.id, ...courseDoc.data(), sections, lessons };
-  }));
-  coursesCache = courses;
-  coursesCacheAt = Date.now();
-  return courses;
+  if (!coursesCachePromises.has(cacheKey)) {
+    const courseQuery = studentId
+      ? getFirestore().collection("courses").where("studentIds", "array-contains", String(studentId))
+      : getFirestore().collection("courses");
+    const promise = courseQuery.get().then((snapshot) => Promise.all(snapshot.docs.map(async (courseDoc) => {
+      const lessons = await readCourseLessons(courseDoc.ref);
+      const sections = await readCourseSections(courseDoc.ref);
+      return { id: courseDoc.id, ...courseDoc.data(), sections, lessons };
+    }))).then((items) => {
+      coursesCache.set(cacheKey, { items, fetchedAt: Date.now() });
+      return items;
+    }).finally(() => coursesCachePromises.delete(cacheKey));
+    coursesCachePromises.set(cacheKey, promise);
+  }
+  return coursesCachePromises.get(cacheKey);
 }
 
 export async function createCourse(data) {
@@ -538,9 +552,11 @@ export async function saveStudentLessonProgress(courseId, lessonId, studentId, p
 
 export async function ensureStudentEnrollment(studentId, course) {
   if (!studentId || !course?.id) return;
+  const totalLessons = Array.isArray(course.lessons) ? course.lessons.length : Number(course.totalLessons || 0);
+  const enrollmentKey = JSON.stringify([studentId, course.id, course.title || "", course.syllabus || "", course.duration || "", course.fees || course.price || "", course.mode || "", course.tools || "", course.thumbnail || "", totalLessons]);
+  if (initializedEnrollments.has(enrollmentKey)) return;
   const ref = getFirestore().collection("students").doc(String(studentId))
     .collection("enrolledCourses").doc(String(course.id));
-  const totalLessons = Array.isArray(course.lessons) ? course.lessons.length : Number(course.totalLessons || 0);
   await ref.set({
     studentId: String(studentId),
     courseId: String(course.id),
@@ -554,15 +570,17 @@ export async function ensureStudentEnrollment(studentId, course) {
     totalLessons,
     updatedAt: new Date().toISOString(),
   }, { merge: true });
+  initializedEnrollments.add(enrollmentKey);
 }
 
-export async function getStudentCourseProgress(studentId) {
+export async function getStudentCourseProgress(studentId, courses = []) {
   const enrolledCoursesRef = getFirestore().collection("students").doc(String(studentId)).collection("enrolledCourses");
   const coursesSnapshot = await enrolledCoursesRef.get();
   const progress = [];
   for (const courseDoc of coursesSnapshot.docs) {
     const courseRef = getFirestore().collection("courses").doc(String(courseDoc.id));
-    const courseLessons = await readCourseLessons(courseRef);
+    const loadedCourse = courses.find((course) => String(course.id) === String(courseDoc.id));
+    const courseLessons = Array.isArray(loadedCourse?.lessons) ? loadedCourse.lessons : await readCourseLessons(courseRef);
     const byLessonId = new Map(courseLessons.map((lesson) => [`${lesson.id}:${String(lesson.title || "").trim().toLowerCase()}`, lesson]));
     const merged = new Map();
     const backfillWrites = [];
@@ -609,7 +627,16 @@ export async function getStudentCourseProgress(studentId) {
       ["grade", "feedback", "taskStudentPdfUpload", "taskId", "lessonTitle"].forEach((field) => {
         if ((data[field] === null || data[field] === undefined || data[field] === "") && previous[field] !== undefined) next[field] = previous[field];
       });
-      backfillWrites.push(doc.ref.set({ section, notesCompleted, taskSubmissions: legacyTaskSubmissions, completed: next.completed, taskId: FieldValue.delete(), taskStudentPdfUpload: FieldValue.delete(), taskCompleted: FieldValue.delete(), grade: FieldValue.delete(), feedback: FieldValue.delete() }, { merge: true }));
+      const hasLegacyFields = ["taskId", "taskStudentPdfUpload", "taskCompleted", "grade", "feedback"]
+        .some((field) => data[field] !== undefined);
+      const needsBackfill = data.section !== section
+        || data.notesCompleted !== notesCompleted
+        || JSON.stringify(data.taskSubmissions || {}) !== JSON.stringify(legacyTaskSubmissions)
+        || data.completed !== next.completed
+        || hasLegacyFields;
+      if (needsBackfill) {
+        backfillWrites.push(doc.ref.set({ section, notesCompleted, taskSubmissions: legacyTaskSubmissions, completed: next.completed, taskId: FieldValue.delete(), taskStudentPdfUpload: FieldValue.delete(), taskCompleted: FieldValue.delete(), grade: FieldValue.delete(), feedback: FieldValue.delete() }, { merge: true }));
+      }
       merged.set(key, next);
     };
     const legacySnapshot = await courseDoc.ref.collection("lessons").get();
@@ -620,34 +647,21 @@ export async function getStudentCourseProgress(studentId) {
       lessonsSnapshot.docs.forEach((doc) => addProgress(doc, sectionDoc.data().name || sectionDoc.id));
     }
     await Promise.all(backfillWrites);
-    try {
-      await updateEnrollmentSummary(courseDoc.ref, courseRef, studentId, courseDoc.id);
-    } catch (error) {
-      console.warn(`Student course progress backfill skipped for ${courseDoc.id}:`, error.message || error);
-    }
     progress.push(...merged.values());
   }
   return progress;
 }
 
 export async function listStudentTaskSubmissions() {
-  const snapshot = await getFirestore().collectionGroup("lessons").get();
-  const rows = [];
-  for (const lessonDoc of snapshot.docs) {
+  if (taskSubmissionsCache && Date.now() - taskSubmissionsCacheAt < TASK_SUBMISSIONS_CACHE_TTL_MS) return taskSubmissionsCache;
+  if (!taskSubmissionsCachePromise) {
+    taskSubmissionsCachePromise = getFirestore().collectionGroup("lessons").get().then((snapshot) => {
+      const rows = [];
+      for (const lessonDoc of snapshot.docs) {
     const pathParts = lessonDoc.ref.path.split("/");
     if (pathParts[0] !== "students" || pathParts[2] !== "enrolledCourses") continue;
     const data = lessonDoc.data();
     const normalizedSubmissions = buildTaskSubmissions([], data);
-    if (data.grade !== undefined || data.feedback || data.taskId || data.taskStudentPdfUpload) {
-      await lessonDoc.ref.set({
-        taskSubmissions: normalizedSubmissions,
-        grade: FieldValue.delete(),
-        feedback: FieldValue.delete(),
-        taskId: FieldValue.delete(),
-        taskStudentPdfUpload: FieldValue.delete(),
-        taskCompleted: FieldValue.delete(),
-      }, { merge: true });
-    }
     const taskEntries = Object.values(normalizedSubmissions);
     const hasEvaluationData = Boolean(taskEntries.length || data.feedback || data.grade !== null && data.grade !== undefined);
     if (!hasEvaluationData) continue;
@@ -655,7 +669,7 @@ export async function listStudentTaskSubmissions() {
     const courseId = pathParts[3];
     const sectionIndex = pathParts.indexOf("sections");
     const section = String(data.section || (sectionIndex >= 0 ? pathParts[sectionIndex + 1] : "General")).trim() || "General";
-    (taskEntries.length ? taskEntries : [{ taskId: "", submitted: false }]).forEach((task) => rows.push({
+      (taskEntries.length ? taskEntries : [{ taskId: "", submitted: false }]).forEach((task) => rows.push({
       id: `${studentId}:${courseId}:${section}:${lessonDoc.id}:${task.taskId || "task"}`,
       studentId,
       courseId,
@@ -670,9 +684,14 @@ export async function listStudentTaskSubmissions() {
       grade: normalizeTaskGrade(task.grade ?? data.grade),
       feedback: task.feedback || data.feedback || "",
       updatedAt: task.updatedAt || data.updatedAt || null,
-    }));
+      }));
+      }
+      taskSubmissionsCache = rows;
+      taskSubmissionsCacheAt = Date.now();
+      return rows;
+    }).finally(() => { taskSubmissionsCachePromise = null; });
   }
-  return rows;
+  return taskSubmissionsCachePromise;
 }
 
 export async function getCourse(courseId) {

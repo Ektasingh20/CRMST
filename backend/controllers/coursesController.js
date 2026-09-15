@@ -39,16 +39,17 @@ function requireAdmin(req, res) {
 export async function getCourses(req, res) {
   if (!isMongoConnected) return unavailable(res);
   try {
-    const courses = await listCourses();
-    if (String(req.user?.role || "").toLowerCase() !== "student") return res.json(courses);
+    const isStudent = String(req.user?.role || "").toLowerCase() === "student";
     const studentId = req.user.id || req.user._id;
-    const assignedCourses = courses.filter((course) => normalizeStudentIds(course.studentIds).includes(String(studentId)));
+    const courses = await listCourses(isStudent ? studentId : "");
+    if (!isStudent) return res.json(courses);
+    const assignedCourses = courses;
     await Promise.all(assignedCourses.map((course) => ensureStudentEnrollment(studentId, course).catch((error) => {
       console.warn(`Could not initialize enrollment ${studentId}/${course.id}:`, error.message || error);
     })));
     let progress = [];
     try {
-      progress = await getStudentCourseProgress(studentId);
+      progress = await getStudentCourseProgress(studentId, courses);
     } catch (error) {
       console.error(`Could not load student progress for ${studentId}:`, error);
     }

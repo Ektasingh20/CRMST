@@ -207,8 +207,16 @@ async function saveCollection({
   }
 
   const savedItems = [];
+  const savedSnapshots = saveCollection.snapshots || (saveCollection.snapshots = new Map());
+  const labelSnapshots = savedSnapshots.get(label) || new Map();
 
   for (const item of items) {
+    const entityId = getEntityId(item);
+    const signature = JSON.stringify(prepareCreatePayload(item));
+    if (entityId && labelSnapshots.get(entityId) === signature) {
+      savedItems.push(normalizeEntity(item));
+      continue;
+    }
     const saved = await saveCollectionItem({
       item,
       update,
@@ -218,9 +226,11 @@ async function saveCollection({
 
     if (saved) {
       savedItems.push(saved);
+      labelSnapshots.set(getEntityId(saved) || entityId || signature, JSON.stringify(prepareCreatePayload(saved)));
     }
   }
 
+  savedSnapshots.set(label, labelSnapshots);
   return savedItems;
 }
 

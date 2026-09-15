@@ -97,9 +97,7 @@ import {
   deleteCourseLesson,
   updateCourseLesson,
   loadStipPrograms,
-  saveStipProgramsToBackend,
   loadStipApplications,
-  saveStipApplicationsToBackend,
   loadTasks,
   saveTasksToBackend,
   loadLeaves,
@@ -1231,6 +1229,7 @@ function App() {
   const leadRecoveryAttempted = useRef(false);
   const leadsCacheHydrated = useRef(false);
   const leadCacheUserKey = useRef("");
+  const isHydratingInitialData = useRef(true);
   const [crmReports] = useState(initialCrmReports);
   const [tasks] = useState(initialTasks);
   const [leaves] = useState(initialLeaves);
@@ -1389,14 +1388,17 @@ function App() {
     }
 
     const session = savedSession || getCurrentUser();
-    if (!session) return;
+    if (!session) {
+      isHydratingInitialData.current = false;
+      return;
+    }
 
     (async () => {
       try {
         if (String(session.role || "").trim().toLowerCase() === "student") {
           const cachedCourses = readStudentCoursesFromStorage(session);
           if (cachedCourses.courses.length) setCourseRows(cachedCourses.courses);
-          const remoteCourses = await loadCourses(true);
+          const remoteCourses = await loadCourses();
           if (Array.isArray(remoteCourses) && remoteCourses.length) {
             setCourseRows(remoteCourses);
             writeStudentCoursesToStorage(session, remoteCourses);
@@ -1443,11 +1445,11 @@ function App() {
         if (remoteServices.length) setServiceRows(remoteServices);
         if (remoteCourses.length) setCourseRows(remoteCourses);
         if (remoteStip.length) setStipPrograms(remoteStip);
-        else if (isAdminUser(session) && savedStipPrograms.length) saveStipProgramsToBackend(savedStipPrograms).catch(() => {});
         if (remoteInterns.length) setInterns(remoteInterns);
-        else if (isAdminUser(session) && savedInterns.length) saveStipApplicationsToBackend(savedInterns).catch(() => {});
       } catch (err) {
         console.warn("Initial load failed", err);
+      } finally {
+        isHydratingInitialData.current = false;
       }
     })();
   }, []);
@@ -1478,8 +1480,14 @@ function App() {
     let active = true;
     const cached = readStudentNotificationsFromStorage(currentUser);
     if (cached.items.length) setNotifications(cached.items);
+    let knownNotificationIds = new Set(cached.items.map((item) => String(item.id || "")));
     const refreshEvaluatedCourses = async (items) => {
-      if (!items.some((item) => ["assignment_evaluated", "lesson_added"].includes(item.type))) return;
+      const hasNewCourseNotification = items.some((item) => (
+        ["assignment_evaluated", "lesson_added"].includes(item.type)
+        && !knownNotificationIds.has(String(item.id || ""))
+      ));
+      knownNotificationIds = new Set(items.map((item) => String(item.id || "")));
+      if (!hasNewCourseNotification) return;
       invalidateCoursesCache();
       const refreshedCourses = await loadCourses(true);
       if (active && refreshedCourses.length) {
@@ -1592,21 +1600,13 @@ function App() {
   }, [serviceRows]);
 
   useEffect(() => {
-    if (!isAdminUser(currentUser)) return;
     const sanitizedPrograms = sanitizeImageCollection(stipPrograms);
-    if (!safeStorageSet(STIP_PROGRAMS_STORAGE_KEY, JSON.stringify(sanitizedPrograms))) {
-      notify("Browser storage is full. Internship changes are still kept in memory.");
-    }
-    saveStipProgramsToBackend(sanitizedPrograms);
+    safeStorageSet(STIP_PROGRAMS_STORAGE_KEY, JSON.stringify(sanitizedPrograms));
   }, [stipPrograms]);
 
   useEffect(() => {
-    if (!isAdminUser(currentUser)) return;
     const sanitizedInterns = sanitizeImageCollection(interns);
-    if (!safeStorageSet(STIP_APPLICATIONS_STORAGE_KEY, JSON.stringify(sanitizedInterns))) {
-      notify("Browser storage is full. Application changes are still kept in memory.");
-    }
-    saveStipApplicationsToBackend(sanitizedInterns);
+    safeStorageSet(STIP_APPLICATIONS_STORAGE_KEY, JSON.stringify(sanitizedInterns));
   }, [interns]);
 
   useEffect(() => {
@@ -2934,8 +2934,12 @@ function App() {
       track: `${program.track} (Copy)`,
       fee: program.fee,
     };
-    setStipPrograms((currentRows) => [...currentRows, copy]);
-    notify(`Duplicated ${program.track}.`);
+    createStipProgram({ ...copy, id: undefined })
+      .then((saved) => {
+        setStipPrograms((currentRows) => [...currentRows, { ...saved, id: saved.id || copy.id }]);
+        notify(`Duplicated ${program.track}.`);
+      })
+      .catch((err) => notify(err?.message || "Could not duplicate the program."));
   }
 
   function deleteStipProgram(program) {
@@ -3593,8 +3597,13 @@ function App() {
               const result = await loadNotifications(studentId);
               if (Array.isArray(result)) {
                 setNotifications(result);
+                const knownNotificationIds = new Set(notifications.map((item) => String(item.id || "")));
+                const hasNewCourseNotification = result.some((item) => (
+                  ["assignment_evaluated", "lesson_added"].includes(item.type)
+                  && !knownNotificationIds.has(String(item.id || ""))
+                ));
                 writeStudentNotificationsToStorage(currentUser, result);
-                if (result.some((item) => ["assignment_evaluated", "lesson_added"].includes(item.type))) {
+                if (hasNewCourseNotification) {
                   invalidateCoursesCache();
                   const refreshedCourses = await loadCourses(true);
                   if (refreshedCourses.length) {

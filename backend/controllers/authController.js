@@ -29,7 +29,7 @@ export async function login(req, res) {
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
-    const token = jwt.sign({ uid: String(user._id), username: user.username, role: user.role }, secret, { expiresIn: "12h" });
+    const token = jwt.sign({ uid: String(user._id), username: user.username, role: user.role, dept: user.dept }, secret, { expiresIn: "12h" });
     return res.json({
       token,
       user: { id: String(user._id), username: user.username, name: user.name, email: user.email, phone: user.phone, emergencyContact: user.emergencyContact, maritalStatus: user.maritalStatus, education: user.education, role: user.role, dept: user.dept, position: user.position, joined: user.joined, state: user.state, branch: user.branch, branchCode: user.branchCode, address: user.address, imageUrl: user.imageUrl || "", imagePublicId: user.imagePublicId || "" },
