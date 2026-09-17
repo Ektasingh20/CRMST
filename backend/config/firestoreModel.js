@@ -40,7 +40,9 @@ class Query {
 }
 
 export function createCollectionModel(collectionName, modelName) {
-  const cacheTtlMs = 30 * 1000;
+  // All writes through this model invalidate the cache, so a longer TTL cuts
+  // repeated full-collection reads without making normal CRUD stale.
+  const cacheTtlMs = 2 * 60 * 1000;
   let cachedDocuments = null;
   let cachedAt = 0;
   let cachePromise = null;

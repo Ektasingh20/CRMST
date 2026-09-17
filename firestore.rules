@@ -1,0 +1,74 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isAdminUser() {
+      return signedIn() && request.auth.token.role == 'admin';
+    }
+
+    function isStudentUser() {
+      return signedIn() && request.auth.token.role == 'student';
+    }
+
+    function userOwnsStudentDoc(studentId) {
+      return signedIn() && request.auth.uid == studentId;
+    }
+
+    match /students/{studentId} {
+      allow read: if signedIn() && (
+        isAdminUser() || userOwnsStudentDoc(studentId)
+      );
+      allow create, update, delete: if isAdminUser() || userOwnsStudentDoc(studentId);
+
+      match /enrolledCourses/{courseId} {
+        allow read: if signedIn() && (
+          isAdminUser() || userOwnsStudentDoc(studentId)
+        );
+        allow create, update, delete: if isAdminUser() || userOwnsStudentDoc(studentId);
+      }
+
+      match /enrollmentRequests/{requestId} {
+        allow read: if signedIn() && (
+          isAdminUser() || userOwnsStudentDoc(studentId)
+        );
+
+        allow create: if signedIn() && (
+          isAdminUser() || userOwnsStudentDoc(studentId)
+        ) && request.resource.data.studentId == studentId
+          && request.resource.data.courseId is string
+          && request.resource.data.courseName is string
+          && request.resource.data.status == 'pending'
+          && request.resource.data.requestedAt is string;
+
+        allow update: if signedIn() && (
+          isAdminUser() || userOwnsStudentDoc(studentId)
+        ) && resource.data.studentId == studentId
+          && request.resource.data.status in ['pending', 'contacted', 'done'];
+
+        allow delete: if isAdminUser();
+      }
+    }
+
+    match /{path=**}/enrollmentRequests/{requestId} {
+      allow read: if signedIn() && (
+        isAdminUser() || resource.data.studentId == request.auth.uid
+      );
+      allow list: if signedIn() && isAdminUser();
+      allow create: if false;
+      allow update, delete: if signedIn() && isAdminUser();
+    }
+
+    match /courses/{courseId} {
+      allow read: if signedIn();
+      allow create, update, delete: if isAdminUser();
+    }
+
+    match /users/{userId} {
+      allow read: if signedIn();
+      allow create, update, delete: if isAdminUser();
+    }
+  }
+}

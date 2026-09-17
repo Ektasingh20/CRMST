@@ -1,4 +1,5 @@
 import express from "express";
+import { shareCertificate } from "../controllers/certificateController.js";
 import { authenticate } from "../middleware/auth.js";
 import { getCourseById, getCourses, getStudentTaskSubmissions, gradeCourseAssignment, imageKitAuth, postCourse, postCourseLesson, putCourse, putCourseLesson, removeCourse, removeCourseLesson, saveCourseLessonProgress, submitCourseTask } from "../controllers/coursesController.js";
 
@@ -7,6 +8,7 @@ router.use(authenticate);
 router.get("/", getCourses);
 router.get("/task-submissions", getStudentTaskSubmissions);
 router.get("/upload-auth", imageKitAuth);
+router.post("/:courseId/certificate", shareCertificate);
 router.get("/:id", getCourseById);
 router.post("/", postCourse);
 router.put("/:id", putCourse);

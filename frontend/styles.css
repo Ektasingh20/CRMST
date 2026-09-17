@@ -868,6 +868,22 @@ img {
   gap: 10px;
 }
 
+.nav-item-enrollment-requests {
+  gap: 6px;
+  white-space: nowrap;
+  font-size: 0.92rem;
+}
+
+.nav-item-enrollment-requests .nav-item-left {
+  min-width: 0;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.nav-item-enrollment-requests .nav-item-left > span {
+  white-space: nowrap;
+}
+
 .nav-pill {
   min-width: 26px;
   height: 26px;
@@ -1479,6 +1495,102 @@ img {
 
 .single-edit {
   width: 100%;
+}
+
+/* Assignment review uses a purpose-built two-column workspace instead of the
+   generic form layout, which left most of the modal empty. */
+.assignment-review-card {
+  grid-template-columns: minmax(280px, 0.9fr) minmax(360px, 1.1fr);
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+  background: #fffdfa;
+  box-shadow: 0 12px 30px rgba(75, 51, 28, 0.06);
+}
+
+.assignment-review-card .course-title-row {
+  grid-column: 1 / -1;
+  padding: 20px 24px;
+  border-bottom: 1px solid #eee3d5;
+}
+
+.assignment-review-card .course-title-row > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.assignment-review-card .course-title-row span:not(.badge) {
+  color: #786b5c;
+  font-size: 0.82rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assignment-review-files {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  padding: 24px;
+  border-right: 1px solid #eee3d5;
+  background: #fcf8f3;
+}
+
+.assignment-review-files::before {
+  content: "REVIEW DOCUMENTS";
+  color: #9b8977;
+  font-size: 0.69rem;
+  font-weight: 800;
+  letter-spacing: 0.09em;
+}
+
+.assignment-review-files .ghost-button {
+  justify-content: center;
+  min-height: 46px;
+  border-color: #e7d8c8;
+  background: #fff;
+}
+
+.assignment-review-fields {
+  grid-template-columns: 1fr;
+  gap: 18px;
+  padding: 24px;
+  background: #fff;
+}
+
+.assignment-review-fields::before {
+  content: "GRADE & FEEDBACK";
+  color: #9b8977;
+  font-size: 0.69rem;
+  font-weight: 800;
+  letter-spacing: 0.09em;
+}
+
+.assignment-review-fields .course-builder-field,
+.assignment-review-fields .course-builder-field.full {
+  grid-column: auto;
+}
+
+.assignment-review-fields input,
+.assignment-review-fields textarea {
+  border-color: #e7d8c8;
+  background: #fffdfa;
+}
+
+.assignment-review-fields textarea {
+  min-height: 150px;
+}
+
+@media (max-width: 760px) {
+  .assignment-review-card {
+    grid-template-columns: 1fr;
+  }
+
+  .assignment-review-files {
+    border-right: 0;
+    border-bottom: 1px solid #eee3d5;
+  }
 }
 
 .table th,
@@ -3226,6 +3338,98 @@ img {
   background: transparent;
   outline: none;
   color: var(--text);
+}
+
+.enrollment-request-toolbar {
+  align-items: stretch;
+  flex-wrap: nowrap;
+}
+
+.enrollment-request-toolbar > input[type="date"],
+.enrollment-request-toolbar > select {
+  min-width: 156px;
+  min-height: 48px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--text);
+  font: inherit;
+}
+
+.enrollment-request-toolbar > select {
+  min-width: 142px;
+}
+
+.enrollment-request-table .submission-table-head,
+.enrollment-request-table .submission-table-row {
+  grid-template-columns: minmax(150px, 1.05fr) minmax(115px, 0.85fr) minmax(135px, 1fr) minmax(140px, 0.95fr) 100px minmax(150px, 0.95fr) minmax(210px, auto);
+  min-width: 1120px;
+}
+
+.enrollment-request-table .submission-action {
+  justify-content: flex-start;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.enrollment-request-table .submission-action button {
+  flex: 0 0 auto;
+}
+
+.enrollment-request-remark input {
+  width: 100%;
+  min-width: 120px;
+  min-height: 38px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--text);
+  outline: none;
+}
+
+.enrollment-request-remark input:focus {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px rgba(141, 94, 56, 0.1);
+}
+
+.enrollment-approve-button {
+  background: #2f8b6b;
+  border-color: #2f8b6b;
+}
+
+.enrollment-reject-button {
+  color: #b53d32;
+  border-color: rgba(181, 61, 50, 0.3);
+}
+
+.cb-filebtn-name {
+  display: block;
+  max-width: 220px;
+  margin-top: 7px;
+  overflow: hidden;
+  color: var(--text-soft);
+  font-size: 0.72rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cb-thumbnail-preview {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: 9px;
+  color: var(--text-soft);
+  font-size: 0.72rem;
+}
+
+.cb-thumbnail-preview img {
+  width: 72px;
+  height: 46px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  object-fit: cover;
 }
 
 .submission-table-wrap {

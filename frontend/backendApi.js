@@ -130,6 +130,7 @@ async function request(path, options = {}) {
     const error = body?.error || response.statusText || "API request failed";
     const err = new Error(error);
     err.status = response.status;
+    if (body && typeof body === "object") Object.assign(err, body);
     if (response.status === 401) {
       handleUnauthorized(error);
     }
@@ -263,12 +264,38 @@ export async function deleteTraining(id) {
   });
 }
 
-export async function fetchCourses() {
-  return request("/courses");
+export async function fetchCourses(summary = false) {
+  return request(summary ? "/courses?summary=1" : "/courses");
+}
+
+export async function fetchCourse(id) {
+  return request(`/courses/${encodeURIComponent(id)}`);
 }
 
 export async function fetchNotifications(studentId) {
   return request(`/notifications/${encodeURIComponent(studentId)}`);
+}
+
+export async function fetchEnrollmentRequests(studentId) {
+  return request(`/enrollment-requests/student/${encodeURIComponent(studentId)}`);
+}
+
+export async function createEnrollmentRequest(payload) {
+  return request("/enrollment-requests", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function fetchPendingEnrollmentRequests(force = false) {
+  return request(`/enrollment-requests/pending${force ? "?force=1" : ""}`);
+}
+
+export async function updateEnrollmentRequestStatus(studentId, requestId, status, remark = "") {
+  return request(`/enrollment-requests/${encodeURIComponent(studentId)}/${encodeURIComponent(requestId)}/status`, {
+    method: "PATCH",
+    body: JSON.stringify({ status, remark }),
+  });
 }
 
 export async function markNotificationRead(studentId, notificationId) {
@@ -324,6 +351,10 @@ export async function saveCourseLessonProgress(courseId, lessonId, progress) {
 
 export async function fetchCourseUploadAuth() {
   return request("/courses/upload-auth");
+}
+
+export async function shareCourseCertificate(courseId, image) {
+  return request(`/courses/${encodeURIComponent(courseId)}/certificate`, { method: "POST", body: JSON.stringify({ image }) });
 }
 
 export async function fetchStipPrograms() {

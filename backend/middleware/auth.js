@@ -20,7 +20,13 @@ export async function authenticate(req, res, next) {
       return next();
     }
 
-    const user = (await User.findById(decoded.uid, decoded.dept).select("-password"))[0];
+    let user = (await User.findById(decoded.uid, decoded.dept).select("-password"))[0];
+    if (!user) {
+      user = (await User.findById(decoded.uid).select("-password"))[0];
+    }
+    if (!user && decoded.username) {
+      user = await User.findOne({ username: String(decoded.username).trim().toLowerCase() });
+    }
     if (!user) {
       return res.status(401).json({ error: "User not found" });
     }

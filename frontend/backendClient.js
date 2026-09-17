@@ -19,7 +19,12 @@ import {
   updateTraining,
   deleteTraining,
   fetchCourses,
+  fetchCourse,
   fetchNotifications,
+  fetchEnrollmentRequests,
+  createEnrollmentRequest,
+  fetchPendingEnrollmentRequests,
+  updateEnrollmentRequestStatus,
   markNotificationRead,
   markAllNotificationsRead,
   createCourse as createCourseApi,
@@ -124,12 +129,76 @@ function normalizeEntity(item) {
   };
 }
 
-const COURSES_CACHE_KEY = "crmst-courses-cache";
-const COURSES_CACHE_TTL_MS = 5 * 60 * 1000;
+const COURSES_CACHE_KEY = "crmst-courses-cache-v2";
+// Course mutations clear this cache immediately. A one-minute TTL avoids
+// duplicate reads from refreshes, navigation, and React development renders.
+const COURSES_CACHE_TTL_MS = 60 * 1000;
+const COURSES_SUMMARY_CACHE_TTL_MS = 60 * 1000;
 
-function readCoursesCache() {
+function formatDurationTime(totalSeconds) {
+  const seconds = Math.max(0, Math.round(Number(totalSeconds) || 0));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const remainder = seconds % 60;
+  return [hours, minutes, remainder].map((value) => String(value).padStart(2, "0")).join(":");
+}
+
+function durationToSeconds(value) {
+  if (typeof value === "number" && Number.isFinite(value)) return Math.max(0, Math.round(value));
+  const match = String(value || "").trim().match(/^(\d+):(\d{1,2}):(\d{1,2})$/);
+  if (!match || Number(match[2]) > 59 || Number(match[3]) > 59) return null;
+  return Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3]);
+}
+
+function assetNameFromUrl(url, fallback) {
+  if (!url) return "";
   try {
-    const raw = window.localStorage.getItem(COURSES_CACHE_KEY);
+    const path = String(url).split("?")[0];
+    const name = decodeURIComponent(path.slice(path.lastIndexOf("/") + 1));
+    return name || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function normalizeLessonDuration(lesson) {
+  if (!lesson || typeof lesson !== "object") return lesson;
+  const totalSeconds = durationToSeconds(lesson.durationTime) ?? durationToSeconds(lesson.durationSec) ?? 0;
+  const { durationSec: _legacyDurationSec, ...lessonWithoutLegacyDuration } = lesson;
+  const tasks = Array.isArray(lesson.tasks)
+    ? lesson.tasks.map((task) => ({
+      ...task,
+      fileName: task.fileName || assetNameFromUrl(task.pdfUrl || task.url, "Uploaded task PDF"),
+    }))
+    : lesson.tasks;
+  return {
+    ...lessonWithoutLegacyDuration,
+    tasks,
+    durationTime: formatDurationTime(totalSeconds),
+    videoFileName: lesson.videoFileName || assetNameFromUrl(lesson.videoUrl, "Uploaded video"),
+    notesFileName: lesson.notesFileName || assetNameFromUrl(lesson.notesUrl, "Uploaded notes PDF"),
+  };
+}
+
+function normalizeCourseDurations(course) {
+  if (!course || typeof course !== "object") return course;
+  const lessons = Array.isArray(course.lessons) ? course.lessons.map(normalizeLessonDuration) : course.lessons;
+  const sections = Array.isArray(course.sections)
+    ? course.sections.map((section) => ({
+      ...section,
+      lessons: Array.isArray(section.lessons) ? section.lessons.map(normalizeLessonDuration) : section.lessons,
+    }))
+    : course.sections;
+  return { ...course, lessons, sections };
+}
+
+function coursesCacheKey(scope = "global") {
+  return `${COURSES_CACHE_KEY}:${String(scope || "global")}`;
+}
+
+function readCoursesCache(scope) {
+  try {
+    const raw = window.localStorage.getItem(coursesCacheKey(scope));
     if (!raw) return { items: [], fetchedAt: 0 };
     const parsed = JSON.parse(raw);
     return {
@@ -141,9 +210,9 @@ function readCoursesCache() {
   }
 }
 
-function writeCoursesCache(items) {
+function writeCoursesCache(items, scope) {
   try {
-    window.localStorage.setItem(COURSES_CACHE_KEY, JSON.stringify({ items, fetchedAt: Date.now() }));
+    window.localStorage.setItem(coursesCacheKey(scope), JSON.stringify({ items, fetchedAt: Date.now() }));
     return true;
   } catch {
     return false;
@@ -152,7 +221,9 @@ function writeCoursesCache(items) {
 
 export function invalidateCoursesCache() {
   try {
-    window.localStorage.removeItem(COURSES_CACHE_KEY);
+    Object.keys(window.localStorage)
+      .filter((key) => key === COURSES_CACHE_KEY || key.startsWith(`${COURSES_CACHE_KEY}:`))
+      .forEach((key) => window.localStorage.removeItem(key));
   } catch {}
 }
 
@@ -327,15 +398,18 @@ export async function loadTrainings() {
   }
 }
 
-export async function loadCourses(force = false) {
+export async function loadCourses(force = false, summary = false) {
   try {
-    const cached = readCoursesCache();
-    if (!force && Array.isArray(cached.items) && cached.items.length && Date.now() - cached.fetchedAt < COURSES_CACHE_TTL_MS) {
-      return normalizeCollection(cached.items);
+    const scope = getSavedUser()?.id || getSavedUser()?._id || "global";
+    const cacheScope = `${scope}:${summary ? "summary" : "details"}`;
+    const cached = readCoursesCache(cacheScope);
+    const cacheTtl = summary ? COURSES_SUMMARY_CACHE_TTL_MS : COURSES_CACHE_TTL_MS;
+    if (!force && Array.isArray(cached.items) && cached.items.length && Date.now() - cached.fetchedAt < cacheTtl) {
+      return normalizeCollection(cached.items).map(normalizeCourseDurations);
     }
 
-    const result = normalizeCollection(await fetchCourses());
-    writeCoursesCache(result);
+    const result = normalizeCollection(await fetchCourses(summary)).map(normalizeCourseDurations);
+    writeCoursesCache(result, cacheScope);
     return result;
   } catch (err) {
     console.warn("Failed loading courses", err);
@@ -343,8 +417,39 @@ export async function loadCourses(force = false) {
   }
 }
 
+export async function loadCourse(id) {
+  try {
+    return normalizeCourseDurations(normalizeEntity(await fetchCourse(id)));
+  } catch (err) {
+    console.warn("Failed loading course", err);
+    return null;
+  }
+}
+
 export async function loadNotifications(studentId) {
   return fetchNotifications(studentId);
+}
+
+export async function loadEnrollmentRequests(studentId) {
+  return fetchEnrollmentRequests(studentId);
+}
+
+export async function requestCourseEnrollment(studentId, courseId, courseName, extra = {}) {
+  return createEnrollmentRequest({
+    studentId,
+    courseId,
+    courseName,
+    studentName: extra.studentName || "",
+    studentPhone: extra.studentPhone || "",
+  });
+}
+
+export async function loadPendingEnrollmentRequests(force = false) {
+  return fetchPendingEnrollmentRequests(force);
+}
+
+export async function updateEnrollmentRequestStatusForAdmin(studentId, requestId, status, remark = "") {
+  return updateEnrollmentRequestStatus(studentId, requestId, status, remark);
 }
 
 export async function readNotification(studentId, notificationId) {
@@ -384,7 +489,7 @@ export async function gradeStudentTask(courseId, lessonId, taskId, payload) {
 }
 
 export async function createCourse(course) {
-  const created = normalizeEntity(await createCourseApi(course));
+  const created = normalizeCourseDurations(normalizeEntity(await createCourseApi(course)));
   invalidateCoursesCache();
   return created;
 }
@@ -396,25 +501,27 @@ export async function deleteCourse(id) {
 }
 
 export async function updateCourse(id, course) {
-  const updated = normalizeEntity(await updateCourseApi(id, course));
+  const updated = normalizeCourseDurations(normalizeEntity(await updateCourseApi(id, course)));
   invalidateCoursesCache();
   return updated;
 }
 
-export async function addCourseLesson(id, lesson) {
-  const updated = normalizeEntity(await addCourseLessonApi(id, lesson));
+async function addCourseLesson(id, lesson) {
+  const updated = normalizeCourseDurations(normalizeEntity(await addCourseLessonApi(id, lesson)));
   invalidateCoursesCache();
   return updated;
 }
+
+export { addCourseLesson };
 
 export async function deleteCourseLesson(courseId, lessonId) {
-  const updated = normalizeEntity(await deleteCourseLessonApi(courseId, lessonId));
+  const updated = normalizeCourseDurations(normalizeEntity(await deleteCourseLessonApi(courseId, lessonId)));
   invalidateCoursesCache();
   return updated;
 }
 
 export async function updateCourseLesson(courseId, lessonId, lesson) {
-  const updated = normalizeEntity(await updateCourseLessonApi(courseId, lessonId, lesson));
+  const updated = normalizeCourseDurations(normalizeEntity(await updateCourseLessonApi(courseId, lessonId, lesson)));
   invalidateCoursesCache();
   return updated;
 }

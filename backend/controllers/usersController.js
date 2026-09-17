@@ -15,6 +15,11 @@ function validateEmail(value) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || "").trim());
 }
 
+function normalizeStudentFields(payload) {
+  if (String(payload.role || "").trim().toLowerCase() !== "student") return payload;
+  return { ...payload, role: "Student", dept: "Student", position: "Student" };
+}
+
 export async function createUser(req, res) {
   if (!isMongoConnected) return mongoUnavailable(res);
   try {
@@ -31,7 +36,7 @@ export async function createUser(req, res) {
       }
     }
 
-    if (!name || !email || !phone || !emergencyContact || !education || !dept || !position || !role || !joined || !username || !password || !state || !branch || !branchCode || !address) {
+    if (!name || !email || !phone || !education || !dept || !position || !role || !joined || !username || !password || !state || !branch || !branchCode || !address) {
       return res.status(400).json({ error: "All required fields must be filled" });
     }
 
@@ -43,7 +48,7 @@ export async function createUser(req, res) {
       return res.status(400).json({ error: "Contact number must be exactly 10 digits and start with 6, 7, 8, or 9" });
     }
 
-    if (!validatePhone(emergencyContact)) {
+    if (emergencyContact && !validatePhone(emergencyContact)) {
       return res.status(400).json({ error: "Emergency contact must be exactly 10 digits and start with 6, 7, 8, or 9" });
     }
 
@@ -61,12 +66,12 @@ export async function createUser(req, res) {
     const hash = await bcrypt.hash(password, 10);
     // const generatedId = `${usernameLower}-${Date.now()}`;
 
-    const user = await User.create({
+    const user = await User.create(normalizeStudentFields({
       // id: generatedId,
       name: String(name).trim(),
       email: String(email).trim().toLowerCase(),
       phone: String(phone).trim(),
-      emergencyContact: String(emergencyContact).trim(),
+      emergencyContact: String(emergencyContact || "").trim(),
       maritalStatus: maritalStatus ? String(maritalStatus).trim() : "",
       education: String(education).trim(),
       username: usernameLower,
@@ -83,7 +88,7 @@ export async function createUser(req, res) {
       imagePublicId: String(imagePublicId || "").trim(),
       status: "Active",
       type: "Current",
-    });
+    }));
 
     const { password: _password, ...safeUser } = user.toObject();
     return res.status(201).json({ id: user.id || String(user._id), ...safeUser });
@@ -99,7 +104,7 @@ export async function updateUser(req, res) {
     return res.status(400).json({ error: "Invalid document id" });
   }
   try {
-    const payload = { ...req.body };
+    let payload = normalizeStudentFields({ ...req.body });
     if (!payload.id) {
       payload.id = String(id);
     }

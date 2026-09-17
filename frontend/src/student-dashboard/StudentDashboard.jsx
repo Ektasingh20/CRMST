@@ -1,4 +1,7 @@
-import React, { useEffect, useState, useMemo } from "react";
+import React, { useEffect, useState, useMemo, useRef } from "react";
+import { jsPDF } from "jspdf";
+import { certificateImage } from "./certificateImage";
+import { shareCourseCertificate } from "../../backendApi";
 
 /* ============================================================
    THEME TOKENS — pulled from the reference CRM screenshot
@@ -88,6 +91,10 @@ const Icon = {
       <circle cx="12" cy="8" r="4" /><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7" />
     </svg>
   ),
+  print: (p) => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" {...p}><path d="M6 9V3h12v6" /><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" /><path d="M6 14h12v7H6z" /></svg>,
+  download: (p) => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" {...p}><path d="M12 3v12" /><path d="m7 10 5 5 5-5" /><path d="M5 21h14" /></svg>,
+  verify: (p) => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" {...p}><path d="M12 3 20 6v5c0 5-3.4 8.5-8 10-4.6-1.5-8-5-8-10V6l8-3Z" /><path d="m8.5 12 2.2 2.2 4.8-5" /></svg>,
+  share: (p) => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" {...p}><circle cx="18" cy="5" r="2.5" /><circle cx="6" cy="12" r="2.5" /><circle cx="18" cy="19" r="2.5" /><path d="m8.2 10.8 7.6-4.5M8.2 13.2l7.6 4.5" /></svg>,
   logout: (p) => (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" {...p}>
       <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><path d="M16 17l5-5-5-5" /><path d="M21 12H9" />
@@ -173,7 +180,6 @@ const NAV_SECTIONS = [
   { label: "Account", items: [
     { id: "notifications", label: "Notifications", icon: Icon.bell },
     { id: "profile", label: "Profile", icon: Icon.user },
-    { id: "logout", label: "Logout", icon: Icon.logout },
   ]},
 ];
 
@@ -227,13 +233,14 @@ function Btn({ children, variant = "outline", onClick, style, disabled }) {
   const base = {
     border: "none", borderRadius: 10, padding: "9px 16px", fontSize: 12.5,
     fontWeight: 600, cursor: disabled ? "not-allowed" : "pointer", transition: "all .15s ease",
-    fontFamily: "inherit",
+    fontFamily: "inherit", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 5,
   };
   const variants = {
     outline: { background: C.pillBg, color: C.text, border: `1px solid ${C.pillBorder}` },
     primary: { background: C.accent, color: "#fff" },
     delete: { background: C.deleteBg, color: C.deleteText },
   };
+  const buttonContent = children === "Print" ? <><Icon.print style={{ width: 13, height: 13 }} /> Print</> : children === "Download PDF" ? "Download" : children;
   return (
     <button
       onClick={disabled ? undefined : onClick}
@@ -241,46 +248,85 @@ function Btn({ children, variant = "outline", onClick, style, disabled }) {
       onMouseEnter={(e) => { if (!disabled) e.currentTarget.style.filter = "brightness(0.96)"; }}
       onMouseLeave={(e) => { e.currentTarget.style.filter = "none"; }}
     >
-      {children}
+      {buttonContent}
     </button>
   );
 }
 
-function CourseCard({ course, onOpen, onContinue }) {
+function CourseCard({ course, onOpen, onContinue, onRequestEnrollment }) {
   const activate = () => (course.enrolled ? (onContinue || onOpen)(course) : onOpen(course));
+  const requestPending = Boolean(course.requestPending);
+  const requestStatus = String(course.requestStatus?.status || "").toLowerCase();
+  const hasRequest = Boolean(course.requestStatus);
+  const requestLabel = requestStatus === "contacted" ? "Request Contacted"
+    : requestStatus === "approved" ? "Request Approved"
+      : requestStatus === "rejected" ? "Request Rejected"
+        : requestStatus === "completed" ? "Request Completed" : "Request Sent";
   return (
     <div
       onClick={activate}
       style={{
-        background: C.card, border: `1px solid ${C.border}`, borderRadius: 18, padding: 20,
-        boxShadow: "0 1px 2px rgba(33,28,46,0.03), 0 4px 14px rgba(33,28,46,0.04)",
-        display: "flex", flexDirection: "column", cursor: "pointer",
+        background: C.card, border: `1px solid ${C.border}`, borderRadius: 20, overflow: "hidden",
+        boxShadow: "0 2px 5px rgba(33,28,46,0.04), 0 12px 28px rgba(33,28,46,0.07)",
+        display: "flex", flexDirection: "column", cursor: "pointer", minWidth: 0,
       }}
     >
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 14 }}>
-        <div style={{
-          width: 42, height: 42, borderRadius: 12, background: C.badgeBg, color: C.badgeIcon,
-          display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
-        }}>
-          <Icon.courses style={{ width: 20, height: 20 }} />
+      <div style={{ position: "relative", width: "100%", aspectRatio: "16 / 5.8", minHeight: 104, maxHeight: 150, background: "#f5ede2", overflow: "hidden" }}>
+        {course.thumbnail || course.imageUrl ? (
+          <img src={course.thumbnail || course.imageUrl} alt={`${course.title} thumbnail`} loading="lazy" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+        ) : (
+          <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: C.badgeIcon, background: `linear-gradient(135deg, ${C.badgeBg}, #ead1ae)` }}>
+            <Icon.courses style={{ width: 42, height: 42, opacity: 0.72 }} />
+          </div>
+        )}
+        <div style={{ position: "absolute", top: 14, right: 16 }}>
+          {course.enrolled ? <Badge tone="green">✓ Enrolled</Badge> : <Badge>Not Enrolled</Badge>}
         </div>
-        {course.enrolled ? <Badge tone="green">✓ Enrolled</Badge> : <Badge>Not Enrolled</Badge>}
       </div>
 
-      <h4 style={{ margin: "0 0 6px", fontSize: 15.5, fontWeight: 700 }}>{course.title}</h4>
-      <p style={{ margin: "0 0 16px", fontSize: 12.5, color: C.textSecondary, minHeight: 34 }}>{course.desc}</p>
+      <div style={{ display: "flex", flexDirection: "column", padding: "16px 18px 16px", minHeight: 190 }}>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 10 }}>
+        <div style={{ minWidth: 0 }}>
+          <h4 style={{ margin: 0, fontSize: 18, lineHeight: 1.15, fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{course.title}</h4>
+        </div>
+      </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 16 }}>
-        <Stat label="Duration" value={course.duration} />
-        <Stat label="Lessons" value={course.lessons} />
-        <Stat label="Status" value={course.enrolled ? "Active" : "Available"} />
+      <p style={{ margin: "0 0 16px", fontSize: 12.5, lineHeight: 1.4, color: C.textSecondary, minHeight: 50, display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{course.desc}</p>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 9, padding: "0 0 13px", marginBottom: 12, borderBottom: `1px solid ${C.border}` }}>
+        <CardStat icon={Icon.clock} label="Duration" value={course.duration} />
+        <CardStat icon={Icon.notes} label="Lessons" value={course.lessons} />
+        <CardStat icon={Icon.progress} label="Status" value={course.enrolled ? "Active" : "Available"} />
       </div>
 
       <div style={{ display: "flex", gap: 8, marginTop: "auto" }}>
-        <Btn variant="primary" style={{ flex: 1 }} onClick={(e) => { e.stopPropagation(); activate(); }}>
-          {course.enrolled ? "Continue Course" : "Explore Course"}
-        </Btn>
+        {course.enrolled ? (
+          <Btn variant="primary" style={{ flex: 1 }} onClick={(e) => { e.stopPropagation(); activate(); }}>
+            Continue Course
+          </Btn>
+        ) : hasRequest ? (
+          <Btn variant="outline" disabled style={{ flex: 1 }} onClick={(e) => e.stopPropagation()}>
+            {requestLabel}
+          </Btn>
+        ) : (
+          <Btn variant="primary" style={{ flex: 1 }} onClick={(e) => { e.stopPropagation(); onRequestEnrollment?.(course); }}>
+            Request Enroll
+          </Btn>
+        )}
       </div>
+      </div>
+    </div>
+  );
+}
+
+function CardStat({ icon: StatIcon, label, value }) {
+  return (
+    <div style={{ minWidth: 0 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 5, color: C.accent, marginBottom: 6 }}>
+        <StatIcon style={{ width: 16, height: 16 }} />
+        <span style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em", color: C.textMuted, fontWeight: 800 }}>{label}</span>
+      </div>
+      <div style={{ fontSize: 14, fontWeight: 800, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{value}</div>
     </div>
   );
 }
@@ -328,10 +374,14 @@ function getLessonProgressKey(courseId, lesson = {}) {
 }
 
 function getLessonProgressRatio(lesson = {}, progressOverride = {}) {
-  const progress = { ...(lesson.studentProgress || {}), ...progressOverride };
+  // CoursePlayer flattens lessons and exposes their completion fields directly
+  // on the lesson. Include those fields as well as persisted studentProgress,
+  // otherwise its right-hand progress rail incorrectly falls back to 0%.
+  const progress = { ...lesson, ...(lesson.studentProgress || {}), ...progressOverride };
   const tasks = Array.isArray(lesson.tasks) ? lesson.tasks : [];
   const taskSubmissions = progress.taskSubmissions || {};
-  const taskDone = tasks.filter((task, index) => taskSubmissions[String(task.id || `task-${index + 1}`)]?.submitted === true).length;
+  const submittedTasks = tasks.filter((task, index) => taskSubmissions[String(task.id || `task-${index + 1}`)]?.submitted === true).length;
+  const taskDone = submittedTasks || (progress.taskCompleted ? tasks.length : 0);
   const total = 1 + (lesson.notesUrl ? 1 : 0) + tasks.length;
   const done = (progress.videoCompleted ? 1 : 0)
     + (lesson.notesUrl ? (progress.notesCompleted ? 1 : 0) : 0)
@@ -372,8 +422,15 @@ function getCourseSectionGroups(course = {}, lessonProgress = {}) {
   }));
 }
 
-function CourseModal({ course, onClose, onToast, onContinue }) {
+function CourseModal({ course, onClose, onToast, onContinue, onRequestEnrollment }) {
   if (!course) return null;
+  const requestPending = Boolean(course.requestPending);
+  const requestStatus = String(course.requestStatus?.status || "").toLowerCase();
+  const hasRequest = Boolean(course.requestStatus);
+  const requestLabel = requestStatus === "contacted" ? "Request Contacted"
+    : requestStatus === "approved" ? "Request Approved"
+      : requestStatus === "rejected" ? "Request Rejected"
+        : requestStatus === "completed" ? "Request Completed" : "Request Sent";
 
   return (
     <div
@@ -428,9 +485,15 @@ function CourseModal({ course, onClose, onToast, onContinue }) {
             <p style={{ fontSize: 12.5, color: C.textSecondary, marginBottom: 18 }}>
               Enroll in this course to unlock its videos, notes and assignments.
             </p>
-            <Btn variant="primary" style={{ width: "100%" }} onClick={() => { onToast(`Enrollment request sent for “${course.title}”.`); onClose(); }}>
-              Request Enrollment
-            </Btn>
+            {hasRequest ? (
+              <Btn variant="outline" disabled style={{ width: "100%" }} onClick={() => undefined}>
+                {requestLabel}
+              </Btn>
+            ) : (
+              <Btn variant="primary" style={{ width: "100%" }} onClick={() => { onRequestEnrollment?.(course); }}>
+                Request Enroll
+              </Btn>
+            )}
           </>
         )}
       </div>
@@ -489,6 +552,7 @@ function CoursePlayer({ course, lessonProgress, activeLessonUID, activeTab, onSe
   const currentLesson = flatLessons.find((l) => getLessonUID(l) === activeLessonUID) || flatLessons[0] || null;
   const currentSectionName = currentLesson ? String(currentLesson.section || "General").trim() || "General" : null;
   const currentModuleIndex = groups.findIndex((g) => g.name === currentSectionName);
+  const watchedLessonRef = useRef("");
 
   const [expanded, setExpanded] = useState(() => {
     const initial = {};
@@ -500,6 +564,11 @@ function CoursePlayer({ course, lessonProgress, activeLessonUID, activeTab, onSe
   }, [currentSectionName]);
 
   useEffect(() => {}, [activeLessonUID]);
+
+  const watchKey = `${course.id || "course"}:${activeLessonUID || "lesson"}`;
+  useEffect(() => {
+    watchedLessonRef.current = "";
+  }, [watchKey]);
 
   if (!currentLesson) {
     return <div style={{ padding: 24, color: C.textSecondary }}>This course doesn't have any lessons yet.</div>;
@@ -523,9 +592,17 @@ function CoursePlayer({ course, lessonProgress, activeLessonUID, activeTab, onSe
     : generatedSyllabus || course.syllabus || "Course syllabus is not available yet.";
   const handleTimeUpdate = (e) => {
     const t = e.currentTarget.currentTime || 0;
-    if (t >= MIN_WATCH_SECONDS && !currentLesson.videoCompleted) onMarkWatched(currentLesson);
+    if (t >= MIN_WATCH_SECONDS && !currentLesson.videoCompleted && watchedLessonRef.current !== watchKey) {
+      watchedLessonRef.current = watchKey;
+      onMarkWatched(currentLesson);
+    }
   };
-  const handleEnded = () => { if (!currentLesson.videoCompleted) onMarkWatched(currentLesson); };
+  const handleEnded = () => {
+    if (!currentLesson.videoCompleted && watchedLessonRef.current !== watchKey) {
+      watchedLessonRef.current = watchKey;
+      onMarkWatched(currentLesson);
+    }
+  };
 
   const TABS = [
     { id: "about", label: "About" },
@@ -554,8 +631,17 @@ function CoursePlayer({ course, lessonProgress, activeLessonUID, activeTab, onSe
         </button>
 
         <div style={{ display: "flex", gap: 12, alignItems: "flex-start", padding: "14px 18px 16px", borderBottom: "1px solid rgba(178,147,118,0.14)" }}>
-          <div style={{ width: 40, height: 40, borderRadius: 11, background: C.badgeBg, color: C.badgeIcon, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-            <Icon.courses style={{ width: 19, height: 19 }} />
+          <div style={{ width: 40, height: 40, borderRadius: 11, background: C.badgeBg, color: C.badgeIcon, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, overflow: "hidden" }}>
+            {course.thumbnail || course.imageUrl ? (
+              <img
+                src={course.thumbnail || course.imageUrl}
+                alt={`${course.title} thumbnail`}
+                style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                onError={(event) => { event.currentTarget.style.display = "none"; }}
+              />
+            ) : (
+              <Icon.courses style={{ width: 19, height: 19 }} />
+            )}
           </div>
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 14, fontWeight: 800, color: "#fff", lineHeight: 1.25 }}>{course.title}</div>
@@ -708,7 +794,7 @@ function CoursePlayer({ course, lessonProgress, activeLessonUID, activeTab, onSe
           <div style={{ display: "flex", flexDirection: "column", gap: 16, borderLeft: `1px solid ${C.border}`, paddingLeft: 20 }}>
             <MetaRow icon={Icon.clock} label="Course duration" value={course.duration || "—"} />
             <MetaRow icon={Icon.notes} label="Fees" value={course.fees || course.price || "—"} />
-            <MetaRow icon={Icon.clock} label="Duration seconds" value={currentLesson.durationSec ? `${currentLesson.durationSec} sec` : currentLesson.duration || "—"} />
+            <MetaRow icon={Icon.clock} label="Video duration" value={currentLesson.durationTime || currentLesson.duration || "—"} />
             <MetaRow icon={Icon.pointer} label="Topics" value={`${currentSectionName}, ${currentLesson.title}`} />
           </div>
         </div>
@@ -941,7 +1027,7 @@ function initials(name) {
 /* ============================================================
    MAIN APP
    ============================================================ */
-export default function StudentDashboard({ user, onLogout, courses = [], notifications = [], onRefreshNotifications, onReadNotification, onReadAllNotifications, uploadStudentResource, saveLessonProgress }) {
+export default function StudentDashboard({ user, onLogout, courses = [], notifications = [], enrollmentRequests = [], onRefreshNotifications, onReadNotification, onReadAllNotifications, uploadStudentResource, saveLessonProgress, loadCourse, onRequestCourseEnrollment }) {
   const recentCourseStorageKey = `crmst-recent-course-${user?.id || user?._id || "student"}`;
   const [activeNav, setActiveNav] = useState("dashboard");
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -956,35 +1042,76 @@ export default function StudentDashboard({ user, onLogout, courses = [], notific
   });
   const [openResource, setOpenResource] = useState(null);
   const [notifOpen, setNotifOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const profilePopupRef = useRef(null);
+  const profileButtonRef = useRef(null);
+  useEffect(() => {
+    if (!profileOpen) return;
+    const dismissOutside = (event) => {
+      if (!profilePopupRef.current?.contains(event.target)) setProfileOpen(false);
+    };
+    const dismissEscape = (event) => {
+      if (event.key === "Escape") {
+        setProfileOpen(false);
+        profileButtonRef.current?.focus();
+      }
+    };
+    document.addEventListener("pointerdown", dismissOutside);
+    document.addEventListener("keydown", dismissEscape);
+    return () => {
+      document.removeEventListener("pointerdown", dismissOutside);
+      document.removeEventListener("keydown", dismissEscape);
+    };
+  }, [profileOpen]);
   const notifs = notifications;
   const [toast, setToast] = useState(null);
   const [lessonProgress, setLessonProgress] = useState(() => {
     try { return JSON.parse(window.localStorage.getItem(`crmst-progress-${user?.id || user?._id}`) || "{}"); } catch { return {}; }
   });
   const [uploadedResources, setUploadedResources] = useState({});
+  const [courseDetails, setCourseDetails] = useState({});
+  const [loadingCourseId, setLoadingCourseId] = useState(null);
+  const [selectedCertificateId, setSelectedCertificateId] = useState("");
 
   const studentName = user?.name || "Student";
   const studentInitials = initials(studentName);
   const studentEmail = user?.email || "";
   const studentId = String(user?.id || user?._id || "");
 
-  const catalogCourses = useMemo(() => courses.map((course) => {
+  const requestStatusMap = useMemo(() => {
+    const next = new Map();
+    (Array.isArray(enrollmentRequests) ? enrollmentRequests : []).forEach((request) => {
+      const courseId = String(request.courseId || "").trim().toLowerCase();
+      const courseName = String(request.courseName || "").trim().toLowerCase();
+      if (courseId) next.set(`id:${courseId}`, request);
+      if (courseName) next.set(`name:${courseName}`, request);
+    });
+    return next;
+  }, [enrollmentRequests]);
+
+  const catalogCourses = useMemo(() => courses.map((sourceCourse) => {
+    const course = courseDetails[sourceCourse.id || sourceCourse._id] || sourceCourse;
     const studentIds = Array.isArray(course.studentIds) ? course.studentIds.map(String) : [];
     const lessons = Array.isArray(course.lessons) ? course.lessons : [];
+    const courseId = String(course.id || course._id || "");
     return {
       ...course,
-      id: course.id || course._id,
+      id: courseId,
       title: course.title || "Untitled course",
       desc: course.syllabus || `${course.mode || "Online"} course covering ${course.tools || "practical skills"}.`,
       duration: course.duration || "-",
       lessons: course.totalLessons || lessons.length,
       lessonsData: lessons,
-      enrolled: Boolean(studentId && studentIds.includes(studentId)),
+      enrolled: typeof course.enrolled === "boolean" ? course.enrolled : Boolean(studentId && studentIds.includes(studentId)),
+      requestStatus: requestStatusMap.get(`id:${courseId.trim().toLowerCase()}`)
+        || requestStatusMap.get(`name:${String(course.title || course.name || "").trim().toLowerCase()}`)
+        || null,
+      requestPending: (requestStatusMap.get(`id:${courseId.trim().toLowerCase()}`)?.status || requestStatusMap.get(`name:${String(course.title || course.name || "").trim().toLowerCase()}`)?.status) === "pending",
       progress: lessons.length ? Math.round((lessons.reduce((total, lesson) => (
         total + getLessonProgressRatio(lesson, lessonProgress[getLessonProgressKey(course.id, lesson)] || {})
       ), 0) / lessons.length) * 100) : 0,
     };
-  }), [courses, studentId, lessonProgress]);
+  }), [courses, courseDetails, studentId, lessonProgress, requestStatusMap]);
 
   const showToast = (msg) => {
     setToast(msg);
@@ -999,6 +1126,67 @@ export default function StudentDashboard({ user, onLogout, courses = [], notific
   }, [catalogCourses, query]);
 
   const enrolledCourses = catalogCourses.filter(c => c.enrolled);
+  const completedCourses = enrolledCourses.filter((course) => course.progress >= 100);
+  const selectedCertificate = completedCourses.find((course) => String(course.id) === String(selectedCertificateId)) || completedCourses[0] || null;
+  const averageProgress = enrolledCourses.length
+    ? Math.round(enrolledCourses.reduce((total, course) => total + Number(course.progress || 0), 0) / enrolledCourses.length)
+    : 0;
+  const joinedValue = String(user?.joined || "").trim();
+  const joinedDate = joinedValue ? new Date(`${joinedValue.slice(0, 10)}T00:00:00`) : null;
+  const hasJoinedDate = joinedDate && !Number.isNaN(joinedDate.getTime());
+  const batchYear = user?.batchNo || user?.batch || user?.batchYear || (hasJoinedDate ? joinedDate.getFullYear() : null);
+  const joinedLabel = hasJoinedDate
+    ? joinedDate.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })
+    : "Not set";
+  const [certificateBusy, setCertificateBusy] = useState(false);
+  const [certificateLink, setCertificateLink] = useState("");
+  const sharingRef = useRef(false);
+  const [certificateDate] = useState(() => new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }));
+  const certificateArt = useMemo(() => selectedCertificate ? certificateImage({
+    name: studentName, studentId: user?.studentId || user?.registrationId || studentId,
+    batch: batchYear, title: selectedCertificate.title,
+    id: selectedCertificate.certificateId || selectedCertificate.id, date: certificateDate,
+  }) : "", [selectedCertificate, studentName, studentId, user?.studentId, user?.registrationId, batchYear, certificateDate]);
+  const downloadCertificate = (course) => {
+    try {
+      const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: [210, 170] });
+      pdf.addImage(certificateArt, "PNG", 0, 0, pdf.internal.pageSize.getWidth(), pdf.internal.pageSize.getHeight());
+      pdf.save(`${String(course.title || "course").replace(/[^a-z0-9]+/gi, "-")}-certificate.pdf`);
+    } catch { showToast("Could not create the PDF. Please try again."); }
+  };
+  const printCertificate = () => {
+    const printWindow = window.open("", "_blank", "width=800,height=800");
+    if (!printWindow) { showToast("Allow pop-ups to print the certificate."); return; }
+    printWindow.document.write(`<!doctype html><html><head><title>Certificate</title><style>
+      @page { size: 210mm 170mm; margin: 0; }
+      html, body { margin: 0; padding: 0; width: 210mm; height: 170mm; overflow: hidden; }
+      body { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+      img { display: block; width: 210mm; height: 170mm; margin: 0; padding: 0; object-fit: fill; break-inside: avoid; page-break-inside: avoid; }
+      @media print { img { position: absolute; left: 0; top: 0; } }
+    </style></head><body></body></html>`);
+    printWindow.document.close();
+    const artwork = printWindow.document.createElement("img");
+    artwork.alt = "Certificate of Completion";
+    artwork.onload = async () => {
+      await artwork.decode().catch(() => {});
+      printWindow.requestAnimationFrame(() => {
+        printWindow.focus();
+        printWindow.print();
+      });
+    };
+    artwork.src = certificateArt;
+    printWindow.document.body.appendChild(artwork);
+  };
+  const shareCertificate = async (course) => {
+    if (sharingRef.current) return;
+    sharingRef.current = true;
+    setCertificateBusy(true);
+    try {
+      const result = await shareCourseCertificate(course.id, certificateArt);
+      setCertificateLink(result.certificateUrl);
+    } catch (err) { showToast(err.message || "Could not share the certificate."); }
+    finally { sharingRef.current = false; setCertificateBusy(false); }
+  };
   const recentCourse = enrolledCourses.find((course) => String(course.id) === String(recentCourseId)) || enrolledCourses[0] || null;
   const enrolledLessons = enrolledCourses.flatMap((course) => course.lessonsData.map((lesson) => {
     const progress = { ...(lesson.studentProgress || {}), ...(lessonProgress[getLessonProgressKey(course.id, lesson)] || {}) };
@@ -1045,17 +1233,44 @@ export default function StudentDashboard({ user, onLogout, courses = [], notific
     return getLessonUID(next || flat[0] || {});
   };
 
-  const openCoursePlayer = (course, lessonUID) => {
+  const openCoursePlayer = async (course, lessonUID) => {
     setOpenCourse(null);
+    let playableCourse = course;
+    const cachedDetail = courseDetails[course.id];
+    if (course.enrolled && !cachedDetail) {
+      setLoadingCourseId(course.id);
+      try {
+        playableCourse = await loadCourse?.(course.id) || course;
+        if (playableCourse !== course) setCourseDetails((current) => ({ ...current, [course.id]: playableCourse }));
+      } finally {
+        setLoadingCourseId(null);
+      }
+    } else if (cachedDetail) {
+      playableCourse = cachedDetail;
+    }
     setRecentCourseId(course.id);
     try { window.localStorage.setItem(recentCourseStorageKey, String(course.id)); } catch {}
     setPlayerCourseId(course.id);
-    setPlayerLessonUID(lessonUID || pickDefaultLessonUID(course));
+    setPlayerLessonUID(lessonUID || pickDefaultLessonUID(playableCourse));
     setPlayerTab("about");
     setActiveNav("course-player");
     setMobileOpen(false);
   };
   const playerCourse = catalogCourses.find((c) => c.id === playerCourseId) || null;
+  const activePlayerLesson = useMemo(() => {
+    if (!playerCourse || !playerLessonUID) return null;
+    return getCourseSectionGroups(playerCourse, lessonProgress)
+      .flatMap((section) => section.lessons)
+      .find((lesson) => getLessonUID(lesson) === playerLessonUID) || null;
+  }, [playerCourse, playerLessonUID, lessonProgress]);
+  const selectPlayerLesson = (uid) => {
+    setPlayerLessonUID(uid);
+    setPlayerTab("about");
+    if (playerCourseId) {
+      setRecentCourseId(playerCourseId);
+      try { window.localStorage.setItem(recentCourseStorageKey, String(playerCourseId)); } catch {}
+    }
+  };
   const unreadCount = notifs.filter(n => !n.read).length;
   useEffect(() => {
     if (!onRefreshNotifications) return undefined;
@@ -1075,18 +1290,33 @@ export default function StudentDashboard({ user, onLogout, courses = [], notific
   const meta = PAGE_META[activeNav] || PAGE_META.dashboard;
 
   const handleNav = (id) => {
+    if (id === "logout") {
+      setMobileOpen(false);
+      if (onLogout) {
+        onLogout();
+      } else {
+        showToast("Logged out (demo only — this is a prototype).");
+      }
+      return;
+    }
     setActiveNav(id);
     setMobileOpen(false);
-    if (id === "logout") {
-      if (onLogout) onLogout();
-      else showToast("Logged out (demo only — this is a prototype).");
-    }
   };
 
   return (
     <div style={{ fontFamily: "Manrope, sans-serif", background: C.bg, color: C.text, minHeight: "100vh", fontSize: 13.5, position: "relative" }}>
+      {loadingCourseId || certificateBusy ? (
+        <div role="status" aria-live="polite" style={{ position: "fixed", inset: 0, zIndex: 500, background: "rgba(20,18,17,0.48)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div style={{ background: C.card, borderRadius: 16, padding: "24px 30px", minWidth: 220, textAlign: "center", boxShadow: "0 18px 50px rgba(0,0,0,0.24)" }}>
+            <div style={{ width: 34, height: 34, margin: "0 auto 12px", border: `3px solid ${C.pillBorder}`, borderTopColor: C.accent, borderRadius: "50%", animation: "course-load-spin 0.8s linear infinite" }} />
+            <div style={{ fontWeight: 700, color: C.text }}>{certificateBusy ? "Creating certificate link" : "Loading course"}</div>
+            <div style={{ marginTop: 5, fontSize: 12, color: C.textSecondary }}>{certificateBusy ? "Uploading your certificate and saving its URL..." : "Loading your progress and tasks..."}</div>
+          </div>
+        </div>
+      ) : null}
       <style>{`
         * { box-sizing: border-box; }
+        @keyframes course-load-spin { to { transform: rotate(360deg); } }
         @media (max-width: 1180px) {
           .summary-grid { grid-template-columns: repeat(2, 1fr) !important; }
           .courses-grid { grid-template-columns: repeat(2, 1fr) !important; }
@@ -1105,23 +1335,40 @@ export default function StudentDashboard({ user, onLogout, courses = [], notific
           .courses-grid { grid-template-columns: 1fr !important; }
         }
         .sd-shell {
-          min-height: 100vh;
+          height: 100vh;
+          min-height: 0;
           display: grid !important;
           grid-template-columns: 302px 1fr;
           padding: 16px;
           gap: 16px;
+          overflow: hidden;
         }
         .sd-sidebar {
           position: static !important;
           width: auto !important;
-          min-height: calc(100vh - 32px);
+          height: calc(100vh - 32px);
+          min-height: 0;
           border-radius: 30px !important;
           padding: 18px 14px 14px !important;
           box-shadow: 0 24px 50px rgba(8, 9, 10, 0.22) !important;
+          overflow: hidden;
+          scrollbar-width: none;
+        }
+        .sd-sidebar::-webkit-scrollbar,
+        .sd-sidebar nav::-webkit-scrollbar,
+        .sd-content::-webkit-scrollbar {
+          display: none;
+          width: 0;
+          height: 0;
+        }
+        .sd-sidebar nav {
+          scrollbar-width: none;
         }
         .sd-main {
           margin-left: 0 !important;
           min-width: 0;
+          min-height: 0;
+          height: calc(100vh - 32px);
           background: rgba(255, 255, 255, 0.58);
           border: 1px solid rgba(255, 255, 255, 0.72);
           border-radius: 32px;
@@ -1136,8 +1383,12 @@ export default function StudentDashboard({ user, onLogout, courses = [], notific
           background: rgba(255, 255, 255, 0.94) !important;
         }
         .sd-content {
+          min-height: 0;
+          flex: 1;
           padding: 24px !important;
-          overflow: auto;
+          overflow-y: auto;
+          overflow-x: hidden;
+          scrollbar-width: none;
         }
         .sd-logo-badge {
           width: 42px;
@@ -1167,6 +1418,17 @@ export default function StudentDashboard({ user, onLogout, courses = [], notific
           background: #fff;
           transform: rotate(24deg);
           border-radius: 999px;
+        }
+        @media (max-width: 860px) {
+          .sd-shell {
+            height: auto;
+            min-height: 100vh;
+            overflow: visible;
+          }
+          .sd-main {
+            height: auto;
+            min-height: calc(100vh - 24px);
+          }
         }
       `}</style>
 
@@ -1248,6 +1510,7 @@ export default function StudentDashboard({ user, onLogout, courses = [], notific
                           onMouseLeave={(e) => { if (!isCurrent) e.currentTarget.style.background = "rgba(255,255,255,0.03)"; }}
                         >
                           <div style={{ fontSize: 12, fontWeight: 700, color: "#fff", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.title}</div>
+                          {isCurrent && activePlayerLesson ? <div style={{ marginTop: 3, fontSize: 10.5, color: "rgba(255,255,255,0.56)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>Now learning: {activePlayerLesson.title}</div> : null}
                           <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
                             <div style={{ flex: 1, height: 5, background: "rgba(255,255,255,0.1)", borderRadius: 20, overflow: "hidden" }}>
                               <div style={{ width: `${c.progress}%`, height: "100%", background: "#d55c41", borderRadius: 20 }} />
@@ -1269,13 +1532,8 @@ export default function StudentDashboard({ user, onLogout, courses = [], notific
             ))}
           </nav>
 
-          <div style={{ borderTop: "1px solid rgba(216,82,53,0.28)", padding: "14px 16px 16px", display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }} onClick={() => handleNav("profile")}>
-            <div style={{ width: 38, height: 38, borderRadius: 14, background: "linear-gradient(135deg, #e0694d, #b73e28)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 12.5, flexShrink: 0 }}>{studentInitials}</div>
-            <div style={{ minWidth: 0 }}>
-              <div style={{ fontSize: 12.8, fontWeight: 700, color: C.sidebarTextBright, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{studentName}</div>
-              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.66)" }}>Student</div>
-            </div>
-            <Icon.chevronDown style={{ width: 14, height: 14, color: "rgba(255,255,255,0.52)", marginLeft: "auto", flexShrink: 0 }} />
+          <div style={{ borderTop: "1px solid rgba(216,82,53,0.28)", padding: "18px 26px 20px" }}>
+            <button type="button" onClick={() => handleNav("logout")} style={{ width: "100%", border: 0, background: "transparent", color: C.sidebarTextBright, display: "flex", alignItems: "center", gap: 12, padding: "8px 0", cursor: "pointer", fontFamily: "inherit", fontSize: 16, textAlign: "left" }}><Icon.logout style={{ width: 21, height: 21, color: "#fff" }} />Logout</button>
           </div>
         </aside>
 
@@ -1324,13 +1582,31 @@ export default function StudentDashboard({ user, onLogout, courses = [], notific
                 </div>
               )}
 
-              <div onClick={() => handleNav("profile")} style={{ display: "flex", alignItems: "center", gap: 9, padding: "4px 10px 4px 4px", border: `1px solid ${C.border}`, borderRadius: 24, cursor: "pointer" }}>
+              <div ref={profilePopupRef} style={{ position: "relative" }} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setProfileOpen(false); }}>
+              <button type="button" ref={profileButtonRef} aria-expanded={profileOpen} aria-controls="student-profile-popup" onClick={() => { setProfileOpen((open) => !open); setNotifOpen(false); }} style={{ display: "flex", alignItems: "center", gap: 9, padding: "4px 10px 4px 4px", border: `1px solid ${C.border}`, borderRadius: 24, cursor: "pointer", background: C.card, color: C.text, fontFamily: "inherit", textAlign: "left" }}>
                 <div style={{ width: 28, height: 28, borderRadius: "50%", background: C.badgeBg, color: C.badgeIcon, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 12 }}>{studentInitials}</div>
                 <div style={{ lineHeight: 1.2 }}>
                   <div style={{ fontSize: 12.5, fontWeight: 700 }}>{studentName}</div>
                   <div style={{ fontSize: 10.5, color: C.textSecondary }}>Student</div>
                 </div>
                 <Icon.chevronDown style={{ width: 12, height: 12, color: C.textMuted, marginLeft: 2 }} />
+              </button>
+              {profileOpen && (
+                <section id="student-profile-popup" aria-label="Student profile details" style={{ position: "absolute", top: "calc(100% + 12px)", right: 0, width: "min(330px, calc(100vw - 48px))", padding: 20, background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, boxShadow: "0 12px 36px rgba(40,30,20,.16)", zIndex: 70 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, paddingBottom: 16, borderBottom: `1px solid ${C.border}` }}>
+                    <div style={{ width: 42, height: 42, borderRadius: "50%", background: C.badgeBg, color: C.badgeIcon, display: "grid", placeItems: "center", fontWeight: 800, flexShrink: 0 }}>{studentInitials}</div>
+                    <div style={{ minWidth: 0 }}><div style={{ fontWeight: 800, fontSize: 15, overflowWrap: "anywhere" }}>{studentName}</div><div style={{ color: C.textSecondary, fontSize: 12, marginTop: 3 }}>Student</div></div>
+                  </div>
+                  <dl style={{ margin: "12px 0 18px" }}>
+                    {[["Student ID", user?.studentId || user?.registrationId || studentId || "Not assigned"], ["Email", studentEmail || "Not provided"], ["Phone", user?.phone || "Not provided"], ["Batch", batchYear || "Not assigned"], ["Enrolled courses", enrolledCourses.length]].map(([label, value]) => (
+                      <div key={label} style={{ display: "grid", gridTemplateColumns: "100px minmax(0, 1fr)", gap: 10, padding: "7px 0", fontSize: 12 }}>
+                        <dt style={{ color: C.textSecondary }}>{label}</dt><dd style={{ margin: 0, textAlign: "right", fontWeight: 600, overflowWrap: "anywhere" }}>{value}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                  <Btn variant="primary" style={{ width: "100%" }} onClick={() => { setProfileOpen(false); handleNav("profile"); profileButtonRef.current?.focus(); }}>View full profile</Btn>
+                </section>
+              )}
               </div>
             </div>
           </header>
@@ -1345,8 +1621,8 @@ export default function StudentDashboard({ user, onLogout, courses = [], notific
                 <ContinueLearning course={recentCourse} onOpen={(course) => openCoursePlayer(course)} />
 
                 <SectionHead title="All Courses" right={<a href="#" onClick={(e) => { e.preventDefault(); handleNav("all-courses"); }} style={{ fontSize: 12, color: C.accent, fontWeight: 700 }}>View all</a>} />
-                <div className="courses-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16, marginBottom: 26 }}>
-                  {catalogCourses.map(c => <CourseCard key={c.id} course={c} onOpen={setOpenCourse} onContinue={openCoursePlayer} />)}
+                <div className="courses-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 360px))", gap: 16, marginBottom: 26 }}>
+                  {catalogCourses.map(c => <CourseCard key={c.id} course={c} onOpen={setOpenCourse} onContinue={openCoursePlayer} onRequestEnrollment={(course) => onRequestCourseEnrollment?.(course)} />)}
                 </div>
 
                 <SectionHead title="Recent Assignments & Activity" />
@@ -1371,8 +1647,8 @@ export default function StudentDashboard({ user, onLogout, courses = [], notific
                     }}
                   />
                 </div>
-                <div className="courses-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }}>
-                  {filteredCourses.length ? filteredCourses.map(c => <CourseCard key={c.id} course={c} onOpen={setOpenCourse} onContinue={openCoursePlayer} />) : (
+                <div className="courses-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 360px))", gap: 16 }}>
+                  {filteredCourses.length ? filteredCourses.map(c => <CourseCard key={c.id} course={c} onOpen={setOpenCourse} onContinue={openCoursePlayer} onRequestEnrollment={(course) => onRequestCourseEnrollment?.(course)} />) : (
                     <div style={{ gridColumn: "1 / -1", textAlign: "center", padding: "40px 0", color: C.textSecondary, fontSize: 13 }}>No courses match "{query}".</div>
                   )}
                 </div>
@@ -1380,8 +1656,8 @@ export default function StudentDashboard({ user, onLogout, courses = [], notific
             )}
 
             {activeNav === "my-courses" && (
-              <div className="courses-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }}>
-                {enrolledCourses.map(c => <CourseCard key={c.id} course={c} onOpen={setOpenCourse} onContinue={openCoursePlayer} />)}
+              <div className="courses-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 360px))", gap: 16 }}>
+                {enrolledCourses.map(c => <CourseCard key={c.id} course={c} onOpen={setOpenCourse} onContinue={openCoursePlayer} onRequestEnrollment={(course) => onRequestCourseEnrollment?.(course)} />)}
               </div>
             )}
 
@@ -1392,7 +1668,7 @@ export default function StudentDashboard({ user, onLogout, courses = [], notific
                   lessonProgress={lessonProgress}
                   activeLessonUID={playerLessonUID}
                   activeTab={playerTab}
-                  onSelectLesson={(uid) => { setPlayerLessonUID(uid); setPlayerTab("about"); }}
+                  onSelectLesson={selectPlayerLesson}
                   onSetTab={setPlayerTab}
                   onMarkWatched={(lesson) => markLessonProgress(lesson, { videoCompleted: true })}
                   onMarkProgress={markLessonProgress}
@@ -1421,26 +1697,86 @@ export default function StudentDashboard({ user, onLogout, courses = [], notific
             )}
 
             {activeNav === "profile" && (
-              <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 18, padding: 26, maxWidth: 480, boxShadow: "0 1px 2px rgba(33,28,46,0.03), 0 4px 14px rgba(33,28,46,0.04)" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 20 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 18, width: "100%", maxWidth: 1240 }}>
+                <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 18, padding: 22, boxShadow: "0 8px 24px rgba(48,35,24,.05)", display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", columnGap: 26 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 14, gridColumn: "1 / -1", paddingBottom: 18 }}>
                   <div style={{ width: 56, height: 56, borderRadius: "50%", background: C.accent, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 18 }}>{studentInitials}</div>
                   <div>
                     <div style={{ fontSize: 16, fontWeight: 700 }}>{studentName}</div>
-                    <div style={{ fontSize: 12.5, color: C.textSecondary }}>Student · Batch of 2026</div>
+                    <div style={{ fontSize: 12.5, color: C.textSecondary }}>Student{batchYear ? ` · Batch ${batchYear}` : ""}</div>
+                  </div>
+                  <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ color: C.green, background: C.greenBg, borderRadius: 999, padding: "5px 9px", fontSize: 10.5, fontWeight: 800 }}>Active</span>
+                    <button type="button" onClick={() => showToast("Profile editing will be available soon.")} style={{ background: "#fff", border: `1px solid ${C.border}`, borderRadius: 9, padding: "8px 11px", color: C.textSecondary, cursor: "pointer", fontFamily: "inherit", fontSize: 11.5, fontWeight: 700 }}>Edit details</button>
                   </div>
                 </div>
-                {[["Email", studentEmail || "—"], ["Enrolled Courses", `${enrolledCourses.length} courses`], ["Member Since", "Jan 2026"]].map(([k, v]) => (
-                  <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "12px 0", borderTop: `1px solid ${C.border}`, fontSize: 13 }}>
+                {[["Student ID", user?.studentId || user?.registrationId || studentId || "Not assigned"], ["Email", studentEmail || "Not provided"], ["Phone", user?.phone || "Not provided"], ["Batch no.", batchYear ? String(batchYear) : "Not assigned"], ["Joined on", joinedLabel], ["Enrolled courses", `${enrolledCourses.length} courses`]].map(([k, v]) => (
+                  <div key={k} style={{ display: "flex", justifyContent: "space-between", gap: 18, padding: "12px 0", borderBottom: `1px solid ${C.border}`, fontSize: 12.5 }}>
                     <span style={{ color: C.textSecondary }}>{k}</span>
-                    <span style={{ fontWeight: 700 }}>{v}</span>
+                    <span style={{ fontWeight: 700, textAlign: "right" }}>{v}</span>
                   </div>
                 ))}
+                </div>
+                <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 18, padding: 22, boxShadow: "0 1px 2px rgba(33,28,46,0.03), 0 4px 14px rgba(33,28,46,0.04)" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+                    <div><div style={{ fontSize: 15, fontWeight: 800 }}>Learning overview</div><div style={{ marginTop: 3, fontSize: 12, color: C.textSecondary }}>Your course progress and certificates</div></div>
+                    <div style={{ color: C.green, background: C.greenBg, padding: "7px 10px", borderRadius: 999, fontSize: 12, fontWeight: 800 }}>{averageProgress}% average</div>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 16 }}>
+                    {[["Enrolled", enrolledCourses.length], ["Completed", completedCourses.length], ["In progress", Math.max(enrolledCourses.length - completedCourses.length, 0)]].map(([label, value]) => <div key={label} style={{ border: `1px solid ${C.border}`, borderRadius: 12, padding: "12px 10px", background: C.pillBg }}><div style={{ color: C.textMuted, fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".05em" }}>{label}</div><div style={{ marginTop: 4, fontSize: 20, fontWeight: 800 }}>{value}</div></div>)}
+                  </div>
+                  <div style={{ marginBottom: 18 }}>
+                    <div style={{ fontSize: 10.5, fontWeight: 800, color: C.textMuted, textTransform: "uppercase", letterSpacing: ".07em", marginBottom: 7 }}>Course progress</div>
+                    {enrolledCourses.length ? enrolledCourses.slice(0, 4).map((course) => (
+                      <div key={course.id} style={{ padding: "10px 0", borderTop: `1px solid ${C.border}` }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 12.5, fontWeight: 700 }}><span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{course.title}</span><span style={{ color: C.accent, flexShrink: 0 }}>{course.progress}%</span></div>
+                        <div style={{ height: 6, borderRadius: 99, background: C.pillBg, marginTop: 7, overflow: "hidden" }}><div style={{ width: `${course.progress}%`, height: "100%", background: course.progress >= 100 ? C.green : C.accent, borderRadius: 99 }} /></div>
+                      </div>
+                    )) : <div style={{ padding: "12px 0", color: C.textSecondary, fontSize: 12.5 }}>No enrolled courses yet.</div>}
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", borderTop: `1px solid ${C.border}`, paddingTop: 14, marginBottom: 3 }}><div style={{ fontSize: 13, fontWeight: 800 }}>Certificates</div><span style={{ color: C.green, background: C.greenBg, padding: "4px 8px", borderRadius: 999, fontSize: 11, fontWeight: 800 }}>{completedCourses.length} available</span></div>
+                  {completedCourses.length ? completedCourses.map((course) => {
+                    const selected = String(selectedCertificate?.id) === String(course.id);
+                    return (
+                    <button type="button" key={course.id} onClick={() => setSelectedCertificateId(course.id)} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: 13, border: selected ? `1px solid ${C.accent}` : `1px solid ${C.border}`, borderRadius: 12, marginTop: 9, background: selected ? "#fbf6f0" : "#fff", cursor: "pointer", textAlign: "left", fontFamily: "inherit" }}>
+                      <div style={{ minWidth: 0 }}><div style={{ color: C.green, fontSize: 11, fontWeight: 800 }}>CERTIFICATE READY</div><div style={{ marginTop: 3, fontSize: 13, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{course.title}</div></div>
+                      <span style={{ color: selected ? C.accentDark : C.textSecondary, fontSize: 11.5, fontWeight: 800, flexShrink: 0 }}>{selected ? "Selected" : "View"}</span>
+                    </button>
+                  );
+                  }) : <div style={{ padding: 14, borderRadius: 12, background: C.pillBg, color: C.textSecondary, fontSize: 12.5 }}>Complete a course to unlock a downloadable certificate.</div>}
+                </div>
+                <section style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 18, padding: 22, boxShadow: "0 8px 24px rgba(48,35,24,.05)" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 16 }}><div><div style={{ fontSize: 16, fontWeight: 800 }}>Certificates</div></div><span style={{ color: "#df5b3f", background: "#fff5f1", border: "1px solid #f4c7ba", borderRadius: 999, padding: "6px 10px", fontSize: 11, fontWeight: 800 }}>{completedCourses.length} available</span></div>
+                  {selectedCertificate ? [selectedCertificate].map((course) => (
+                    <div key={`preview-${course.id}`}>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "16px 18px", border: `1px solid ${C.border}`, borderRadius: 14, marginBottom: 16, background: "#fff" }}>
+                        <div><div style={{ color: "#df5b3f", fontSize: 10.5, fontWeight: 800 }}>CERTIFICATE READY</div><div style={{ marginTop: 4, fontSize: 13, fontWeight: 700 }}>{course.title}</div></div>
+                        <div style={{ display: "flex", gap: 9 }}><Btn variant="outline" style={{ padding: "8px 14px", fontSize: 12 }} onClick={printCertificate}>Print</Btn><Btn variant="outline" style={{ padding: "8px 18px", fontSize: 12, background: "#f3f3f3", borderColor: "#ededed" }} onClick={() => downloadCertificate(course)}>Download PDF</Btn></div>
+                      </div>
+                      <img src={certificateArt} alt={`Certificate of Completion for ${studentName}: ${course.title}`} style={{ display: "block", width: "min(100%, 520px)", height: 420, objectFit: "fill", margin: "0 auto" }} />
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, flexWrap: "wrap", marginTop: 16, padding: "16px 12px 2px", borderTop: `1px solid ${C.border}`, color: C.textSecondary, fontSize: 13 }}><span style={{ display: "inline-flex", alignItems: "center", gap: 9 }}><Icon.verify style={{ width: 17, height: 17, color: "#df5b3f" }} />Official verification record hosted on Ajmer Academic Board</span><span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}><button type="button" onClick={() => shareCertificate(course)} style={{ border: 0, background: "none", padding: 0, font: "inherit", color: "inherit", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}><Icon.share style={{ width: 16, height: 16 }} />Copy Link</button><span style={{ color: C.textMuted }}>•</span><button type="button" onClick={() => downloadCertificate(course)} style={{ border: 0, background: "none", padding: 0, font: "inherit", color: "inherit", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}><Icon.download style={{ width: 16, height: 16 }} />Download PDF</button></span></div>
+                    </div>
+                  )) : <div style={{ padding: "22px 0", color: C.textSecondary, fontSize: 13 }}>Complete a course to unlock a verified certificate preview.</div>}
+                </section>
               </div>
             )}
           </div>
         </div>
       </div>
 
+      {certificateLink && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 510, background: "rgba(20,18,17,.48)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onKeyDown={(event) => { if (event.key === "Escape") setCertificateLink(""); }}>
+          <div role="dialog" aria-modal="true" aria-labelledby="certificate-link-title" style={{ background: "#fff", borderRadius: 18, padding: 26, width: "min(100%, 520px)", boxShadow: "0 18px 50px #0004" }}>
+            <h3 id="certificate-link-title" style={{ margin: "0 0 10px" }}>Your certificate is ready to share</h3>
+            <p style={{ color: C.textSecondary }}>Use this link to view or share your certificate image.</p>
+            <input autoFocus readOnly aria-label="Certificate image URL" value={certificateLink} onFocus={(event) => event.target.select()} style={{ width: "100%", padding: 12, border: `1px solid ${C.border}`, borderRadius: 8 }} />
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 18 }}>
+              <button type="button" onClick={() => setCertificateLink("")} style={{ padding: "10px 16px", cursor: "pointer" }}>Close</button>
+              <Btn variant="primary" onClick={async () => { try { await navigator.clipboard.writeText(certificateLink); showToast("Certificate link copied."); } catch { showToast("Copy unavailable. Select the URL and copy it manually."); } }}>Copy URL</Btn>
+            </div>
+          </div>
+        </div>
+      )}
       {/* TOAST */}
       {toast && (
         <div style={{
@@ -1457,6 +1793,7 @@ export default function StudentDashboard({ user, onLogout, courses = [], notific
         onClose={() => setOpenCourse(null)}
         onToast={showToast}
         onContinue={openCoursePlayer}
+        onRequestEnrollment={(course) => onRequestCourseEnrollment?.(course)}
       />
       <ResourceModal resource={openResource} onClose={() => setOpenResource(null)} onUpload={async (file, kind) => {
         let savedProgress = null;

@@ -18,6 +18,7 @@ import tasksRoutes from "./routes/tasks.js";
 import leavesRoutes from "./routes/leaves.js";
 import attendanceRoutes from "./routes/attendance.js";
 import employeesRoutes from "./routes/employees.js";
+import enrollmentRequestRoutes from "./routes/enrollmentRequests.js";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -44,6 +45,7 @@ app.use("/api/tasks", tasksRoutes);
 app.use("/api/leaves", leavesRoutes);
 app.use("/api/attendance", attendanceRoutes);
 app.use("/api/employees", employeesRoutes);
+app.use("/api/enrollment-requests", enrollmentRequestRoutes);
 
 app.get("/", (req, res) => {
   res.json({ message: "CRM backend is running" });

@@ -15,8 +15,13 @@ export async function listNotifications(studentId) {
     const snapshot = await notificationsRef(studentId).orderBy("createdAt", "desc").limit(100).get();
     return deduplicateNotifications(snapshot.docs.map(serializeNotification));
   } catch (error) {
-    const snapshot = await notificationsRef(studentId).limit(100).get();
-    return deduplicateNotifications(snapshot.docs.map(serializeNotification).sort((left, right) => new Date(right.createdAt || 0).getTime() - new Date(left.createdAt || 0).getTime()));
+    try {
+      const snapshot = await notificationsRef(studentId).limit(100).get();
+      return deduplicateNotifications(snapshot.docs.map(serializeNotification).sort((left, right) => new Date(right.createdAt || 0).getTime() - new Date(left.createdAt || 0).getTime()));
+    } catch (fallbackError) {
+      console.warn("Could not load student notifications", fallbackError.message || error.message);
+      return [];
+    }
   }
 }
 

@@ -87,9 +87,14 @@ import {
   loadTrainings,
   saveTrainingsToBackend,
   loadCourses,
+  loadCourse,
   loadNotifications,
   readNotification,
   readAllNotifications,
+  loadEnrollmentRequests,
+  requestCourseEnrollment,
+  loadPendingEnrollmentRequests,
+  updateEnrollmentRequestStatusForAdmin,
   createCourse,
   updateCourse,
   deleteCourse,
@@ -161,7 +166,17 @@ const STUDENT_COURSES_STORAGE_KEY = "crmst-student-courses-v2.txt";
 const STUDENT_COURSES_CACHE_TTL_MS = 5 * 60 * 1000;
 const STUDENT_NOTIFICATIONS_STORAGE_KEY = "crmst-student-notifications-v2.txt";
 const STUDENT_NOTIFICATIONS_CACHE_TTL_MS = 5 * 60 * 1000;
+const STUDENT_ENROLLMENT_REQUESTS_STORAGE_KEY = "crmst-student-enrollment-requests-v1.txt";
+const STUDENT_ENROLLMENT_REQUESTS_CACHE_TTL_MS = 5 * 60 * 1000;
+const ENROLLMENT_REQUEST_SYNC_KEY = "crmst-enrollment-request-sync-v1";
 const CRM_EXEC_LEADS_STORAGE_KEY = "crmExec.adminLeads";
+
+function publishEnrollmentRequestEvent(request) {
+  if (!request) return;
+  const message = JSON.stringify({ request, sentAt: Date.now() });
+  try { localStorage.setItem(ENROLLMENT_REQUEST_SYNC_KEY, message); } catch {}
+  try { window.dispatchEvent(new CustomEvent("crmst:enrollment-request", { detail: request })); } catch {}
+}
 
 function isCrmExecutive(role) {
   return ["crm executive", "crm_executive"].includes(String(role || "").trim().toLowerCase());
@@ -218,6 +233,25 @@ function writeStudentNotificationsToStorage(user, items) {
   safeStorageSet(STUDENT_NOTIFICATIONS_STORAGE_KEY, JSON.stringify({ userKey, items, fetchedAt: Date.now() }));
 }
 
+function readStudentEnrollmentRequestsFromStorage(user) {
+  const userKey = getStudentCacheUserKey(user);
+  if (!userKey) return { items: [], fetchedAt: 0 };
+  try {
+    const raw = localStorage.getItem(STUDENT_ENROLLMENT_REQUESTS_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    if (parsed?.userKey !== userKey || !Array.isArray(parsed.items)) return { items: [], fetchedAt: 0 };
+    return { items: parsed.items, fetchedAt: Number(parsed.fetchedAt || 0) };
+  } catch {
+    return { items: [], fetchedAt: 0 };
+  }
+}
+
+function writeStudentEnrollmentRequestsToStorage(user, items) {
+  const userKey = getStudentCacheUserKey(user);
+  if (!userKey || !Array.isArray(items)) return;
+  safeStorageSet(STUDENT_ENROLLMENT_REQUESTS_STORAGE_KEY, JSON.stringify({ userKey, items, fetchedAt: Date.now() }));
+}
+
 const backendDepartments = ["CRM", "HR", "IT", "Operation", "Student"];
 const departmentRoleMap = {
   CRM: "CRM Executive",
@@ -230,6 +264,11 @@ const departmentRoleMap = {
 
 function normalizeCourseToTraining(course) {
   const id = course?.id || course?._id || "course-unknown";
+    const rawFees = course?.fees ?? course?.price ?? "₹0";
+  const feeText = String(rawFees).trim();
+    const displayFees = /^\d+(\.\d+)?$/.test(feeText)
+      ? `₹${Number(feeText.replace(/,/g, "")).toLocaleString("en-IN")}`
+      : (feeText || "₹0");
   const lessons = Array.isArray(course?.lessons) ? course.lessons : [];
   const sourceSections = Array.isArray(course?.sections) && course.sections.length
     ? course.sections
@@ -253,7 +292,7 @@ function normalizeCourseToTraining(course) {
     name: course?.title || course?.name || "Untitled course",
     section: course?.section || "General",
     duration: course?.duration || "N/A",
-    price: course?.fees || course?.price || "₹0",
+    price: displayFees,
     tools: course?.tools || "",
     trainer: "System Technologies Team",
     mode: course?.mode || "Hybrid",
@@ -280,7 +319,7 @@ function normalizeCourseToTraining(course) {
 function fileNameFromUrl(url, fallback) {
   if (!url) return fallback;
   try {
-    const name = decodeURIComponent(String(url).split("?")[0].split("/").pop() || "");
+      const name = decodeURIComponent(String(url).split("?")[0].split("/").pop() || fallback);
     return name || fallback;
   } catch {
     return fallback;
@@ -367,6 +406,7 @@ const sidebarSections = [
       { id: "course-add", label: "Add Course", icon: CirclePlus },
       { id: "course-view", label: "View Courses", icon: BookOpen },
       { id: "course-check", label: "Check Tasks", icon: ClipboardCheck },
+      { id: "enrollment-requests", label: "Enrollment Requests", icon: Bell },
     ],
   },
   {
@@ -1239,6 +1279,11 @@ function App() {
   const [trainingRows, setTrainingRows] = useState(initialTrainingRows);
   const [courseRows, setCourseRows] = useState([]);
   const [notifications, setNotifications] = useState([]);
+  const [studentEnrollmentRequests, setStudentEnrollmentRequests] = useState([]);
+  const [allEnrollmentRequests, setAllEnrollmentRequests] = useState([]);
+  const [enrollmentRequestQuery, setEnrollmentRequestQuery] = useState("");
+  const [enrollmentRequestStatus, setEnrollmentRequestStatus] = useState("all");
+  const [enrollmentRequestDate, setEnrollmentRequestDate] = useState("");
   const [taskSubmissions, setTaskSubmissions] = useState([]);
   const [taskSubmissionLoading, setTaskSubmissionLoading] = useState(false);
   const [taskSubmissionModal, setTaskSubmissionModal] = useState(null);
@@ -1398,7 +1443,7 @@ function App() {
         if (String(session.role || "").trim().toLowerCase() === "student") {
           const cachedCourses = readStudentCoursesFromStorage(session);
           if (cachedCourses.courses.length) setCourseRows(cachedCourses.courses);
-          const remoteCourses = await loadCourses();
+          const remoteCourses = await loadCourses(false, true);
           if (Array.isArray(remoteCourses) && remoteCourses.length) {
             setCourseRows(remoteCourses);
             writeStudentCoursesToStorage(session, remoteCourses);
@@ -1474,6 +1519,176 @@ function App() {
     const studentId = String(currentUser?.id || currentUser?._id || "").trim();
     if (role !== "student" || !studentId) {
       setNotifications([]);
+      setStudentEnrollmentRequests([]);
+      return undefined;
+    }
+
+    let active = true;
+    const cachedRequests = readStudentEnrollmentRequestsFromStorage(currentUser);
+    if (cachedRequests.items.length) setStudentEnrollmentRequests(cachedRequests.items);
+    const refreshStudentEnrollmentRequests = async () => {
+      try {
+        const result = await loadEnrollmentRequests(studentId);
+        if (active && Array.isArray(result)) {
+          setStudentEnrollmentRequests(result);
+          writeStudentEnrollmentRequestsToStorage(currentUser, result);
+        }
+      } catch (err) {
+        if (active && err?.status !== 401) console.warn("Enrollment request refresh failed", err);
+      }
+    };
+
+    if (!cachedRequests.fetchedAt || Date.now() - cachedRequests.fetchedAt >= STUDENT_ENROLLMENT_REQUESTS_CACHE_TTL_MS) {
+      refreshStudentEnrollmentRequests();
+    }
+    return () => { active = false; };
+  }, [currentUser]);
+
+  useEffect(() => {
+    const role = String(currentUser?.role || "").trim().toLowerCase();
+    if (!currentUser || role === "student") {
+      setAllEnrollmentRequests([]);
+      return undefined;
+    }
+
+    let active = true;
+    const refreshPendingEnrollmentRequests = async () => {
+      try {
+        const result = await loadPendingEnrollmentRequests();
+        if (active && Array.isArray(result)) {
+          setAllEnrollmentRequests(result);
+        }
+      } catch (err) {
+        if (active && err?.status !== 401) console.warn("Pending enrollment requests load failed", err);
+      }
+    };
+
+    refreshPendingEnrollmentRequests();
+    return () => { active = false; };
+  }, [currentUser]);
+
+  useEffect(() => {
+    const role = String(currentUser?.role || "").trim().toLowerCase();
+    if (!currentUser || role === "student" || activePage !== "enrollment-requests") return undefined;
+
+    let active = true;
+    const applyIncomingRequest = (request) => {
+      if (!request || request.status !== "pending") return;
+      setAllEnrollmentRequests((current) => [
+        request,
+        ...current.filter((item) => String(item.id || "") !== String(request.id || "")),
+      ]);
+    };
+    const handleRequestEvent = (event) => applyIncomingRequest(event.detail);
+    const handleStorageEvent = (event) => {
+      if (event.key !== ENROLLMENT_REQUEST_SYNC_KEY || !event.newValue) return;
+      try { applyIncomingRequest(JSON.parse(event.newValue).request); } catch {}
+    };
+
+    window.addEventListener("crmst:enrollment-request", handleRequestEvent);
+    window.addEventListener("storage", handleStorageEvent);
+
+    const syncEnrollmentRequests = async () => {
+      if (document.visibilityState !== "visible") return;
+      try {
+        const result = await loadPendingEnrollmentRequests(true);
+        if (active && Array.isArray(result)) setAllEnrollmentRequests(result);
+      } catch (err) {
+        if (active && err?.status !== 401) console.warn("Enrollment request sync failed", err);
+      }
+    };
+
+    const interval = window.setInterval(syncEnrollmentRequests, 60000);
+    document.addEventListener("visibilitychange", syncEnrollmentRequests);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", syncEnrollmentRequests);
+      window.removeEventListener("crmst:enrollment-request", handleRequestEvent);
+      window.removeEventListener("storage", handleStorageEvent);
+    };
+  }, [currentUser, activePage]);
+
+  async function handleRequestCourseEnrollment(course) {
+    const studentId = String(currentUser?.id || currentUser?._id || "").trim();
+    const courseId = String(course?.id || course?._id || "").trim();
+    if (!studentId || !courseId) {
+      notify("Unable to request enrollment right now.");
+      return;
+    }
+
+    try {
+      const result = await requestCourseEnrollment(studentId, courseId, course?.title || course?.name || "Course", {
+        studentName: currentUser?.name || currentUser?.username || "",
+        studentPhone: currentUser?.phone || "",
+      });
+      if (result) {
+        notify(`Enrollment request sent for “${course?.title || course?.name || "this course"}”.`);
+        const optimisticRequest = {
+          id: result.id,
+          studentId,
+          courseId,
+          courseName: course?.title || course?.name || "Course",
+          studentName: currentUser?.name || currentUser?.username || "",
+          studentPhone: currentUser?.phone || "",
+          status: "pending",
+          requestedAt: result.requestedAt || new Date().toISOString(),
+        };
+        setStudentEnrollmentRequests((current) => {
+          const next = [optimisticRequest, ...current.filter((item) => String(item.courseId || "") !== courseId)];
+          writeStudentEnrollmentRequestsToStorage(currentUser, next);
+          return next;
+        });
+        publishEnrollmentRequestEvent(optimisticRequest);
+      }
+    } catch (err) {
+      if (err?.status === 409) {
+        const existingRequest = err.request || {
+          id: `existing-${courseId}`,
+          studentId,
+          courseId,
+          courseName: course?.title || course?.name || "Course",
+          studentName: currentUser?.name || currentUser?.username || "",
+          studentPhone: currentUser?.phone || "",
+          status: "pending",
+          requestedAt: new Date().toISOString(),
+        };
+        setStudentEnrollmentRequests((current) => {
+          const next = [existingRequest, ...current.filter((item) => String(item.courseId || "") !== courseId)];
+          writeStudentEnrollmentRequestsToStorage(currentUser, next);
+          return next;
+        });
+        publishEnrollmentRequestEvent(existingRequest);
+        notify("This enrollment request has already been sent.");
+      } else {
+        notify(err?.message || "Unable to submit the enrollment request.");
+      }
+    }
+  }
+
+  async function handleUpdateEnrollmentRequestStatus(request, nextStatus, remark = request?.remark || "") {
+    const studentId = String(request?.studentId || "").trim();
+    const requestId = String(request?.id || "").trim();
+    if (!studentId || !requestId) return;
+
+    try {
+      const updated = await updateEnrollmentRequestStatusForAdmin(studentId, requestId, nextStatus, remark);
+      if (updated) {
+        setAllEnrollmentRequests((current) => current.map((item) => (
+          String(item.id || "") === requestId ? { ...item, ...updated, status: nextStatus, remark } : item
+        )));
+        notify(`Enrollment request marked as ${nextStatus}.`);
+      }
+    } catch (err) {
+      notify(err?.message || "Unable to update enrollment request.");
+    }
+  }
+
+  useEffect(() => {
+    const role = String(currentUser?.role || "").trim().toLowerCase();
+    const studentId = String(currentUser?.id || currentUser?._id || "").trim();
+    if (role !== "student" || !studentId) {
+      setNotifications([]);
       return undefined;
     }
 
@@ -1489,7 +1704,7 @@ function App() {
       knownNotificationIds = new Set(items.map((item) => String(item.id || "")));
       if (!hasNewCourseNotification) return;
       invalidateCoursesCache();
-      const refreshedCourses = await loadCourses(true);
+      const refreshedCourses = await loadCourses(true, true);
       if (active && refreshedCourses.length) {
         setCourseRows(refreshedCourses);
         writeStudentCoursesToStorage(currentUser, refreshedCourses);
@@ -1660,6 +1875,33 @@ function App() {
     return () => window.clearTimeout(timer);
   }, [toast]);
 
+  // Keep course data in sync with the backend when an administrator changes a
+  // lesson or uploads a new video. This runs only for a visible browser tab.
+  useEffect(() => {
+    if (!currentUser) return undefined;
+    let active = true;
+    const refreshCourses = async () => {
+      if (document.visibilityState !== "visible") return;
+      try {
+        const refreshed = await loadCourses();
+        if (!active || !Array.isArray(refreshed)) return;
+        setCourseRows(refreshed);
+        if (String(currentUser.role || "").toLowerCase() === "student") {
+          writeStudentCoursesToStorage(currentUser, refreshed);
+        }
+      } catch (error) {
+        console.warn("Course refresh failed", error);
+      }
+    };
+    const interval = window.setInterval(refreshCourses, 60000);
+    document.addEventListener("visibilitychange", refreshCourses);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", refreshCourses);
+    };
+  }, [currentUser]);
+
   const navResults = useMemo(() => {
     if (!deferredQuery.trim()) return sidebarSections;
     return sidebarSections
@@ -1676,6 +1918,20 @@ function App() {
     sidebarSections
       .flatMap((section) => section.items)
       .find((item) => item.id === activePage)?.label || "Dashboard";
+
+  const pendingEnrollmentRequestCount = allEnrollmentRequests.filter((request) => request.status === "pending").length;
+  const filteredEnrollmentRequests = allEnrollmentRequests.filter((request) => {
+    const query = enrollmentRequestQuery.trim().toLowerCase();
+    const matchesQuery = !query || [request.studentName, request.studentPhone, request.courseName, request.courseId]
+      .join(" ").toLowerCase().includes(query);
+    const requestDate = request.requestedAt ? new Date(request.requestedAt) : null;
+    const matchesDate = !enrollmentRequestDate || (requestDate && !Number.isNaN(requestDate.getTime())
+      && requestDate.toISOString().slice(0, 10) === enrollmentRequestDate);
+    const matchesStatus = enrollmentRequestStatus === "all" || request.status === enrollmentRequestStatus;
+    return matchesQuery && matchesDate && matchesStatus;
+  });
+  const activeEnrollmentRequests = filteredEnrollmentRequests.filter((request) => ["pending", "contacted"].includes(request.status));
+  const processedEnrollmentRequests = filteredEnrollmentRequests.filter((request) => ["approved", "rejected", "completed"].includes(request.status));
 
   const displayTrainingRows = useMemo(() => {
     return courseRows.map((course) => normalizeCourseToTraining(course));
@@ -2151,7 +2407,7 @@ function App() {
     return { id: createEntityId("task"), title: "", pdfUrl: "", fileName: "", timeLimit: "60", description: "" };
   }
   function makeEmptyLesson() {
-    return { id: createEntityId("lesson"), title: "", videoUrl: "", videoFileName: "", notesUrl: "", notesFileName: "", durationSec: 3600, tasks: [] };
+    return { id: createEntityId("lesson"), title: "", videoUrl: "", videoFileName: "", notesUrl: "", notesFileName: "", durationTime: "01:00:00", tasks: [] };
   }
   function makeEmptySection() {
     const section = { id: createEntityId("section"), name: "", lessons: [makeEmptyLesson()] };
@@ -2204,27 +2460,11 @@ function App() {
     if (mode === "edit") {
       setActivePage("course-add");
       setCourseBuilderMode("manual");
-      let item = course ? sanitizeImageRecord({ ...course }) : null;
+      const item = course ? sanitizeImageRecord({ ...course }) : null;
       let selectedLessonId = String(lesson?.id || "");
-      let selectedSectionIds = selectedLessonId
+      const selectedSectionIds = selectedLessonId
         ? (item?.sections || []).filter((section) => (section.lessons || []).some((entry) => String(entry.id) === selectedLessonId)).map((section) => section.id)
         : (item?.sections || []).map((section) => section.id);
-
-      if (!lesson && item) {
-        const existingSections = Array.isArray(item.sections) && item.sections.length
-          ? item.sections
-          : [{ id: createEntityId("section"), name: "General", lessons: item.lessons || [] }];
-        const targetSection = existingSections[existingSections.length - 1];
-        const newLesson = makeEmptyLesson();
-        item = {
-          ...item,
-          sections: existingSections.map((section, index) => index === existingSections.length - 1
-            ? { ...section, lessons: [...(section.lessons || []), newLesson] }
-            : section),
-        };
-        selectedLessonId = newLesson.id;
-        selectedSectionIds = [targetSection.id];
-      }
 
       setFocusedLessonId(selectedLessonId);
       setOpenSectionIds(selectedSectionIds);
@@ -2241,7 +2481,7 @@ function App() {
           courseId: course?.id || course?._raw?.id || "",
           section: "",
           lessonTitle: "",
-          durationSec: 3600,
+          durationTime: "01:00:00",
           videoUrl: "",
           notesUrl: "",
           assignmentTitle: "",
@@ -2263,7 +2503,7 @@ function App() {
           lessonId: lesson?.id || "",
           section: lesson?.section || "General",
           lessonTitle: lesson?.title || "",
-          durationSec: lesson?.durationSec || 3600,
+          durationTime: lesson?.durationTime || "01:00:00",
           videoUrl: lesson?.videoUrl || "",
           videoFileName: fileNameFromUrl(lesson?.videoUrl, "Existing video uploaded"),
           notesUrl: lesson?.notesUrl || "",
@@ -2291,15 +2531,9 @@ function App() {
     if (!focusedLessonId || !trainingModal) return;
     const timer = window.setTimeout(() => {
       const lessonElement = document.querySelector(`[data-lesson-id="${CSS.escape(focusedLessonId)}"]`);
-      const builderElement = lessonElement?.closest(".cb-page");
-      if (!lessonElement || !builderElement) return;
-      lessonElement.querySelector("[data-lesson-title]")?.focus();
-      const targetTop = builderElement.scrollTop
-        + lessonElement.getBoundingClientRect().top
-        - builderElement.getBoundingClientRect().top
-        - builderElement.clientHeight / 2
-        + lessonElement.offsetHeight / 2;
-      builderElement.scrollTo({ top: Math.max(0, targetTop), behavior: "smooth" });
+      if (!lessonElement) return;
+      lessonElement.querySelector("[data-lesson-title]")?.focus({ preventScroll: true });
+      lessonElement.scrollIntoView({ behavior: "smooth", block: "center" });
     }, 0);
     return () => window.clearTimeout(timer);
   }, [focusedLessonId, trainingModal, openSectionIds]);
@@ -2435,6 +2669,7 @@ function App() {
             ...current.item,
             _pendingImageFile: pendingImage.file,
             _previewImage: pendingImage.previewUrl,
+            thumbnailName: file.name,
           },
         };
       });
@@ -2447,12 +2682,13 @@ function App() {
     if (!file) return;
     setTrainingAssetUploading(field);
     try {
+      const detectedDuration = field === "videoUrl" ? await readVideoDuration(file) : null;
       const uploaded = await uploadCourseAsset(file);
       const uploadedUrl = uploaded?.url || uploaded?.filePath || "";
       if (!uploadedUrl) throw new Error("Upload finished without a file URL. Please try again.");
       setTrainingModal((current) => current ? {
         ...current,
-        item: { ...current.item, [field]: uploadedUrl, [fileNameField]: file.name },
+        item: { ...current.item, [field]: uploadedUrl, [fileNameField]: file.name, ...(detectedDuration ? { durationTime: formatVideoDuration(detectedDuration) } : {}) },
       } : current);
       notify(`${field === "videoUrl" ? "Video" : field === "notesUrl" ? "Notes" : "Assignment"} uploaded.`);
     } catch (err) {
@@ -2470,7 +2706,7 @@ function App() {
       notify("Complete all required course fields before continuing.");
       return;
     }
-    if (step === 2 && (!String(item.lessonTitle || "").trim() || !item.videoUrl || Number(item.durationSec || 0) <= 0)) {
+    if (step === 2 && (!String(item.lessonTitle || "").trim() || !item.videoUrl || !/^\d{2}:\d{2}:\d{2}$/.test(String(item.durationTime || "")))) {
       notify("Add the lesson title, video duration, and video file before continuing.");
       return;
     }
@@ -2503,7 +2739,12 @@ function App() {
     updateCourseSections((sections) => sections.map((section) => section.id === sectionId ? { ...section, name } : section));
   }
   function addLessonToSection(sectionId) {
-    updateCourseSections((sections) => sections.map((section) => section.id === sectionId ? { ...section, lessons: [...section.lessons, makeEmptyLesson()] } : section));
+    const lesson = makeEmptyLesson();
+    setOpenSectionIds((current) => current.includes(sectionId) ? current : [...current, sectionId]);
+    setFocusedLessonId(lesson.id);
+    updateCourseSections((sections) => sections.map((section) => section.id === sectionId
+      ? { ...section, lessons: [...section.lessons, lesson] }
+      : section));
   }
   function removeLessonFromSection(sectionId, lessonId) {
     updateCourseSections((sections) => sections.map((section) => section.id === sectionId ? { ...section, lessons: section.lessons.filter((lesson) => lesson.id !== lessonId) } : section));
@@ -2539,15 +2780,77 @@ function App() {
     setOpenSectionIds((current) => current.includes(sectionId) ? current.filter((id) => id !== sectionId) : [...current, sectionId]);
   }
 
+  function readVideoDuration(file) {
+    return new Promise((resolve, reject) => {
+      const video = document.createElement("video");
+      const objectUrl = URL.createObjectURL(file);
+      const cleanup = () => {
+        URL.revokeObjectURL(objectUrl);
+        video.removeAttribute("src");
+        video.load();
+      };
+      video.preload = "metadata";
+      video.onloadedmetadata = () => {
+        const duration = Number(video.duration);
+        cleanup();
+        if (Number.isFinite(duration) && duration > 0) resolve(Math.round(duration));
+        else reject(new Error("Could not read the video duration."));
+      };
+      video.onerror = () => {
+        cleanup();
+        reject(new Error("Could not read the video duration."));
+      };
+      video.src = objectUrl;
+    });
+  }
+
+  function formatVideoDuration(totalSeconds) {
+    const seconds = Math.max(0, Math.round(Number(totalSeconds) || 0));
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const remainder = seconds % 60;
+    return [hours, minutes, remainder].map((value) => String(value).padStart(2, "0")).join(":");
+  }
+
   async function handleLessonFileUpload(sectionId, lessonId, field, fileNameField, file) {
     if (!file) return;
     const busyKey = `${lessonId}:${field}`;
     setTrainingAssetUploading(busyKey);
     try {
+      const detectedDuration = field === "videoUrl" ? await readVideoDuration(file) : null;
       const uploaded = await uploadCourseAsset(file);
       const uploadedUrl = uploaded?.url || uploaded?.filePath || "";
       if (!uploadedUrl) throw new Error("Upload finished without a file URL. Please try again.");
-      patchLesson(sectionId, lessonId, { [field]: uploadedUrl, [fileNameField]: file.name });
+      const assetPatch = {
+        [field]: uploadedUrl,
+        [fileNameField]: file.name,
+        ...(detectedDuration ? {
+          durationTime: formatVideoDuration(detectedDuration),
+        } : {}),
+      };
+      patchLesson(sectionId, lessonId, assetPatch);
+
+      // An ImageKit upload only creates the file. For an existing course, also
+      // save the changed lesson immediately so Firestore gets the real video
+      // length instead of retaining the previous duration.
+      const courseId = String(trainingModal?.item?.id || "").trim();
+      const activeSection = (trainingModal?.item?.sections || []).find((section) => String(section.id) === String(sectionId));
+      const activeLesson = activeSection?.lessons?.find((lesson) => String(lesson.id) === String(lessonId));
+      if (trainingModal?.mode === "edit" && courseId && activeSection && activeLesson) {
+        const savedCourse = await updateCourseLesson(courseId, lessonId, {
+          ...activeLesson,
+          ...assetPatch,
+          section: String(activeSection.name || "General").trim() || "General",
+          tasks: (activeLesson.tasks || []).map((task) => ({
+            ...task,
+            fileName: task.fileName || fileNameFromUrl(task.pdfUrl, "Uploaded task PDF"),
+          })),
+        });
+        if (savedCourse) {
+          setCourseRows((currentRows) => currentRows.map((course) => String(course.id) === courseId ? savedCourse : course));
+          setTrainingRows((currentRows) => currentRows.map((course) => String(course.id) === courseId ? normalizeCourseToTraining(savedCourse) : course));
+        }
+      }
     } catch (err) {
       notify(err.message || "File upload failed.");
     } finally {
@@ -2582,6 +2885,7 @@ function App() {
             title: String(task.title || "").trim() || "Task",
             timeLimit: Number(task.timeLimit || 30),
             pdfUrl: task.pdfUrl || "",
+            fileName: task.fileName || fileNameFromUrl(task.pdfUrl, "Uploaded task PDF"),
             type: "assignment",
             description: task.description || "",
           }));
@@ -2589,8 +2893,10 @@ function App() {
           section: String(section.name || "").trim() || "General",
           title: String(lesson.title).trim(),
           videoUrl: lesson.videoUrl || "",
+          videoFileName: lesson.videoFileName || fileNameFromUrl(lesson.videoUrl, "Uploaded video"),
           notesUrl: lesson.notesUrl || "",
-          durationSec: Number(lesson.durationSec || 0) || 0,
+          notesFileName: lesson.notesFileName || fileNameFromUrl(lesson.notesUrl, "Uploaded notes PDF"),
+          durationTime: lesson.durationTime || "00:00:00",
           tasks,
         });
       });
@@ -2601,8 +2907,26 @@ function App() {
   async function saveCourseBuilder() {
     if (!trainingModal?.item || trainingModalUploading) return;
     const item = trainingModal.item;
-    if (!String(item.name || "").trim() || !String(item.duration || "").trim() || !String(item.price || "").trim() || !String(item.mode || "").trim() || !String(item.tools || "").trim() || !String(item.syllabus || "").trim()) {
-      notify("Fill in title, duration, fees, mode, tools, and syllabus before saving.");
+    const missingFields = [
+      ["title", item.name],
+      ["duration", item.duration],
+      ["fees", item.price],
+      ["mode", item.mode],
+      ["tools / technologies", item.tools],
+      ["syllabus", item.syllabus],
+    ].filter(([, value]) => !String(value || "").trim()).map(([label]) => label);
+    if (missingFields.length) {
+      notify(`Complete: ${missingFields.join(", ")}.`);
+      return;
+    }
+    const durationMonths = Number(String(item.duration).match(/\d+/)?.[0] || 0);
+    const feeDigits = String(item.price).replace(/[^0-9]/g, "");
+    if (durationMonths < 1 || durationMonths > 10) {
+      notify("Duration must be between 1 and 10 months.");
+      return;
+    }
+    if (!feeDigits) {
+      notify("Fees must contain a rupee amount.");
       return;
     }
     const lessonsPayload = buildLessonsPayloadFromSections(item.sections);
@@ -2615,12 +2939,13 @@ function App() {
       const uploadedItem = await persistImageIfNeeded(item, notify);
       const payload = {
         title: uploadedItem.name || "Untitled course",
-        duration: uploadedItem.duration || "4 weeks",
-        fees: uploadedItem.price || "₹0",
+        duration: `${durationMonths} months`,
+        fees: feeDigits,
         mode: uploadedItem.mode || "Online",
         tools: uploadedItem.tools || "",
         syllabus: uploadedItem.syllabus || "",
         thumbnail: uploadedItem.imageUrl || "",
+        thumbnailName: uploadedItem.thumbnailName || "",
         status: "active",
         studentIds: Array.isArray(uploadedItem.studentIds) ? uploadedItem.studentIds : [],
         lessons: lessonsPayload,
@@ -2718,7 +3043,7 @@ function App() {
           videoFileName: entry.videoFile?.name || "",
           notesUrl: entry.notesFile ? urlByFile.get(entry.notesFile) : "",
           notesFileName: entry.notesFile?.name || "",
-          durationSec: 3600,
+          durationTime: "01:00:00",
           tasks: entry.taskFiles.map((file, index) => ({
             id: createEntityId("task"),
             title: file.name.replace(/\.pdf$/i, "") || `Task ${index + 1}`,
@@ -2736,12 +3061,15 @@ function App() {
       section: section.name,
       title: lesson.title,
       videoUrl: lesson.videoUrl || "",
+      videoFileName: lesson.videoFileName || fileNameFromUrl(lesson.videoUrl, "Uploaded video"),
       notesUrl: lesson.notesUrl || "",
-      durationSec: Number(lesson.durationSec || 3600),
+      notesFileName: lesson.notesFileName || fileNameFromUrl(lesson.notesUrl, "Uploaded notes PDF"),
+      durationTime: lesson.durationTime || "01:00:00",
       order: lessonIndex + 1,
       tasks: lesson.tasks.map((task, taskIndex) => ({
         title: task.title,
         pdfUrl: task.pdfUrl || "",
+        fileName: task.fileName || fileNameFromUrl(task.pdfUrl, "Uploaded task PDF"),
         timeLimit: task.timeLimit || "60",
         description: task.description || "",
         order: taskIndex + 1,
@@ -2830,12 +3158,15 @@ function App() {
             section,
             title: lessonTitle,
             videoUrl: uploadedItem.videoUrl || "",
+            videoFileName: uploadedItem.videoFileName || fileNameFromUrl(uploadedItem.videoUrl, "Uploaded video"),
             notesUrl,
-            durationSec: Number(uploadedItem.durationSec || 3600),
+            notesFileName: uploadedItem.notesFileName || fileNameFromUrl(notesUrl, "Uploaded notes PDF"),
+            durationTime: uploadedItem.durationTime || "01:00:00",
             tasks: [{
               title: assignmentTitle,
               timeLimit: assignmentTime,
               pdfUrl: assignmentUrl || "",
+              fileName: uploadedItem.assignmentFileName || fileNameFromUrl(assignmentUrl, "Uploaded task PDF"),
               type: "assignment",
               description: uploadedItem.assignment || "",
             }],
@@ -2879,7 +3210,7 @@ function App() {
             courseId: String(uploadedItem.courseId || ""),
             section: String(uploadedItem.section || "General"),
             lessonTitle: "",
-            durationSec: 3600,
+            durationTime: "01:00:00",
             videoUrl: "",
             notesUrl: "",
             assignmentTitle: "",
@@ -3040,7 +3371,6 @@ function App() {
   const name = createUserForm.name.trim();
   const email = createUserForm.email.trim();
   const phone = createUserForm.phone.trim();
-  const emergencyContact = createUserForm.emergencyContact.trim();
   const education = createUserForm.education.trim();
   const username = createUserForm.username.trim();
   const password = createUserForm.password.trim();
@@ -3058,7 +3388,6 @@ function App() {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { notify("Enter a valid email address."); return; }
     if (!phone) { notify("Contact number is required."); return; }
     if (!/^[6-9]\d{9}$/.test(phone)) { notify("Contact number must be exactly 10 digits and start with 6, 7, 8, or 9."); return; }
-    if (emergencyContact && !/^[6-9]\d{9}$/.test(emergencyContact)) { notify("Emergency contact must be exactly 10 digits and start with 6, 7, 8, or 9."); return; }
     if (!education) { notify("Education is required."); return; }
     if (!dept) { notify("Department is required."); return; }
     if (!position) { notify("Position is required."); return; }
@@ -3099,7 +3428,6 @@ function App() {
       name,
       email,
       phone,
-      emergencyContact,
       maritalStatus: createUserForm.maritalStatus || "",
       education,
       username,
@@ -3590,6 +3918,7 @@ function App() {
           onLogout={logout}
           courses={displayTrainingRows}
           notifications={notifications}
+          enrollmentRequests={studentEnrollmentRequests}
           onRefreshNotifications={async () => {
             try {
               const studentId = String(currentUser?.id || currentUser?._id || "").trim();
@@ -3620,6 +3949,16 @@ function App() {
           onReadAllNotifications={handleReadAllNotifications}
           uploadStudentResource={uploadStudentCourseResource}
           saveLessonProgress={saveStudentLessonProgress}
+          loadCourse={async (courseId) => {
+            const loaded = await loadCourse(courseId);
+            if (loaded) {
+              setCourseRows((current) => current.map((course) => (
+                String(course.id || course._id) === String(courseId) ? { ...course, ...loaded } : course
+              )));
+            }
+            return loaded;
+          }}
+          onRequestCourseEnrollment={handleRequestCourseEnrollment}
         />
         {toast ? <div className="toast">{toast}</div> : null}
       </ErrorBoundary>
@@ -3698,7 +4037,7 @@ function App() {
                 return (
                   <button
                     key={item.id}
-                    className={`nav-item ${activePage === item.id ? "active" : ""}`}
+                    className={`nav-item nav-item-${item.id} ${activePage === item.id ? "active" : ""}`}
                     onClick={() => {
                       if (activePage === "course-add" && item.id !== "course-add") {
                         closeTrainingModal();
@@ -3714,7 +4053,9 @@ function App() {
                       <Icon size={16} />
                       <span>{item.label}</span>
                     </span>
-                    {item.id === "hr-leaves" && leavePendingCount > 0 ? (
+                    {item.id === "enrollment-requests" && pendingEnrollmentRequestCount > 0 ? (
+                      <span className="nav-pill">{pendingEnrollmentRequestCount}</span>
+                    ) : item.id === "hr-leaves" && leavePendingCount > 0 ? (
                       <span className="nav-pill">{leavePendingCount}</span>
                     ) : (
                       <ChevronRight size={14} />
@@ -4271,16 +4612,6 @@ function App() {
                     maxLength={10}
                   />
                 </Field>
-                <Field label="Emergency Contact">
-                  <input
-                    value={createUserForm.emergencyContact}
-                    onChange={(event) =>
-                      setCreateUserForm((current) => ({ ...current, emergencyContact: event.target.value.replace(/\D/g, "") }))
-                    }
-                    placeholder="Enter your emergency contact here"
-                    maxLength={10}
-                  />
-                </Field>
                 <Field label="Marital Status">
                   <select
                     value={createUserForm.maritalStatus}
@@ -4308,9 +4639,15 @@ function App() {
                 <Field label="Department *">
                   <select
                     value={createUserForm.dept}
-                    onChange={(event) =>
-                      setCreateUserForm((current) => ({ ...current, dept: event.target.value }))
-                    }
+                    onChange={(event) => {
+                      const dept = event.target.value;
+                      setCreateUserForm((current) => ({
+                        ...current,
+                        dept,
+                        role: departmentRoleMap[dept] || dept,
+                        position: dept === "Student" ? "Student" : (current.position === "Student" ? "" : current.position),
+                      }));
+                    }}
                   >
                     {backendDepartments.map((dept) => (
                       <option key={dept} value={dept}>{dept}</option>
@@ -5173,7 +5510,7 @@ function App() {
                                   <div key={lesson.id || `${course.id}-lesson-${index}`} className="course-library-lesson">
                                     <div>
                                       <strong>{lesson.title || `Lesson ${index + 1}`}</strong>
-                                      <span>{lesson.durationSec ? `${Math.round(Number(lesson.durationSec) / 60)} min` : "Lesson content"}</span>
+                                      <span>{lesson.durationTime || "Lesson content"}</span>
                                     </div>
                                     <div className="course-library-links">
                                       {lesson.videoUrl ? <a href={lesson.videoUrl} target="_blank" rel="noreferrer">Video</a> : null}
@@ -5235,6 +5572,96 @@ function App() {
                 )}
               </Panel>
             </>
+          )}
+
+          {activePage === "enrollment-requests" && (
+            <Panel title="Enrollment requests">
+              <div className="module-toolbar enrollment-request-toolbar">
+                <div className="toolbar-search">
+                  <Search size={16} />
+                  <input value={enrollmentRequestQuery} onChange={(event) => setEnrollmentRequestQuery(event.target.value)} placeholder="Search student, phone, or course" />
+                </div>
+                <input type="date" value={enrollmentRequestDate} onChange={(event) => setEnrollmentRequestDate(event.target.value)} aria-label="Filter by request date" />
+                <select value={enrollmentRequestStatus} onChange={(event) => setEnrollmentRequestStatus(event.target.value)} aria-label="Filter by request status">
+                  <option value="all">All statuses</option>
+                  <option value="pending">Pending</option>
+                  <option value="contacted">Contacted</option>
+                  <option value="approved">Approved</option>
+                  <option value="rejected">Rejected</option>
+                  <option value="completed">Completed</option>
+                </select>
+                <button type="button" className="ghost-button compact" onClick={async () => { try { const result = await loadPendingEnrollmentRequests(true); if (Array.isArray(result)) setAllEnrollmentRequests(result); } catch (err) { notify(err?.message || "Unable to refresh requests."); } }}>Refresh</button>
+              </div>
+
+              {allEnrollmentRequests.length === 0 ? (
+                <div className="catalog-empty-state">No enrollment requests found.</div>
+              ) : (
+                <>
+                <div className="submission-table-wrap">
+                  <h3>Pending and contacted</h3>
+                  <div className="submission-table enrollment-request-table" role="table" aria-label="Pending and contacted enrollment requests">
+                    <div className="submission-table-head" role="row">
+                      <span role="columnheader">Student</span>
+                      <span role="columnheader">Phone</span>
+                      <span role="columnheader">Course</span>
+                      <span role="columnheader">Requested</span>
+                      <span role="columnheader">Status</span>
+                      <span role="columnheader">Remark</span>
+                      <span role="columnheader" aria-label="Actions"></span>
+                    </div>
+
+                    {activeEnrollmentRequests.map((request) => (
+                        <div key={`${request.studentId}-${request.id}`} className="submission-table-row" role="row">
+                          <div className="submission-student" role="cell">
+                            <span className="submission-avatar">{String(request.studentName || "S").trim().charAt(0).toUpperCase()}</span>
+                            <span>
+                              <strong>{request.studentName || request.studentId || "Student"}</strong>
+                            </span>
+                          </div>
+                          <div className="submission-context" role="cell"><strong>{request.studentPhone || "No phone provided"}</strong></div>
+                          <div className="submission-context" role="cell">
+                            <strong>{request.courseName || "Course request"}</strong>
+                          </div>
+                          <div className="submission-task" role="cell">
+                            <strong>{request.requestedAt ? new Date(request.requestedAt).toLocaleDateString() : "Soon"}</strong>
+                            <small>{request.requestedAt ? new Date(request.requestedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</small>
+                          </div>
+                          <div role="cell"><span className={badgeClass(request.status === "contacted" ? "approved" : request.status === "approved" ? "approved" : request.status === "rejected" ? "rejected" : "pending")}>{request.status.charAt(0).toUpperCase() + request.status.slice(1)}</span></div>
+                          <div className="enrollment-request-remark" role="cell"><input defaultValue={request.remark || ""} placeholder="Add remark" onBlur={(event) => { const remark = event.target.value.trim(); if (remark !== String(request.remark || "")) handleUpdateEnrollmentRequestStatus(request, request.status, remark); }} /></div>
+                          <div className="submission-action" role="cell">
+                            {request.status === "pending" ? <button type="button" className="primary-button compact" onClick={() => handleUpdateEnrollmentRequestStatus(request, "contacted")}>Contacted</button> : null}
+                            {request.status === "contacted" ? <>
+                              <button type="button" className="primary-button compact enrollment-approve-button" onClick={() => handleUpdateEnrollmentRequestStatus(request, "approved")}>Approve</button>
+                              <button type="button" className="ghost-button compact enrollment-reject-button" onClick={() => handleUpdateEnrollmentRequestStatus(request, "rejected")}>Reject</button>
+                            </> : null}
+                            {request.status === "approved" ? <button type="button" className="primary-button compact" onClick={() => handleUpdateEnrollmentRequestStatus(request, "completed")}>Completed</button> : null}
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                  {!activeEnrollmentRequests.length ? <div className="catalog-empty-state">No pending or contacted requests match the filters.</div> : null}
+                </div>
+                <div className="submission-table-wrap" style={{ marginTop: 20 }}>
+                  <h3>Processed requests</h3>
+                  <div className="submission-table enrollment-request-table" role="table" aria-label="Completed enrollment requests">
+                    <div className="submission-table-head" role="row"><span role="columnheader">Student</span><span role="columnheader">Phone</span><span role="columnheader">Course</span><span role="columnheader">Requested</span><span role="columnheader">Status</span><span role="columnheader">Remark</span><span role="columnheader"></span></div>
+                    {processedEnrollmentRequests.map((request) => (
+                      <div key={`${request.studentId}-${request.id}`} className="submission-table-row" role="row">
+                        <div className="submission-student" role="cell"><span className="submission-avatar">{String(request.studentName || "S").trim().charAt(0).toUpperCase()}</span><span><strong>{request.studentName || request.studentId || "Student"}</strong></span></div>
+                        <div className="submission-context" role="cell"><strong>{request.studentPhone || "No phone provided"}</strong></div>
+                        <div className="submission-context" role="cell"><strong>{request.courseName || "Course request"}</strong></div>
+                        <div className="submission-task" role="cell"><strong>{request.requestedAt ? new Date(request.requestedAt).toLocaleDateString() : "Soon"}</strong><small>{request.requestedAt ? new Date(request.requestedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</small></div>
+                        <div role="cell"><span className={badgeClass(request.status === "rejected" ? "rejected" : "approved")}>{request.status === "completed" ? "Completed" : request.status.charAt(0).toUpperCase() + request.status.slice(1)}</span></div>
+                        <div className="enrollment-request-remark" role="cell"><input defaultValue={request.remark || ""} placeholder="Add remark" onBlur={(event) => { const remark = event.target.value.trim(); if (remark !== String(request.remark || "")) handleUpdateEnrollmentRequestStatus(request, "completed", remark); }} /></div>
+                        <div className="submission-action" role="cell"><button type="button" className="ghost-button compact" onClick={() => handleUpdateEnrollmentRequestStatus(request, "pending")}>Reopen</button></div>
+                      </div>
+                    ))}
+                  </div>
+                  {!processedEnrollmentRequests.length ? <div className="catalog-empty-state">No processed requests match the filters.</div> : null}
+                </div>
+                </>
+              )}
+            </Panel>
           )}
 
           {activePage === "trainings" && (
@@ -5739,13 +6166,13 @@ function App() {
 
       {taskSubmissionModal ? (
         <ModalSurface title="Check assignment" onClose={() => setTaskSubmissionModal(null)}>
-          <div className="modal-detail-card single-edit">
+          <div className="modal-detail-card single-edit assignment-review-card">
             <div className="course-title-row"><div><strong>{taskSubmissionModal.studentName}</strong><span>{taskSubmissionModal.courseTitle} · {taskSubmissionModal.section} · {taskSubmissionModal.lessonTitle}</span></div><span className={badgeClass(hasTaskGrade(taskSubmissionModal.grade) ? "approved" : "pending")}>{hasTaskGrade(taskSubmissionModal.grade) ? `Graded · ${taskSubmissionModal.grade}/100` : "Needs review"}</span></div>
-            <div className="course-actions">
+            <div className="course-actions assignment-review-files">
               {taskSubmissionModal.taskPdfUrl ? <a className="ghost-button compact" href={taskSubmissionModal.taskPdfUrl} target="_blank" rel="noreferrer">Open task PDF</a> : null}
               {taskSubmissionModal.taskStudentPdfUpload ? <a className="ghost-button compact" href={taskSubmissionModal.taskStudentPdfUpload} target="_blank" rel="noreferrer">Open student PDF</a> : <span className="course-library-empty-detail">Student has not uploaded a PDF yet.</span>}
             </div>
-            <div className="course-builder-grid">
+            <div className="course-builder-grid assignment-review-fields">
               <label className="course-builder-field"><span>Marks / grade (0-100)</span><input type="number" min="0" max="100" value={taskGradeForm.grade} onChange={(event) => setTaskGradeForm((current) => ({ ...current, grade: event.target.value }))} /></label>
               <label className="course-builder-field full"><span>Feedback and improvement points</span><textarea rows="5" value={taskGradeForm.feedback} onChange={(event) => setTaskGradeForm((current) => ({ ...current, feedback: event.target.value }))} placeholder="Tell the student what was done well and what to improve." /></label>
             </div>
@@ -5795,8 +6222,8 @@ function App() {
               </div>
               <div className="cb-grid">
                 <label className="cb-field"><span>Title *</span><input value={trainingModal.item.name || ""} placeholder="Full Stack Development" onChange={(event) => setTrainingModal((current) => ({ ...current, item: { ...current.item, name: event.target.value } }))} /></label>
-                <label className="cb-field"><span>Duration *</span><input value={trainingModal.item.duration || ""} placeholder="6 months" onChange={(event) => setTrainingModal((current) => ({ ...current, item: { ...current.item, duration: event.target.value } }))} /></label>
-                <label className="cb-field"><span>Fees *</span><input value={trainingModal.item.price || ""} placeholder="₹25,000" onChange={(event) => setTrainingModal((current) => ({ ...current, item: { ...current.item, price: event.target.value } }))} /></label>
+                <label className="cb-field"><span>Duration (months) *</span><select value={String(trainingModal.item.duration || "").replace(/\s*months?\s*/i, "")} onChange={(event) => setTrainingModal((current) => ({ ...current, item: { ...current.item, duration: `${event.target.value} months` } }))}>{Array.from({ length: 10 }, (_, index) => index + 1).map((months) => <option key={months} value={months}>{months} {months === 1 ? "month" : "months"}</option>)}</select></label>
+                <label className="cb-field"><span>Fees (₹) *</span><input inputMode="numeric" pattern="[0-9]*" value={String(trainingModal.item.price || "").replace(/[^0-9]/g, "")} placeholder="25000" onChange={(event) => setTrainingModal((current) => ({ ...current, item: { ...current.item, price: event.target.value.replace(/[^0-9]/g, "") } }))} /></label>
                 <label className="cb-field"><span>Mode *</span>
                   <select value={trainingModal.item.mode || "Hybrid"} onChange={(event) => setTrainingModal((current) => ({ ...current, item: { ...current.item, mode: event.target.value } }))}>
                     <option>Online</option><option>Offline</option><option>Hybrid</option>
@@ -5808,9 +6235,15 @@ function App() {
                   <CbFileButton
                     label={trainingModal.item.imageUrl ? "Change thumbnail" : "Upload thumbnail"}
                     accept="image/*"
-                    fileName={trainingModal.item._pendingImageFile?.name || (trainingModal.item.imageUrl ? "Thumbnail set" : "")}
+                    fileName={trainingModal.item.thumbnailName || trainingModal.item._pendingImageFile?.name || (trainingModal.item.imageUrl ? "Thumbnail uploaded" : "")}
                     onSelect={(file) => handleTrainingModalImageSelect(file)}
                   />
+                  {(trainingModal.item._previewImage || trainingModal.item.imageUrl) ? (
+                    <div className="cb-thumbnail-preview">
+                      <img src={trainingModal.item._previewImage || trainingModal.item.imageUrl} alt={trainingModal.item.thumbnailName || "Course thumbnail preview"} />
+                      <span>{trainingModal.item.thumbnailName || "Uploaded thumbnail"}</span>
+                    </div>
+                  ) : null}
                 </div>
                 <label className="cb-field full"><span>Syllabus *</span><textarea rows={3} value={trainingModal.item.syllabus || ""} placeholder="Modules, topics, and outcomes" onChange={(event) => setTrainingModal((current) => ({ ...current, item: { ...current.item, syllabus: event.target.value } }))} /></label>
                 <div className="cb-field full">
@@ -5906,8 +6339,8 @@ function App() {
                                   onSelect={(file) => handleLessonFileUpload(section.id, lesson.id, "videoUrl", "videoFileName", file)}
                                 />
                                 <label className="cb-inline-number">
-                                  <span>Length (sec)</span>
-                                  <input type="number" min="0" value={lesson.durationSec || ""} onChange={(event) => patchLesson(section.id, lesson.id, { durationSec: event.target.value })} />
+                                  <span>Length (HH:MM:SS)</span>
+                                  <input value={lesson.durationTime || "00:00:00"} readOnly />
                                 </label>
                                 <CbFileButton
                                   icon={<FileText size={14} />}
@@ -5994,8 +6427,8 @@ function App() {
                 <div className="course-builder-panel-title">Course information</div>
                 <div className="course-builder-grid">
                   <div className="course-builder-field"><label>Title *</label><input value={trainingModal.item.name || ""} readOnly={trainingModal.mode === "view"} placeholder="Frontend Design" onChange={(event) => setTrainingModal((current) => ({ ...current, item: { ...current.item, name: event.target.value } }))} /></div>
-                  <div className="course-builder-field"><label>Duration *</label><input value={trainingModal.item.duration || ""} readOnly={trainingModal.mode === "view"} placeholder="12 weeks" onChange={(event) => setTrainingModal((current) => ({ ...current, item: { ...current.item, duration: event.target.value } }))} /></div>
-                  <div className="course-builder-field"><label>Fees *</label><input value={trainingModal.item.price || ""} readOnly={trainingModal.mode === "view"} placeholder="₹25,000" onChange={(event) => setTrainingModal((current) => ({ ...current, item: { ...current.item, price: event.target.value } }))} /></div>
+                  <div className="course-builder-field"><label>Duration (months) *</label><select value={String(trainingModal.item.duration || "").replace(/\s*months?\s*/i, "")} disabled={trainingModal.mode === "view"} onChange={(event) => setTrainingModal((current) => ({ ...current, item: { ...current.item, duration: `${event.target.value} months` } }))}>{Array.from({ length: 10 }, (_, index) => index + 1).map((months) => <option key={months} value={months}>{months} {months === 1 ? "month" : "months"}</option>)}</select></div>
+                  <div className="course-builder-field"><label>Fees (₹) *</label><input inputMode="numeric" pattern="[0-9]*" value={String(trainingModal.item.price || "").replace(/[^0-9]/g, "")} readOnly={trainingModal.mode === "view"} placeholder="25000" onChange={(event) => setTrainingModal((current) => ({ ...current, item: { ...current.item, price: event.target.value.replace(/[^0-9]/g, "") } }))} /></div>
                   <div className="course-builder-field"><label>Mode *</label><select value={trainingModal.item.mode || "Online"} disabled={trainingModal.mode === "view"} onChange={(event) => setTrainingModal((current) => ({ ...current, item: { ...current.item, mode: event.target.value } }))}><option>Online</option><option>Offline</option><option>Hybrid</option></select></div>
                   <div className="course-builder-field full"><label>Tools / Technologies *</label><input value={trainingModal.item.tools || ""} readOnly={trainingModal.mode === "view"} placeholder="React, Node.js, MongoDB" onChange={(event) => setTrainingModal((current) => ({ ...current, item: { ...current.item, tools: event.target.value } }))} /></div>
                   <div className="course-builder-field full"><label>Syllabus *</label><textarea value={trainingModal.item.syllabus || ""} readOnly={trainingModal.mode === "view"} placeholder="Modules, topics, and outcomes" onChange={(event) => setTrainingModal((current) => ({ ...current, item: { ...current.item, syllabus: event.target.value } }))} /></div>
@@ -6053,7 +6486,7 @@ function App() {
                     {!lessonSectionOptions.includes(trainingModal.item.section) ? <input value={trainingModal.item.section || ""} readOnly={trainingModal.mode === "view"} placeholder="Enter new section name" onChange={(event) => setTrainingModal((current) => ({ ...current, item: { ...current.item, section: event.target.value } }))} /> : null}
                   </div>
                   <div className="course-builder-field"><label>Lesson title *</label><input value={trainingModal.item.lessonTitle || ""} readOnly={trainingModal.mode === "view"} placeholder="Intro to HTML" onChange={(event) => setTrainingModal((current) => ({ ...current, item: { ...current.item, lessonTitle: event.target.value } }))} /></div>
-                  <div className="course-builder-field"><label>Video duration (seconds) *</label><input type="number" min="1" value={trainingModal.item.durationSec || 3600} readOnly={trainingModal.mode === "view"} onChange={(event) => setTrainingModal((current) => ({ ...current, item: { ...current.item, durationSec: event.target.value } }))} /></div>
+                  <div className="course-builder-field"><label>Video duration (HH:MM:SS) *</label><input value={trainingModal.item.durationTime || ""} readOnly /></div>
                   <div className="course-builder-field full"><label>Video file *</label><input className="course-asset-input" type="file" accept="video/*" disabled={trainingModal.mode === "view"} onChange={(event) => { handleCourseAssetSelect(event.target.files?.[0], "videoUrl", "videoFileName"); }} /><small>{trainingAssetUploading === "videoUrl" ? "Uploading video..." : trainingModal.item.videoFileName || (trainingModal.item.videoUrl ? "Video uploaded." : "Choose a video file")}</small></div>
                 </div>
               </>
@@ -6506,7 +6939,7 @@ function CourseViewSurface({ course, onClose, onEdit, onEditLesson, onNextLesson
                     <div>
                       <span>{section} · Lesson {index + 1}</span>
                       <strong>{lesson.title || `Lesson ${index + 1}`}</strong>
-                      <small>{lesson.durationSec ? `${Math.round(Number(lesson.durationSec) / 60)} min video` : "Lesson content"}</small>
+                      <small>{lesson.durationTime ? `${lesson.durationTime} video` : "Lesson content"}</small>
                     </div>
                     <div className="course-view-lesson-links">
                       <button type="button" className="ghost-button compact" onClick={() => onEditLesson(lesson)}>Edit lesson</button>
@@ -6533,6 +6966,7 @@ function CbFileButton({ label, accept, onSelect, busy, icon, compact, fileName }
         {icon || <Upload size={14} />}
         <span>{busy ? "Uploading..." : label}</span>
       </button>
+      {fileName ? <small className="cb-filebtn-name" title={fileName}>{fileName}</small> : null}
       <input
         ref={inputRef}
         type="file"
