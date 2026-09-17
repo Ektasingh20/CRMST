@@ -142,6 +142,7 @@ import {
 import ErrorBoundary from "./ErrorBoundary";
 import StudentDashboard from "./src/student-dashboard/StudentDashboard";
 import CrmExecutiveDashboard from "./src/crm-executive/CrmExecutiveDashboard";
+import ITDashboard from "./src/It- dashboard/ITDashboard";
 import {
   compressImageFile,
   createPreviewUrl,
@@ -1451,13 +1452,11 @@ function App() {
           return;
         }
         if (isItUser(session)) {
-          const [remoteUsers, remoteTasks, remoteLeaves, remoteEmployees] = await Promise.all([
-            loadUsers(),
+          const [remoteTasks, remoteLeaves, remoteEmployees] = await Promise.all([
             loadTasks(),
             loadLeaves(),
             loadEmployees(),
           ]);
-          if (remoteUsers.length) setUsers(remoteUsers);
           if (Array.isArray(remoteTasks)) setItTasks(remoteTasks);
           if (Array.isArray(remoteLeaves)) setItLeaves(remoteLeaves);
           if (Array.isArray(remoteEmployees)) setItEmployees(remoteEmployees);
@@ -3968,7 +3967,7 @@ function App() {
   if (appView === "it-dashboard" || (currentUser && isItUser(currentUser))) {
     return (
       <ErrorBoundary>
-        <ItDashboard user={currentUser} users={users} tasks={itTasks} leaves={itLeaves} employees={itEmployees} onLogout={logout} />
+        <ITDashboard onLogout={logout} />
         {toast ? <div className="toast">{toast}</div> : null}
       </ErrorBoundary>
     );

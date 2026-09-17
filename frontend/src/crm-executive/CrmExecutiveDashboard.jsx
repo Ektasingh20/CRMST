@@ -173,11 +173,6 @@ const IconBell = (p) => (
     <path d="M10 20a2 2 0 0 0 4 0" />
   </Icon>
 );
-const IconMenu = (p) => (
-  <Icon {...p}>
-    <path d="M4 6h16M4 12h16M4 18h16" />
-  </Icon>
-);
 const IconClose = (p) => (
   <Icon {...p}>
     <path d="m6 6 12 12M18 6 6 18" />
@@ -192,6 +187,20 @@ const IconEdit = (p) => (
   <Icon {...p}>
     <path d="M12 20h9" />
     <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+  </Icon>
+);
+const IconFillEnquiry = (p) => (
+  <Icon {...p}>
+    <path d="M5 3h9l5 5v13H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z" />
+    <path d="M14 3v6h6" />
+    <path d="m9 17 7.5-7.5a2.1 2.1 0 0 1 3 3L12 20l-4 1 1-4Z" />
+    <path d="M7 8h4M7 12h4" />
+  </Icon>
+);
+const IconView = (p) => (
+  <Icon {...p}>
+    <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" />
+    <circle cx="12" cy="12" r="2.5" />
   </Icon>
 );
 const IconTrash = (p) => (
@@ -318,7 +327,7 @@ function getCallListCategory(program) {
 
 const CALL_STATUS_OPTIONS = ["Select Status", "Pending", "Follow Up", "Completed"];
 const INTERACTION_TYPES = ["Call", "WhatsApp", "Email", "Walk-in", "Reference"];
-const INTEREST_STATUS_OPTIONS = ["Select Status", "Hot", "Warm", "Cold", "Not Interested", "Converted"];
+const INTEREST_STATUS_OPTIONS = ["Select Status", "Interested", "Not Interested"];
 const CALL_LIST_INTEREST_STATUS_OPTIONS = ["Select Status", "Interested", "Not Interested"];
 const CRM_EXEC_LEADS_STORAGE_KEY = "crmExec.adminLeads";
 const LEAD_SOURCES = ["Website", "Reference", "Walk-in", "Social Media", "Cold Call", "Advertisement"];
@@ -793,7 +802,7 @@ function emptyContactForm() {
   };
 }
 
-function ContactFormModal({ initial, onClose, onSave }) {
+function ContactFormModal({ initial, onClose, onSave, readOnly = false }) {
   const [form, setForm] = useState(initial);
   const [errors, setErrors] = useState({});
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
@@ -810,7 +819,8 @@ function ContactFormModal({ initial, onClose, onSave }) {
   };
 
   return (
-    <Modal title={initial.id ? "Edit Contact" : "Add Contact"} onClose={onClose}>
+    <Modal title={readOnly ? "View Contact" : initial.id ? "Edit Contact" : "Add Contact"} onClose={onClose}>
+      <fieldset className="crm-enquiry-fieldset" disabled={readOnly}>
       <div className="form-grid">
         <div className="field">
           <span>Full Name</span>
@@ -852,7 +862,7 @@ function ContactFormModal({ initial, onClose, onSave }) {
         </div>
         <div className="field">
           <span>Interest Status</span>
-          <select value={form.interestStatus} onChange={(e) => set("interestStatus", e.target.value)}>
+          <select value={INTEREST_STATUS_OPTIONS.includes(form.interestStatus) ? form.interestStatus : "Select Status"} onChange={(e) => set("interestStatus", e.target.value)}>
             {INTEREST_STATUS_OPTIONS.map((p) => (
               <option key={p}>{p}</option>
             ))}
@@ -870,19 +880,23 @@ function ContactFormModal({ initial, onClose, onSave }) {
           <textarea value={form.remark} onChange={(e) => set("remark", e.target.value)} placeholder="Notes about this contact..." />
         </div>
       </div>
+      </fieldset>
       <div className="form-actions">
         <button className="ghost-button" onClick={onClose}>
           Cancel
         </button>
-        <button className="primary-button" onClick={() => onSave(form)}>
-          <IconCheck size={16} /> Save Contact
-        </button>
+        {!readOnly && (
+          <button className="primary-button" onClick={() => onSave(form)}>
+            <IconCheck size={16} /> Save Contact
+          </button>
+        )}
       </div>
     </Modal>
   );
 }
 
 function CallListTab({ contacts, setContacts, showToast, category, title, addLabel, currentUser, onContactChange }) {
+  const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [programFilter, setProgramFilter] = useState("All");
   const [callStatusFilter, setCallStatusFilter] = useState("All");
@@ -895,7 +909,7 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
 
   const filtered = useMemo(() => {
     let rows = contacts.filter((c) => {
-      const matchesCategory = !category || getCallListCategory(c.program) === category;
+      const matchesCategory = !category || (c.callListCategory || getCallListCategory(c.program)) === category;
       const matchesSearch =
         !search.trim() ||
         c.name.toLowerCase().includes(search.trim().toLowerCase()) ||
@@ -984,6 +998,7 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
   };
 
   const resetFilters = () => {
+    setSearchInput("");
     setSearch("");
     setProgramFilter("All");
     setCallStatusFilter("All");
@@ -994,10 +1009,23 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
     setPage(1);
   };
 
+  const handleSearch = () => {
+    if (search.trim()) {
+      setSearchInput("");
+      setSearch("");
+      setPage(1);
+      return;
+    }
+    setSearch(searchInput.trim());
+    setPage(1);
+  };
+
   const isSnoozed = (c) => c.snoozeUntil && c.snoozeUntil > todayISO();
+  const isConvertedToLead = (c) => c.interestStatus === "Interested"
+    && ["Follow Up", "Completed"].includes(c.callStatus);
 
   return (
-    <div className="panel">
+    <div className="panel call-list-panel">
       <div className="panel-head">
         <h3>{title}</h3>
         <button className="primary-button" onClick={() => setModalState(emptyContactForm())}>
@@ -1010,12 +1038,22 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
           <IconSearch size={16} />
           <input
             placeholder="Search by name or contact number"
-            value={search}
+            value={searchInput}
             onChange={(e) => {
+              setSearchInput(e.target.value);
               setSearch(e.target.value);
               setPage(1);
             }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                setSearch(searchInput.trim());
+                setPage(1);
+              }
+            }}
           />
+          <button type="button" className="toolbar-search-action" onClick={handleSearch}>
+            {search.trim() ? "Clear" : "Search"}
+          </button>
         </div>
         <div className="toolbar-filters">
           <select value={programFilter} onChange={(e) => setProgramFilter(e.target.value)}>
@@ -1054,7 +1092,6 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
               </th>
               <th>Contact</th>
               <th>Call / WhatsApp</th>
-              <th>CRM Executive Name</th>
               <th>Call Status</th>
               <th>Interest Status</th>
               <th>{category === "Services" ? "Service" : "Program"}</th>
@@ -1063,9 +1100,9 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
             </tr>
           </thead>
           <tbody>
-            {pageRows.length === 0 && <EmptyRow colSpan={11} text={`No ${category.toLowerCase()} contacts match the selected filters.`} />}
+            {pageRows.length === 0 && <EmptyRow colSpan={10} text={`No ${category.toLowerCase()} contacts match the selected filters.`} />}
             {pageRows.map((c, idx) => (
-              <tr key={c.id} style={{ opacity: c.active ? 1 : 0.55 }}>
+              <tr key={c.id}>
                 <td>{(page - 1) * CONTACT_PAGE_SIZE + idx + 1}</td>
                 <td>{formatDisplayDate(c.date)}</td>
                 <td>
@@ -1088,7 +1125,6 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
                     </button>
                   </div>
                 </td>
-                <td>{c.crmExecutiveName || c.createdByName || c.createdBy || currentUser?.name || "-"}</td>
                 <td>
                   <select
                     className="inline-select"
@@ -1115,7 +1151,7 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
                   <select
                     className="inline-select call-list-program-select"
                     value={c.program || ""}
-                    onChange={(e) => updateContact(c.id, { program: e.target.value })}
+                    onChange={(e) => updateContact(c.id, { program: e.target.value, callListCategory: category })}
                     aria-label={category === "Services" ? "Service" : "Program"}
                   >
                     <option value="">
@@ -1140,8 +1176,8 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
                 </td>
                 <td>
                   <div className="row-actions">
-                    <button className="row-icon-btn edit" title="Edit" onClick={() => setModalState(c)}>
-                      <IconEdit size={16} />
+                    <button className="row-icon-btn edit" title={isConvertedToLead(c) ? "View" : "Edit"} onClick={() => setModalState(c)}>
+                      {isConvertedToLead(c) ? <IconView size={16} /> : <IconEdit size={16} />}
                     </button>
                     {isSnoozed(c) ? (
                       <button className="row-icon-btn snooze" title="Resume" onClick={() => handleResume(c)}>
@@ -1152,9 +1188,6 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
                         <IconSnooze size={16} />
                       </button>
                     )}
-                    <button className="row-icon-btn delete" title="Delete" onClick={() => handleDelete(c)}>
-                      <IconTrash size={16} />
-                    </button>
                   </div>
                 </td>
               </tr>
@@ -1165,7 +1198,12 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
       <Pagination page={page} totalPages={totalPages} onChange={setPage} />
 
       {modalState && (
-        <ContactFormModal initial={modalState} onClose={() => setModalState(null)} onSave={handleSaveModal} />
+        <ContactFormModal
+          initial={modalState}
+          readOnly={isConvertedToLead(modalState)}
+          onClose={() => setModalState(null)}
+          onSave={handleSaveModal}
+        />
       )}
     </div>
   );
@@ -1294,62 +1332,154 @@ function AssignedLeadsTab({ leads, currentUser }) {
   );
 }
 
-function LeadFormModal({ initial, onClose, onSave }) {
-  const [form, setForm] = useState(initial);
+function LeadFormModal({ initial, onClose, onSave, currentUser, readOnly = false }) {
+  const initialType = initial.type || (getCallListCategory(initial.program) === "Services" ? "Service" : getCallListCategory(initial.program) === "Internship" ? "Internship" : "Training");
+  const interestOptions = (type) => type === "Service"
+    ? SERVICE_CALL_LIST_SERVICES
+    : type === "Internship"
+    ? ["Front End (React.js)", "Back End (Node.js)", "Full Stack"]
+    : TRAINING_CALL_LIST_PROGRAMS;
+  const [form, setForm] = useState(() => ({
+    ...initial,
+    name: initial.name || "",
+    phone: initial.phone || initial.contact || "",
+    email: initial.email || "",
+    alternatePhone: initial.alternatePhone || "",
+    city: initial.city || "Ajmer",
+    company: initial.company || "",
+    type: initialType,
+    interest: initial.interest || initial.program || interestOptions(initialType)[0],
+    value: initial.value ?? "",
+    status: initial.status || "Select Status",
+    leadSource: initial.leadSource || initial.source || "Website",
+    enteredBy: initial.enteredBy
+      || initial.crmExecutiveName
+      || initial.crmExecutive
+      || (currentUser ? `${currentUser.name || currentUser.username || "User"} (${currentUser.position || currentUser.role || "CRM Executive"})` : ""),
+    assignedTo: initial.assignedTo || TEAM_MEMBERS[0],
+    assignedDate: initial.assignedDate || initial.createdDate || todayISO(),
+    notes: initial.notes || initial.remark || "",
+  }));
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+  const availableInterests = [...new Set([...interestOptions(form.type), form.interest].filter(Boolean))];
+  const handleSave = () => {
+    if (!form.name.trim() || !/^[6-9]\d{9}$/.test(form.phone.trim()) || !form.city.trim() || !form.interest) return;
+    onSave({
+      ...initial,
+      ...form,
+      contact: form.phone.trim(),
+      phone: form.phone.trim(),
+      program: form.interest,
+      remark: form.notes,
+      source: form.leadSource,
+      createdDate: initial.createdDate || todayISO(),
+    });
+  };
 
   return (
-    <Modal title={initial.id ? "Edit Lead" : "Add Lead"} onClose={onClose}>
-      <div className="form-grid">
+    <Modal title={readOnly ? "View lead" : "Add new lead"} onClose={onClose} wide>
+      <fieldset className="crm-enquiry-fieldset" disabled={readOnly}>
+      <div className="form-grid add-lead-form crm-enquiry-form">
+        <p className="form-section-title">Contact Information</p>
         <div className="field">
-          <span>Full Name</span>
-          <input value={form.name} onChange={(e) => set("name", e.target.value)} />
+          <span>Full name *</span>
+          <input value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="Enter the lead's full name here" />
         </div>
         <div className="field">
-          <span>Contact Number</span>
-          <input value={form.contact || ""} onChange={(e) => set("contact", e.target.value)} />
+          <span>Phone *</span>
+          <input value={form.phone} maxLength={10} onChange={(e) => set("phone", e.target.value.replace(/\D/g, "").slice(0, 10))} placeholder="Enter the lead's phone number here" />
         </div>
         <div className="field">
-          <span>Program / Service</span>
-          <select value={form.program || ""} onChange={(e) => set("program", e.target.value)}>
-            {[...new Set([...PROGRAMS, ...SERVICE_CALL_LIST_SERVICES, ...TRAINING_CALL_LIST_PROGRAMS])].map((p) => (
-              <option key={p}>{p}</option>
-            ))}
+          <span>Email</span>
+          <input type="email" value={form.email} onChange={(e) => set("email", e.target.value)} placeholder="Enter the lead's email here" />
+        </div>
+        <div className="field">
+          <span>Alternate Phone</span>
+          <input value={form.alternatePhone} maxLength={10} onChange={(e) => set("alternatePhone", e.target.value.replace(/\D/g, "").slice(0, 10))} placeholder="Enter an alternate phone number here" />
+        </div>
+        <div className="field">
+          <span>City *</span>
+          <input value={form.city} onChange={(e) => set("city", e.target.value)} placeholder="Enter the city here" />
+        </div>
+        <div className="field">
+          <span>Company / Organization</span>
+          <input value={form.company} onChange={(e) => set("company", e.target.value)} placeholder="Enter the company or organization here" />
+        </div>
+
+        <p className="form-section-title">Lead Information</p>
+        <div className="field">
+          <span>Lead Type *</span>
+          <select value={form.type} onChange={(e) => { const type = e.target.value; setForm((current) => ({ ...current, type, interest: interestOptions(type)[0] })); }}>
+            <option>Training</option>
+            <option>Service</option>
+            <option>Internship</option>
           </select>
         </div>
         <div className="field">
-          <span>Interest Type</span>
-          <select value={form.interestType || "Interested"} onChange={(e) => set("interestType", e.target.value)}>
+          <span>Interest *</span>
+          <select value={form.interest} onChange={(e) => set("interest", e.target.value)}>
+            {availableInterests.map((interest) => <option key={interest}>{interest}</option>)}
+          </select>
+        </div>
+        <div className="field">
+          <span>Value</span>
+          <input type="number" min="0" value={form.value} onChange={(e) => set("value", e.target.value)} placeholder="Enter the estimated value here" />
+        </div>
+        <div className="field">
+          <span>Lead Source *</span>
+          <select value={form.leadSource} onChange={(e) => set("leadSource", e.target.value)}>
+            {["Website", "Referral", "Facebook", "Instagram", "Google", "Walk-in", "Phone Call", "Other"].map((source) => <option key={source}>{source}</option>)}
+          </select>
+        </div>
+        <div className="field">
+          <span>Status *</span>
+          <select value={form.status} onChange={(e) => set("status", e.target.value)}>
+            <option>Pending</option>
             <option>Interested</option>
             <option>Not Interested</option>
+            {form.status && !["Pending", "Interested", "Not Interested"].includes(form.status) ? <option>{form.status}</option> : null}
+          </select>
+        </div>
+
+        <p className="form-section-title">Assignment</p>
+        <div className="field">
+          <span>Entered By *</span>
+          <input value={form.enteredBy} readOnly />
+        </div>
+        <div className="field">
+          <span>Assigned To *</span>
+          <select value={form.assignedTo} onChange={(e) => set("assignedTo", e.target.value)}>
+            {TEAM_MEMBERS.map((member) => <option key={member}>{member}</option>)}
           </select>
         </div>
         <div className="field">
-          <span>Status</span>
-          <select value={form.status || "Pending"} onChange={(e) => set("status", e.target.value)}>
-            <option>Pending</option>
-            <option>Approved</option>
-            <option>Rejected</option>
-          </select>
+          <span>Assigned Date</span>
+          <input type="date" value={form.assignedDate} onChange={(e) => set("assignedDate", e.target.value)} />
         </div>
+
+        <p className="form-section-title">Additional Information</p>
         <div className="field span-full">
-          <span>Remark</span>
-          <textarea value={form.remark || ""} onChange={(e) => set("remark", e.target.value)} />
+          <span>Lead Notes / Remarks</span>
+          <textarea value={form.notes} onChange={(e) => set("notes", e.target.value)} placeholder="Enter lead notes or requirements here" rows={4} />
         </div>
       </div>
+      </fieldset>
       <div className="form-actions">
         <button className="ghost-button" onClick={onClose}>
           Cancel
         </button>
-        <button className="primary-button" onClick={() => onSave(form)}>
-          <IconCheck size={16} /> Save Lead
-        </button>
+        {!readOnly && (
+          <button className="primary-button" onClick={handleSave}>
+            <IconCheck size={16} /> Save lead
+          </button>
+        )}
       </div>
     </Modal>
   );
 }
 
-function LeadsTab({ leads, setLeads, showToast }) {
+function LeadsTab({ leads, setLeads, showToast, currentUser }) {
+  const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
   const [programFilter, setProgramFilter] = useState("All");
@@ -1363,7 +1493,7 @@ function LeadsTab({ leads, setLeads, showToast }) {
     contact: "",
     interestType: "Interested",
     remark: "",
-    status: "Pending",
+    status: "Select Status",
   };
 
   const filtered = leads.filter((l) => {
@@ -1391,9 +1521,22 @@ function LeadsTab({ leads, setLeads, showToast }) {
     }
     setModalState(null);
   };
+  const handleSearch = () => {
+    if (search.trim()) {
+      setSearchInput("");
+      setSearch("");
+      return;
+    }
+    setSearch(searchInput.trim());
+  };
+  const currentAssignee = String(currentUser?.name || currentUser?.username || "").trim().toLowerCase();
+  const isAssignedToOther = (lead) => {
+    const assignedTo = String(lead.assignedTo || "").trim().toLowerCase();
+    return Boolean(assignedTo && currentAssignee && assignedTo !== currentAssignee);
+  };
 
   return (
-    <div className="panel">
+    <div className="panel leads-panel">
       <div className="panel-head">
         <h3>Leads</h3>
         <button className="primary-button" onClick={() => setModalState(emptyLead)}>
@@ -1404,7 +1547,20 @@ function LeadsTab({ leads, setLeads, showToast }) {
       <div className="module-toolbar">
         <div className="toolbar-search">
           <IconSearch size={16} />
-          <input placeholder="Search leads by name or contact" value={search} onChange={(e) => setSearch(e.target.value)} />
+          <input
+            placeholder="Search leads by name or contact"
+            value={searchInput}
+            onChange={(e) => {
+              setSearchInput(e.target.value);
+              setSearch(e.target.value);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") setSearch(searchInput.trim());
+            }}
+          />
+          <button type="button" className="toolbar-search-action" onClick={handleSearch}>
+            {search.trim() ? "Clear" : "Search"}
+          </button>
         </div>
         <div className="toolbar-filters">
           <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
@@ -1429,21 +1585,26 @@ function LeadsTab({ leads, setLeads, showToast }) {
               <th>S. No.</th>
               <th>Lead Create Date</th>
               <th>Service / Program</th>
+              <th>Lead Type</th>
               <th>Name</th>
               <th>Interest Type</th>
               <th>Remark</th>
               <th>Status</th>
-              <th>Edit</th>
+              <th>Action</th>
+              <th>Assigned To</th>
               <th>Call Now</th>
             </tr>
           </thead>
           <tbody>
-            {filtered.length === 0 && <EmptyRow colSpan={9} text="No leads match the selected filters." />}
-            {filtered.map((l, idx) => (
-              <tr key={l.id}>
+            {filtered.length === 0 && <EmptyRow colSpan={11} text="No leads match the selected filters." />}
+            {filtered.map((l, idx) => {
+              const assignedToOther = isAssignedToOther(l);
+              return (
+              <tr key={l.id} className={assignedToOther ? "lead-assigned-row" : ""}>
                 <td>{idx + 1}</td>
                 <td>{formatDisplayDate(l.createdDate)}</td>
                 <td>{l.program || "-"}</td>
+                <td><span className="lead-type-label">{leadTypeLabel(l)}</span></td>
                 <td><strong>{l.name || "-"}</strong></td>
                 <td>{l.interestType || l.interest || "Interested"}</td>
                 <td>
@@ -1452,27 +1613,48 @@ function LeadsTab({ leads, setLeads, showToast }) {
                       value={l.remark || l.notes || ""}
                       placeholder="Add remark"
                       onChange={(e) => updateLead(l.id, { remark: e.target.value })}
+                      disabled={assignedToOther}
                     />
                   </div>
                 </td>
                 <td>
-                  <select className="inline-select" value={l.status || "Pending"} onChange={(e) => updateLead(l.id, { status: e.target.value })}>
+                  <select className={clsx("inline-select", "lead-status-select", l.status === "Approved" && "approved", l.status === "Rejected" && "rejected")} value={l.status || "Select Status"} onChange={(e) => updateLead(l.id, { status: e.target.value })} disabled={assignedToOther}>
+                    <option>Select Status</option>
                     <option>Pending</option>
                     <option>Approved</option>
                     <option>Rejected</option>
                   </select>
                 </td>
                 <td>
-                  <button className="row-icon-btn edit" title="Edit" onClick={() => setModalState(l)}><IconEdit size={16} /></button>
+                  <button
+                    className="fill-enquiry-button"
+                    title={l.status === "Approved" ? "Fill enquiry" : "Approve this lead first"}
+                    disabled={assignedToOther || l.status !== "Approved"}
+                    onClick={() => setModalState(l)}
+                    aria-label="Fill Enquiry"
+                  ><IconFillEnquiry size={19} /></button>
+                </td>
+                <td>
+                  <select
+                    className="inline-select lead-assignee-select"
+                    value={l.assignedTo || ""}
+                    onChange={(e) => updateLead(l.id, { assignedTo: e.target.value })}
+                    disabled={assignedToOther}
+                    aria-label={`Assign ${l.name || "lead"}`}
+                  >
+                    <option value="">Select Assignee</option>
+                    {TEAM_MEMBERS.map((member) => <option key={member}>{member}</option>)}
+                  </select>
                 </td>
                 <td><button className="row-icon-btn call" title="Call now" onClick={() => { window.location.href = `tel:${l.contact || ""}`; }}><IconPhone size={16} /></button></td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       </div>
 
-      {modalState && <LeadFormModal initial={modalState} onClose={() => setModalState(null)} onSave={handleSaveModal} />}
+      {modalState && <LeadFormModal initial={modalState} currentUser={currentUser} onClose={() => setModalState(null)} onSave={handleSaveModal} />}
     </div>
   );
 }
@@ -1666,6 +1848,7 @@ function TaskFormModal({ initial, onClose, onSave }) {
 }
 
 function TasksTab({ tasks, setTasks, showToast }) {
+  const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [priorityFilter, setPriorityFilter] = useState("All");
   const [assigneeFilter, setAssigneeFilter] = useState("All");
@@ -1695,15 +1878,14 @@ function TasksTab({ tasks, setTasks, showToast }) {
     }
     setModalState(null);
   };
-  const advanceStatus = (t) => {
-    const idx = TASK_STATUSES.indexOf(t.status);
-    if (idx < TASK_STATUSES.length - 1) updateTask(t.id, { status: TASK_STATUSES[idx + 1] });
+  const handleSearch = () => {
+    if (search.trim()) {
+      setSearchInput("");
+      setSearch("");
+      return;
+    }
+    setSearch(searchInput.trim());
   };
-  const regressStatus = (t) => {
-    const idx = TASK_STATUSES.indexOf(t.status);
-    if (idx > 0) updateTask(t.id, { status: TASK_STATUSES[idx - 1] });
-  };
-
   return (
     <div className="panel">
       <div className="panel-head">
@@ -1716,7 +1898,20 @@ function TasksTab({ tasks, setTasks, showToast }) {
       <div className="module-toolbar">
         <div className="toolbar-search">
           <IconSearch size={16} />
-          <input placeholder="Search tasks" value={search} onChange={(e) => setSearch(e.target.value)} />
+          <input
+            placeholder="Search tasks"
+            value={searchInput}
+            onChange={(e) => {
+              setSearchInput(e.target.value);
+              setSearch(e.target.value);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") setSearch(searchInput.trim());
+            }}
+          />
+          <button type="button" className="toolbar-search-action" onClick={handleSearch}>
+            {search.trim() ? "Clear" : "Search"}
+          </button>
         </div>
         <div className="toolbar-filters">
           <select value={priorityFilter} onChange={(e) => setPriorityFilter(e.target.value)}>
@@ -1734,42 +1929,35 @@ function TasksTab({ tasks, setTasks, showToast }) {
         </div>
       </div>
 
-      <div className="kanban-grid">
-        {TASK_STATUSES.map((status) => (
-          <div className="kanban-col" key={status}>
-            <div className="kanban-col-head">
-              <span>{status}</span>
-              <span className="nav-pill" style={{ background: "var(--brand)", boxShadow: "none" }}>
-                {filtered.filter((t) => t.status === status).length}
-              </span>
-            </div>
-            {filtered
-              .filter((t) => t.status === status)
-              .map((t) => (
-                <div className="task-card" key={t.id}>
-                  <div className="task-card-meta">
-                    <span className={clsx("badge", priorityBadgeClass(t.priority))}>{t.priority}</span>
-                    <span style={{ fontSize: "0.78rem", color: "var(--text-faint)" }}>{formatDisplayDate(t.dueDate)}</span>
-                  </div>
-                  <strong>{t.title}</strong>
-                  <p>{t.description}</p>
-                  <div className="task-card-meta">
-                    <span className="avatar soft" style={{ width: 26, height: 26, fontSize: "0.7rem" }}>
-                      {t.assignee.charAt(0)}
-                    </span>
-                    <span style={{ fontSize: "0.78rem", color: "var(--text-soft)" }}>{t.assignee}</span>
-                  </div>
-                  <div className="task-card-actions">
-                    {status !== "To Do" && (
-                      <button className="row-icon-btn" title="Move back" onClick={() => regressStatus(t)}>
-                        ‹
-                      </button>
-                    )}
-                    {status !== "Done" && (
-                      <button className="row-icon-btn" title="Advance" onClick={() => advanceStatus(t)}>
-                        ›
-                      </button>
-                    )}
+      <div className="table-wrap">
+        <table className="table tasks-table">
+          <thead>
+            <tr>
+              <th>Task</th>
+              <th>Description</th>
+              <th>Assignee</th>
+              <th>Priority</th>
+              <th>Status</th>
+              <th>Due Date</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.length === 0 && <EmptyRow colSpan={7} text="No tasks match the selected filters." />}
+            {filtered.map((t) => (
+              <tr key={t.id}>
+                <td><strong>{t.title}</strong></td>
+                <td>{t.description || "-"}</td>
+                <td>{t.assignee}</td>
+                <td><span className={clsx("badge", priorityBadgeClass(t.priority))}>{t.priority}</span></td>
+                <td>
+                  <select className="inline-select" value={t.status} onChange={(e) => updateTask(t.id, { status: e.target.value })}>
+                    {TASK_STATUSES.map((status) => <option key={status}>{status}</option>)}
+                  </select>
+                </td>
+                <td>{formatDisplayDate(t.dueDate)}</td>
+                <td>
+                  <div className="row-actions">
                     <button className="row-icon-btn edit" title="Edit" onClick={() => setModalState(t)}>
                       <IconEdit size={15} />
                     </button>
@@ -1777,15 +1965,11 @@ function TasksTab({ tasks, setTasks, showToast }) {
                       <IconTrash size={15} />
                     </button>
                   </div>
-                </div>
-              ))}
-            {filtered.filter((t) => t.status === status).length === 0 && (
-              <p className="panel-empty" style={{ padding: "10px 0" }}>
-                No tasks
-              </p>
-            )}
-          </div>
-        ))}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
 
       {modalState && <TaskFormModal initial={modalState} onClose={() => setModalState(null)} onSave={handleSaveModal} />}
@@ -2002,12 +2186,12 @@ function LeaveRequestTab({ leaveRequests, setLeaveRequests, showToast }) {
 
   return (
     <div>
-      <div className="panel">
+      <div className="panel leave-request-panel">
         <div className="panel-head">
           <h3>Apply for Leave</h3>
         </div>
-        <div style={{ padding: 20 }}>
-          <div className="form-grid">
+        <div className="leave-form-body">
+          <div className="form-grid leave-form-grid">
             <div className="field">
               <span>Leave Type</span>
               <select value={form.type} onChange={(e) => setForm((f) => ({ ...f, type: e.target.value }))}>
@@ -2016,7 +2200,6 @@ function LeaveRequestTab({ leaveRequests, setLeaveRequests, showToast }) {
                 ))}
               </select>
             </div>
-            <div />
             <div className="field">
               <span>From</span>
               <input type="date" value={form.from} onChange={(e) => setForm((f) => ({ ...f, from: e.target.value }))} />
@@ -2033,7 +2216,7 @@ function LeaveRequestTab({ leaveRequests, setLeaveRequests, showToast }) {
               {errors.reason && <span className="field-error">{errors.reason}</span>}
             </div>
           </div>
-          <div className="form-actions">
+          <div className="form-actions leave-form-actions">
             <button className="primary-button" onClick={handleSubmit}>
               <IconCheck size={16} /> Submit Request
             </button>
@@ -2041,7 +2224,7 @@ function LeaveRequestTab({ leaveRequests, setLeaveRequests, showToast }) {
         </div>
       </div>
 
-      <div className="panel" style={{ marginTop: 18 }}>
+      <div className="panel leave-history-panel" style={{ marginTop: 18 }}>
         <div className="panel-head">
           <h3>My Leave Requests</h3>
         </div>
@@ -2271,8 +2454,8 @@ const NAV_GROUPS = [
     label: "Attendance",
     items: [
       { key: "markattendance", label: "Mark Attendance", icon: IconAttendance },
-      { key: "attendancereport", label: "Attendance Report", icon: IconReport },
-      { key: "leaverequest", label: "Leave Request", icon: IconLeave },
+      { key: "attendancereport", label: "Attendance Report", icon: IconAttendance },
+      { key: "leaverequest", label: "Leave Request", icon: IconUsers },
     ],
   },
   {
@@ -2296,7 +2479,7 @@ const TAB_TITLES = {
   leaverequest: ["Leave Request", "Apply for and track leave"],
 };
 
-function Sidebar({ activeTab, onNavigate, collapsed, onToggleCollapse, mobileOpen, onCloseMobile, profile, badges, onLogout }) {
+function Sidebar({ activeTab, onNavigate, profile, badges, onLogout }) {
   const [navSearch, setNavSearch] = useState("");
   const flatItems = NAV_GROUPS.flatMap((g) => g.items);
   const filteredKeys = navSearch.trim()
@@ -2305,7 +2488,7 @@ function Sidebar({ activeTab, onNavigate, collapsed, onToggleCollapse, mobileOpe
 
   return (
     <>
-      <aside className={clsx("sidebar", collapsed && "collapsed", mobileOpen && "mobile-open")}>
+      <aside className="sidebar">
         <div className="brand">
           <div className="logo-badge">
             <span>S</span>
@@ -2315,9 +2498,6 @@ function Sidebar({ activeTab, onNavigate, collapsed, onToggleCollapse, mobileOpe
             <strong>System Technologies</strong>
             <span>CRM Executive</span>
           </div>
-          <button className="icon-button mobile-only" style={{ marginLeft: "auto" }} onClick={onCloseMobile}>
-            <IconClose size={16} />
-          </button>
         </div>
 
         <div className="sidebar-profile">
@@ -2339,7 +2519,7 @@ function Sidebar({ activeTab, onNavigate, collapsed, onToggleCollapse, mobileOpe
             const items = filteredKeys ? group.items.filter((i) => filteredKeys.has(i.key)) : group.items;
             if (!items.length) return null;
             return (
-              <div className="nav-group" key={group.label}>
+              <div className={clsx("nav-group", group.label === "Attendance" && "attendance-nav-group")} key={group.label}>
                 <p>{group.label}</p>
                 {items.map((item) => {
                   const ItemIcon = item.icon;
@@ -2372,7 +2552,6 @@ function Sidebar({ activeTab, onNavigate, collapsed, onToggleCollapse, mobileOpe
           </button>
         </div>
       </aside>
-      <div className={clsx("mobile-scrim", mobileOpen && "show")} onClick={onCloseMobile} />
     </>
   );
 }
@@ -2385,7 +2564,7 @@ function normalizeSourceContact(row) {
     date: row.date || todayISO(),
     name: row.name || "",
     contact: row.contact || row.number || row.phone || "",
-    callStatus: row.callStatus || "Select Status",
+    callStatus: row.callStatus && row.callStatus !== "Select Status" ? row.callStatus : "Pending",
     interactionType: row.interactionType || "Call",
     interestStatus: row.interestStatus || "Select Status",
     program: row.program && row.program !== "-" ? row.program : row.category || "IT Services",
@@ -2410,8 +2589,18 @@ function mergeSourceRecords(currentRecords, sourceRecords, normalize) {
 }
 
 function isLeadContact(contact) {
-  return CALL_STATUS_OPTIONS.slice(1).includes(contact.callStatus)
-    || CALL_LIST_INTEREST_STATUS_OPTIONS.slice(1).includes(contact.interestStatus);
+  return contact.interestStatus === "Interested"
+    && ["Follow Up", "Completed"].includes(contact.callStatus);
+}
+
+function leadTypeLabel(lead) {
+  if (lead.type === "Service") return "Service";
+  if (lead.type === "Internship" || lead.type === "STIP") return "STIP";
+  if (lead.type === "Training" || lead.type === "Program") return "Program";
+  const category = getCallListCategory(lead.program || lead.interest);
+  if (category === "Services") return "Service";
+  if (category === "Internship" || category === "STIP") return "STIP";
+  return "Program";
 }
 
 function leadFromContact(contact) {
@@ -2446,8 +2635,6 @@ export default function CrmExecutiveDashboard({
   sourceContacts = [],
 }) {
   const [activeTab, setActiveTab] = useState(initialTab);
-  const [collapsed, setCollapsed] = useState(false);
-  const [mobileOpen, setMobileOpen] = useState(false);
   const [toast, showToast] = useToast();
 
   const [contacts, setContacts] = useLocalStorageState("crmExec.contacts", seedContacts);
@@ -2462,6 +2649,12 @@ export default function CrmExecutiveDashboard({
   const [preferences, setPreferences] = useLocalStorageState("crmExec.preferences", DEFAULT_PREFERENCES);
 
   const qualifiedLeadsInitialized = useRef(false);
+
+  useEffect(() => {
+    setLeads((current) => current.map((lead) => (
+      lead.assignedTo ? { ...lead, assignedTo: "" } : lead
+    )));
+  }, [setLeads]);
 
   useEffect(() => {
     const qualifiedLeads = contacts.filter(isLeadContact).map(leadFromContact);
@@ -2502,7 +2695,6 @@ export default function CrmExecutiveDashboard({
 
   const handleNavigate = (tab) => {
     setActiveTab(tab);
-    setMobileOpen(false);
   };
 
   const handleLogout = () => {
@@ -2532,10 +2724,6 @@ export default function CrmExecutiveDashboard({
         <Sidebar
           activeTab={activeTab}
           onNavigate={handleNavigate}
-          collapsed={collapsed}
-          onToggleCollapse={() => setCollapsed((c) => !c)}
-          mobileOpen={mobileOpen}
-          onCloseMobile={() => setMobileOpen(false)}
           profile={profile}
           badges={badges}
           onLogout={handleLogout}
@@ -2544,12 +2732,6 @@ export default function CrmExecutiveDashboard({
         <div className="workspace">
           <div className="topbar">
             <div className="topbar-left">
-              <button className="icon-button mobile-only" onClick={() => setMobileOpen(true)}>
-                <IconMenu size={18} />
-              </button>
-              <button className="icon-button desktop-only" onClick={() => setCollapsed((c) => !c)}>
-                <IconMenu size={18} />
-              </button>
               <div>
                 <h1>{title}</h1>
                 <p className="topbar-subtitle">{subtitle}</p>
@@ -2611,7 +2793,7 @@ export default function CrmExecutiveDashboard({
                 onContactChange={syncContactLead}
               />
             )}
-            {activeTab === "leads" && <LeadsTab leads={leads} setLeads={setLeads} showToast={showToast} />}
+            {activeTab === "leads" && <LeadsTab leads={leads} setLeads={setLeads} showToast={showToast} currentUser={currentUser} />}
             {activeTab === "assignedleads" && <AssignedLeadsTab leads={externalLeads} currentUser={currentUser} />}
             {activeTab === "salesreports" && <SalesReportsTab contacts={contacts} showToast={showToast} />}
             {activeTab === "tasks" && <TasksTab tasks={tasks} setTasks={setTasks} showToast={showToast} />}
