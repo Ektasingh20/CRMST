@@ -7,6 +7,11 @@
     "dev": "cd frontend && vite --host localhost --port 5174",
     "dev:api": "nodemon backend/index.js",
     "start:api": "node backend/index.js",
+    "migrate:call-lists": "node backend/scripts/migrateCallListHierarchy.js",
+    "normalize:call-lists": "node backend/scripts/normalizeCallListDocuments.js",
+    "normalize:leads": "node backend/scripts/normalizeLeadDocuments.js",
+    "cleanup:duplicate-leads": "node backend/scripts/cleanupDuplicateLeads.js",
+    "cleanup:duplicate-call-list": "node backend/scripts/cleanupDuplicateCallRecords.js",
     "build": "cd frontend && vite build",
     "preview": "cd frontend && vite preview"
   },

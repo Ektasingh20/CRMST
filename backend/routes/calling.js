@@ -1,11 +1,123 @@
 import express from "express";
 import { authenticate } from "../middleware/auth.js";
 import Lead from "../models/Lead.js";
+import User from "../models/User.js";
 import { isMongoConnected } from "../config/db.js";
+
 import { buildAutoMapping, detectDuplicateCandidates, normalizeImportPayload } from "../utils/callingImport.js";
+import { deleteCallRecord, importCallRecords, listCallRecords, normalizeListType, updateCallRecord } from "../config/firestoreCallListModel.js";
+import { notifyUser } from "../services/appNotifications.js";
 
 const router = express.Router();
 router.use(authenticate);
+
+// Send mutations to connected dashboards without extra Firestore reads.
+const callSubscribers = new Set();
+function publishCallChange(record, deleted = false) {
+  for (const subscriber of callSubscribers) {
+    if (subscriber.admin
+      || subscriber.userId === String(record.assignedTo)
+      || subscriber.userId === String(record.callLeadAssignedTo || "")) {
+      subscriber.res.write('data: ' + JSON.stringify({ record, deleted }) + '\n\n');
+    }
+  }
+}
+router.get("/list-data/events", (req, res) => {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders();
+  const subscriber = { res, admin: isAdmin(req.user), userId: String(req.user.id || req.user._id || "") };
+  callSubscribers.add(subscriber);
+  res.write('data: {"ready":true}\n\n');
+  const heartbeat = setInterval(() => res.write(": heartbeat\n\n"), 25000);
+  req.on("close", () => { clearInterval(heartbeat); callSubscribers.delete(subscriber); });
+});
+
+router.get("/list-data", async (req, res) => {
+  try {
+    const assignedTo = isAdmin(req.user) ? String(req.query.assignedTo || "") : String(req.user.id || req.user._id || "");
+    const records = await listCallRecords(req.query.type || "", assignedTo);
+    res.json(records);
+  } catch (error) { res.status(400).json({ error: error.message }); }
+});
+
+router.post("/list-data/import", async (req, res) => {
+  if (!isAdmin(req.user)) return res.status(403).json({ error: "Admin access required." });
+  try {
+    if (!req.body.assignedTo) return res.status(400).json({ error: "Please select an employee." });
+    const assignee = await User.findOne({ $or: [{ id: String(req.body.assignedTo) }, { _id: String(req.body.assignedTo) }] });
+    const assigneeRole = String(assignee?.role || "").trim().toLowerCase();
+    const assigneeStatus = String(assignee?.status || "Active").trim().toLowerCase();
+    const assigneeDepartment = String(assignee?.dept || assignee?.department || "").trim().toLowerCase();
+    const assigneePosition = String(assignee?.position || "").trim().toLowerCase();
+    if (!assignee || assigneeStatus !== "active" || !(assigneeRole === "admin" || assigneeRole.includes("crm") || assigneeDepartment.includes("crm") || assigneePosition.includes("crm"))) {
+      return res.status(400).json({ error: "Call lists can only be assigned to active Admin or CRM Executive users." });
+    }
+    const rows = Array.isArray(req.body.rows) ? req.body.rows : [];
+    const created = await importCallRecords({ ...req.body, rows, uploadedBy: req.user.id || req.user._id });
+    created.forEach((record) => publishCallChange(record));
+    if (created.length) await notifyUser(req.body.assignedTo, { type: "call_list_uploaded", message: `${created.length} new ${String(req.body.listType || "call").toLowerCase()} contact${created.length === 1 ? " was" : "s were"} assigned to you.` });
+    res.status(201).json({
+      created: created.length,
+      duplicates: created.duplicates || [],
+      rows: created,
+    });
+  } catch (error) { res.status(400).json({ error: error.message }); }
+});
+
+router.put("/list-data/:type/:id", async (req, res) => {
+  try {
+    const type = normalizeListType(req.params.type);
+    const actorId = String(req.user.id || req.user._id || "");
+    const admin = isAdmin(req.user);
+    const assignedTo = admin ? String(req.body.lookupAssignedTo || req.body.assignedTo || "") : actorId;
+    const patch = { ...(req.body || {}) };
+    delete patch.lookupAssignedTo;
+    if (patch.callLeadAssignedTo) {
+      const leadAssignee = await User.findOne({ $or: [{ id: String(patch.callLeadAssignedTo) }, { _id: String(patch.callLeadAssignedTo) }] });
+      const role = String(leadAssignee?.role || "").trim().toLowerCase();
+      const department = String(leadAssignee?.dept || leadAssignee?.department || "").trim().toLowerCase();
+      const position = String(leadAssignee?.position || "").trim().toLowerCase();
+      const status = String(leadAssignee?.status || "Active").trim().toLowerCase();
+      const canReceiveLead = role.includes("admin") || role.startsWith("operation")
+        || department.includes("admin") || department.startsWith("operation")
+        || position.includes("admin") || position.startsWith("operation");
+      if (!leadAssignee || status === "inactive" || !canReceiveLead) {
+        return res.status(400).json({ error: "Call leads can only be assigned to active Admin or Operations users." });
+      }
+    }
+    if (!admin) {
+      delete patch.assignedTo;
+      delete patch.assignedToName;
+    } else if (patch.assignedTo) {
+      const assignee = await User.findOne({ $or: [{ id: String(patch.assignedTo) }, { _id: String(patch.assignedTo) }] });
+      const role = String(assignee?.role || "").trim().toLowerCase();
+      const status = String(assignee?.status || "Active").trim().toLowerCase();
+      const department = String(assignee?.dept || assignee?.department || "").trim().toLowerCase();
+      const position = String(assignee?.position || "").trim().toLowerCase();
+      if (!assignee || status !== "active" || !(role === "admin" || role.includes("crm") || department.includes("crm") || position.includes("crm"))) {
+        return res.status(400).json({ error: "Call lists can only be assigned to active Admin or CRM Executive users." });
+      }
+      patch.assignedToName = assignee.name || assignee.username || "";
+    }
+    const saved = await updateCallRecord(type, req.params.id, patch, assignedTo, admin ? "" : actorId);
+    if (admin && patch.assignedTo && String(patch.assignedTo) !== String(assignedTo || "")) await notifyUser(patch.assignedTo, { type: "call_list_assigned", message: `A ${type} call-list contact was assigned to you.` });
+    publishCallChange(saved);
+    res.json(saved);
+  } catch (error) { res.status(error.status || (error.message === "Call record not found." ? 404 : 400)).json({ error: error.message }); }
+});
+
+router.delete("/list-data/:type/:id", async (req, res) => {
+  if (!isAdmin(req.user)) return res.status(403).json({ error: "Admin access required." });
+  try {
+    const actorId = String(req.user.id || req.user._id || "");
+    const owner = isAdmin(req.user) ? String(req.query.assignedTo || "") : actorId;
+    const record = await deleteCallRecord(req.params.type, req.params.id, owner, isAdmin(req.user) ? "" : actorId);
+    if (record) publishCallChange(record, true);
+    res.json({ success: true });
+  } catch (error) { res.status(error.status || 400).json({ error: error.message }); }
+});
 
 function isAdmin(user) {
   return String(user?.role || "").trim().toLowerCase() === "admin";
@@ -144,7 +256,7 @@ router.post("/import", async (req, res) => {
       candidate.notes = candidate.remark || "";
       candidate.interest = candidate.programInterest || candidate.courseInterest || candidate.programType || "Training";
 
-      const existing = await Lead.findOne({ $or: [{ phone: candidate.phone }, { email: candidate.email }] });
+      const existing = await Lead.findOne({ phone: candidate.phone });
       if (!existing) {
         created.push(await Lead.create(candidate));
       }
@@ -225,14 +337,11 @@ router.post("/:id/resume", async (req, res) => {
 
 router.get("/field-mapping", (_req, res) => {
   res.json({
-    supportedFields: ["name", "phone", "email", "city", "state", "qualification", "college", "courseInterest", "programInterest", "source", "date"],
+    supportedFields: ["name", "phone", "courseInterest", "programInterest", "source"],
     suggestion: buildAutoMapping({
       "Student Name": "Rahul Sharma",
       "Mobile Number": "9876543210",
       "Email Address": "rahul@gmail.com",
-      "City": "Jaipur",
-      "Qualification": "B.Tech",
-      "College": "ABC College",
       "Course Interest": "Web Development",
       "Program Interest": "Internship",
       "Source": "Website",

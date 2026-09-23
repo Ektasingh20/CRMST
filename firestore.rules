@@ -70,5 +70,10 @@ service cloud.firestore {
       allow read: if signedIn();
       allow create, update, delete: if isAdminUser();
     }
+
+    match /notifications/{notificationId} {
+      allow read: if signedIn() && (isAdminUser() || resource.data.recipientId == request.auth.uid);
+      allow create, update, delete: if false;
+    }
   }
 }

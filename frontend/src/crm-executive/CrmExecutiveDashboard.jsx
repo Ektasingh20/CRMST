@@ -1,4 +1,11 @@
+import CallLeadsPanel from "../../CallLeadsPanel.jsx";
+import RemarkField from "../../RemarkField.jsx";
+import { callLeadForm } from "../../callLeads.js";
+import { createTask as createTaskApi, fetchTasks, updateTask as updateTaskApi, fetchAttendance, createAttendance, updateAttendance, fetchLeaves, createLeave, updateMyProfile, changePassword, fetchAppNotifications, markAppNotificationRead } from "../../backendApi.js";
+import { TRAINING_CALL_LIST_PROGRAMS, SERVICE_CALL_LIST_SERVICES, CALL_STATUS_OPTIONS, CALL_LIST_INTEREST_STATUS_OPTIONS, normalizeCallStatus, normalizeInterestStatus, normalizeCallProgram, callListPrograms, matchesCallListFilters } from "../../callListConfig.js";
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { jsPDF } from "jspdf";
+import autoTable from "jspdf-autotable";
 import "./crmExecutive.css";
 import "./crmExecutiveForm.css";
 
@@ -25,7 +32,10 @@ const addDays = (iso, days) => {
 };
 const formatDisplayDate = (iso) => {
   if (!iso) return "-";
-  const d = new Date(`${iso}T00:00:00`);
+  // Backend updates use a full ISO timestamp; date inputs use YYYY-MM-DD.
+  // Format both without appending a second time component.
+  const dateValue = String(iso).slice(0, 10);
+  const d = new Date(`${dateValue}T00:00:00`);
   if (Number.isNaN(d.getTime())) return "-";
   return d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
 };
@@ -281,43 +291,7 @@ const PROGRAM_CATEGORY = {
   "STIP Program": "STIP",
 };
 
-const TRAINING_CALL_LIST_PROGRAMS = [
-  "Front End Development Foundation",
-  "Back End Development",
-  "Full Stack Development",
-  "Video Editing",
-  "AutoCAD (2D & 3D)",
-  "Wordpress Web Design",
-  "Android App Development",
-  "VFX & ANIMATION",
-  "Graphics & Visual Designing",
-  "Adobe Photoshop",
-  "CorelDraw",
-  "Digital marketing",
-  "Adobe Illustrator",
-  "3D INTERIOR EXTERIOR DESIGN",
-];
 
-const SERVICE_CALL_LIST_SERVICES = [
-  "Website Development",
-  "Android & iOS App Development",
-  "Graphic Designing",
-  "Branding & Brand Promotion",
-  "Digital Marketing",
-  "VFX & Animation",
-  "CRM Solutions",
-  "Cloud Solutions",
-  "Marketing Tools & Automation",
-  "Content Creation & Copywriting",
-  "UI/UX Design",
-  "Social Media Management",
-  "E-commerce Development & Management",
-  "Performance Marketing",
-  "Influencer Marketing",
-  "Photography & Videography",
-  "Public Relations (PR)",
-  "Bulk Marketing (Highlighted Service)",
-];
 
 function getCallListCategory(program) {
   if (SERVICE_CALL_LIST_SERVICES.includes(program)) return "Services";
@@ -325,10 +299,8 @@ function getCallListCategory(program) {
   return PROGRAM_CATEGORY[program];
 }
 
-const CALL_STATUS_OPTIONS = ["Select Status", "Pending", "Follow Up", "Completed"];
 const INTERACTION_TYPES = ["Call", "WhatsApp", "Email", "Walk-in", "Reference"];
 const INTEREST_STATUS_OPTIONS = ["Select Status", "Interested", "Not Interested"];
-const CALL_LIST_INTEREST_STATUS_OPTIONS = ["Select Status", "Interested", "Not Interested"];
 const CRM_EXEC_LEADS_STORAGE_KEY = "crmExec.adminLeads";
 const LEAD_SOURCES = ["Website", "Reference", "Walk-in", "Social Media", "Cold Call", "Advertisement"];
 const LEAD_STAGES = ["New", "Contacted", "Qualified", "Proposal", "Won", "Lost"];
@@ -390,43 +362,6 @@ function leaveStatusBadgeClass(v) {
   if (v === "Approved") return "success";
   if (v === "Rejected") return "danger";
   return "warning";
-}
-
-function seedContacts() {
-  const base = [
-    ["Rohit Malhotra", "9820011223", "IT Services", "Connected", "Hot", -1],
-    ["Sneha Kulkarni", "9930022334", "Web Development", "Connected", "Warm", -1],
-    ["Aditya Rane", "9821133445", "IT Training", "Not Connected", "Cold", -2],
-    ["Priyanka Joshi", "9765544556", "Internship", "Connected", "Converted", -2],
-    ["Karan Mehta", "9820099887", "STIP Program", "Busy", "Warm", -3],
-    ["Neha Deshmukh", "9930088776", "Software Development", "Connected", "Hot", -3],
-    ["Vikram Singh", "9821177665", "Digital Marketing", "Switched Off", "Cold", -4],
-    ["Ananya Iyer", "9765566778", "Professional Training", "Connected", "Warm", -4],
-    ["Farhan Sheikh", "9820055443", "Corporate Training", "Not Called", "Warm", -5],
-    ["Ritu Chawla", "9930033221", "Placement Assistance", "Connected", "Converted", -5],
-    ["Devansh Rao", "9821122556", "IT Services", "Invalid Number", "Cold", -6],
-    ["Meera Pillai", "9765511998", "Web Development", "Connected", "Hot", -7],
-    ["Suresh Bhat", "9820066112", "Internship", "Not Called", "Not Interested", -8],
-    ["Ishaan Kapoor", "9930099001", "STIP Program", "Connected", "Warm", -9],
-  ];
-  return base.map(([name, contact, program, callStatus, interestStatus, offset], idx) => ({
-    id: genId("contact"),
-    date: addDays(todayISO(), offset),
-    name,
-    contact,
-    callStatus,
-    interactionType: INTERACTION_TYPES[idx % INTERACTION_TYPES.length],
-    interestStatus,
-    program,
-    remark:
-      idx % 3 === 0
-        ? "Interested, follow up next week"
-        : idx % 3 === 1
-        ? "Requested brochure via email"
-        : "",
-    active: idx !== 8,
-    snoozeUntil: idx === 5 ? addDays(todayISO(), 2) : idx === 12 ? addDays(todayISO(), -1) : null,
-  }));
 }
 
 function seedLeads() {
@@ -657,7 +592,7 @@ function DashboardTab({ contacts, leads, tasks, leaveRequests, onNavigate }) {
   const pendingFollowUps = contacts.filter(
     (c) => c.active && (c.snoozeUntil ? c.snoozeUntil <= todayISO() : c.callStatus === "Not Called")
   );
-  const openTasks = tasks.filter((t) => t.status !== "Done").length;
+  const openTasks = tasks.filter((t) => !["Done", "Completed"].includes(t.status)).length;
   const pendingLeaves = leaveRequests.filter((l) => l.status === "Pending").length;
 
   const callStatusBreakdown = CALL_STATUS_OPTIONS.map((status) => ({
@@ -785,7 +720,7 @@ function DashboardTab({ contacts, leads, tasks, leaveRequests, onNavigate }) {
 
 /* ============================== CALL LIST TAB ============================= */
 
-const CONTACT_PAGE_SIZE = 8;
+const CONTACT_PAGE_SIZE = 15;
 
 function emptyContactForm() {
   return {
@@ -802,8 +737,9 @@ function emptyContactForm() {
   };
 }
 
-function ContactFormModal({ initial, onClose, onSave, readOnly = false }) {
-  const [form, setForm] = useState(initial);
+function ContactFormModal({ initial, onClose, onSave, category, readOnly = false }) {
+  const programs = category === "Training" ? TRAINING_CALL_LIST_PROGRAMS : SERVICE_CALL_LIST_SERVICES;
+  const [form, setForm] = useState({ ...initial, program: normalizeCallProgram(initial.program), callStatus: normalizeCallStatus(initial.callStatus), interestStatus: normalizeInterestStatus(initial.interestStatus), callListCategory: category });
   const [errors, setErrors] = useState({});
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
@@ -839,7 +775,9 @@ function ContactFormModal({ initial, onClose, onSave, readOnly = false }) {
         <div className="field">
           <span>Program / Service</span>
           <select value={form.program} onChange={(e) => set("program", e.target.value)}>
-            {PROGRAMS.map((p) => (
+            <option value="">{category === "Training" ? "Select Program" : "Select Service"}</option>
+            {form.program && !programs.includes(form.program) && <option value={form.program}>{form.program}</option>}
+            {programs.map((p) => (
               <option key={p}>{p}</option>
             ))}
           </select>
@@ -886,7 +824,7 @@ function ContactFormModal({ initial, onClose, onSave, readOnly = false }) {
           Cancel
         </button>
         {!readOnly && (
-          <button className="primary-button" onClick={() => onSave(form)}>
+          <button className="primary-button" onClick={handleSave}>
             <IconCheck size={16} /> Save Contact
           </button>
         )}
@@ -895,44 +833,53 @@ function ContactFormModal({ initial, onClose, onSave, readOnly = false }) {
   );
 }
 
-function CallListTab({ contacts, setContacts, showToast, category, title, addLabel, currentUser, onContactChange }) {
+function CallListTab({ contacts, setContacts, showToast, category, title, addLabel, currentUser, onContactChange, onPersistContact }) {
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [programFilter, setProgramFilter] = useState("All");
   const [callStatusFilter, setCallStatusFilter] = useState("All");
   const [interestFilter, setInterestFilter] = useState("All");
-  const [dateFilter, setDateFilter] = useState("");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
   const [sortKey, setSortKey] = useState("date");
   const [sortDir, setSortDir] = useState("desc");
   const [page, setPage] = useState(1);
   const [modalState, setModalState] = useState(null); // null | form object
+  // The API sets this only when status, interest, or remark is changed. This
+  // keeps the original date for every other kind of edit.
+  const contactDate = (contact) => contact.lastWorkedAt || contact.createdLeadDate || contact.date || contact.createdAt || "";
+  // Keep the list order tied to when the contact was originally created. A
+  // status update changes the displayed activity date, not the row position.
+  const listOrderDate = (contact) => contact.createdLeadDate || contact.date || contact.createdAt || "";
 
   const filtered = useMemo(() => {
     let rows = contacts.filter((c) => {
       const matchesCategory = !category || (c.callListCategory || getCallListCategory(c.program)) === category;
-      const matchesSearch =
-        !search.trim() ||
-        c.name.toLowerCase().includes(search.trim().toLowerCase()) ||
-        c.contact.includes(search.trim());
-      const matchesProgram = programFilter === "All" || c.program === programFilter;
-      const matchesCallStatus = callStatusFilter === "All" || c.callStatus === callStatusFilter;
-      const matchesInterest = interestFilter === "All" || c.interestStatus === interestFilter;
-      const matchesDate = !dateFilter || c.date === dateFilter;
-      return matchesCategory && matchesSearch && matchesProgram && matchesCallStatus && matchesInterest && matchesDate;
+      return matchesCategory && matchesCallListFilters(c, {
+        search, program: programFilter, callStatus: callStatusFilter, interest: interestFilter,
+      }) && (!fromDate || String(contactDate(c)).slice(0, 10) >= fromDate)
+        && (!toDate || String(contactDate(c)).slice(0, 10) <= toDate);
     });
     rows = rows.sort((a, b) => {
+      // Keep active work (including Follow Up) in its normal position. Only a
+      // completed, interested lead is moved to the highlighted lower section.
+      const aCompletedLead = isLeadContact(a) ? 1 : 0;
+      const bCompletedLead = isLeadContact(b) ? 1 : 0;
+      if (aCompletedLead !== bCompletedLead) return aCompletedLead - bCompletedLead;
       let av = a[sortKey];
       let bv = b[sortKey];
       if (sortKey === "date") {
-        av = a.date;
-        bv = b.date;
+        av = listOrderDate(a);
+        bv = listOrderDate(b);
       }
       if (av < bv) return sortDir === "asc" ? -1 : 1;
       if (av > bv) return sortDir === "asc" ? 1 : -1;
       return 0;
     });
     return rows;
-  }, [contacts, category, search, programFilter, callStatusFilter, interestFilter, dateFilter, sortKey, sortDir]);
+  }, [contacts, category, search, programFilter, callStatusFilter, interestFilter, fromDate, toDate, sortKey, sortDir]);
+
+  useEffect(() => { setPage(1); }, [category, search, programFilter, callStatusFilter, interestFilter, fromDate, toDate]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / CONTACT_PAGE_SIZE));
   const pageRows = filtered.slice((page - 1) * CONTACT_PAGE_SIZE, page * CONTACT_PAGE_SIZE);
@@ -949,20 +896,29 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
     }
   };
 
-  const updateContact = (id, patch) => {
+  const updateContact = (id, patch, persist = true) => {
+    const existing = contacts.find((contact) => contact.id === id);
+    if (!existing || Object.entries(patch).every(([key, value]) => String(existing[key] ?? "") === String(value ?? ""))) return;
+    if (patch.callStatus === "Completed" && !normalizeCallProgram(existing?.program)) {
+      showToast(`Please select a ${category === "Training" ? "program" : "service"} before marking this contact Completed.`);
+      return;
+    }
     setContacts((prev) => prev.map((c) => {
       if (c.id !== id) return c;
       const updated = { ...c, ...patch };
       onContactChange?.(updated);
       return updated;
     }));
+    if (persist && existing?.sourceRecord) Promise.resolve(onPersistContact?.(existing, patch)).catch(() => showToast("Could not save this update"));
   };
 
   const handleCall = (c) => {
+    updateContact(c.id, { callClicked: true });
     showToast(`Calling ${c.name} (${c.contact})…`);
     window.location.href = `tel:${c.contact}`;
   };
   const handleWhatsapp = (c) => {
+    updateContact(c.id, { whatsappClicked: true });
     showToast(`Opening WhatsApp chat with ${c.name}…`);
     window.open(`https://wa.me/91${c.contact}`, "_blank", "noopener,noreferrer");
   };
@@ -1003,34 +959,38 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
     setProgramFilter("All");
     setCallStatusFilter("All");
     setInterestFilter("All");
-    setDateFilter("");
+    setFromDate("");
+    setToDate("");
     setSortKey("date");
     setSortDir("desc");
     setPage(1);
   };
 
   const handleSearch = () => {
-    if (search.trim()) {
-      setSearchInput("");
-      setSearch("");
-      setPage(1);
-      return;
-    }
     setSearch(searchInput.trim());
     setPage(1);
   };
 
   const isSnoozed = (c) => c.snoozeUntil && c.snoozeUntil > todayISO();
-  const isConvertedToLead = (c) => c.interestStatus === "Interested"
-    && ["Follow Up", "Completed"].includes(c.callStatus);
+  const isConvertedToLead = (c) => c.interestStatus === "Interested" && c.callStatus === "Completed";
+  const exportPdf = () => {
+    const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+    pdf.setFontSize(16); pdf.text(`${title} Report`, 14, 14);
+    pdf.setFontSize(9); pdf.setTextColor(100); pdf.text(`${filtered.length} filtered contact(s)`, 14, 20);
+    autoTable(pdf, {
+      startY: 25,
+      head: [["S. No.", "Date", "Name", "Contact", "Call Status", "Interest", category === "Services" ? "Service" : "Program", "Remark"]],
+      body: filtered.map((c, index) => [index + 1, formatDisplayDate(contactDate(c)), c.name || "-", c.contact || "-", normalizeCallStatus(c.callStatus), normalizeInterestStatus(c.interestStatus), normalizeCallProgram(c.program) || "-", c.remark || "-"]),
+      styles: { fontSize: 7, cellPadding: 2, overflow: "linebreak" }, headStyles: { fillColor: [127, 78, 43] },
+    });
+    pdf.save(`${String(title).toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${todayISO()}.pdf`);
+  };
 
   return (
     <div className="panel call-list-panel">
       <div className="panel-head">
         <h3>{title}</h3>
-        <button className="primary-button" onClick={() => setModalState(emptyContactForm())}>
-          <IconPlus size={16} /> {addLabel}
-        </button>
+        <div className="row-actions"><button className="primary-button" onClick={exportPdf} disabled={!filtered.length}><IconDownload size={16} /> Export PDF ({filtered.length})</button><button className="primary-button" onClick={() => setModalState({ ...emptyContactForm(), program: "", callListCategory: category })}><IconPlus size={16} /> {addLabel}</button></div>
       </div>
 
       <div className="module-toolbar">
@@ -1052,13 +1012,14 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
             }}
           />
           <button type="button" className="toolbar-search-action" onClick={handleSearch}>
-            {search.trim() ? "Clear" : "Search"}
+            Search
           </button>
         </div>
         <div className="toolbar-filters">
           <select value={programFilter} onChange={(e) => setProgramFilter(e.target.value)}>
             <option value="All">All {category === "Services" ? "Services" : category === "Training" ? "Training Programs" : "Programs"}</option>
-            {(category === "Services" ? SERVICE_CALL_LIST_SERVICES : category === "Training" ? TRAINING_CALL_LIST_PROGRAMS : [...SERVICE_CALL_LIST_SERVICES, ...TRAINING_CALL_LIST_PROGRAMS]).map((p) => (
+            <option value="">Unspecified</option>
+            {[...new Set([...callListPrograms(category === "Services" ? "services" : "training"), ...contacts.filter((contact) => (contact.callListCategory || getCallListCategory(contact.program)) === category).map((contact) => normalizeCallProgram(contact.program)).filter(Boolean)])].map((p) => (
               <option key={p}>{p}</option>
             ))}
           </select>
@@ -1074,7 +1035,11 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
               <option key={p}>{p}</option>
             ))}
           </select>
-          <input type="date" value={dateFilter} onChange={(e) => setDateFilter(e.target.value)} />
+        </div>
+        <div className="call-list-date-row">
+          <span>Lead activity date</span>
+          <label className="table-date-filter"><span>From</span><input aria-label="From date" type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} /></label>
+          <label className="table-date-filter"><span>To</span><input aria-label="To date" type="date" min={fromDate} value={toDate} onChange={(e) => setToDate(e.target.value)} /></label>
           <button type="button" className="ghost-button compact" onClick={resetFilters}>Reset</button>
         </div>
       </div>
@@ -1101,13 +1066,13 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
           </thead>
           <tbody>
             {pageRows.length === 0 && <EmptyRow colSpan={10} text={`No ${category.toLowerCase()} contacts match the selected filters.`} />}
-            {pageRows.map((c, idx) => (
-              <tr key={c.id}>
+            {pageRows.map((c, idx) => {
+              const locked = isLeadContact(c);
+              return <tr key={c.id} className={locked ? "call-list-locked" : ""}>
                 <td>{(page - 1) * CONTACT_PAGE_SIZE + idx + 1}</td>
-                <td>{formatDisplayDate(c.date)}</td>
+                <td>{formatDisplayDate(contactDate(c))}</td>
                 <td>
                   <div className="person-cell">
-                    <span className="avatar soft">{c.name.charAt(0)}</span>
                     <div>
                       <strong style={{ display: "block" }}>{c.name}</strong>
                       {isSnoozed(c) && <span className="badge warning" style={{ height: 20, fontSize: "0.7rem" }}>Snoozed till {formatDisplayDate(c.snoozeUntil)}</span>}
@@ -1117,10 +1082,10 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
                 <td>{c.contact}</td>
                 <td>
                   <div className="row-actions">
-                    <button className="row-icon-btn call" title="Call" onClick={() => handleCall(c)}>
+                    <button className={`row-icon-btn call ${c.callClicked ? "contacted" : ""}`} title="Call" onClick={() => handleCall(c)}>
                       <IconPhone size={16} />
                     </button>
-                    <button className="row-icon-btn whatsapp" title="WhatsApp" onClick={() => handleWhatsapp(c)}>
+                    <button className={`row-icon-btn whatsapp ${c.whatsappClicked ? "contacted" : ""}`} title="WhatsApp" onClick={() => handleWhatsapp(c)}>
                       <IconWhatsapp size={16} />
                     </button>
                   </div>
@@ -1128,7 +1093,8 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
                 <td>
                   <select
                     className="inline-select"
-                    value={CALL_STATUS_OPTIONS.includes(c.callStatus) ? c.callStatus : "Select Status"}
+                    value={normalizeCallStatus(c.callStatus)}
+                    disabled={locked}
                     onChange={(e) => updateContact(c.id, { callStatus: e.target.value })}
                   >
                     {CALL_STATUS_OPTIONS.map((s) => (
@@ -1139,7 +1105,8 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
                 <td>
                   <select
                     className="inline-select"
-                    value={CALL_LIST_INTEREST_STATUS_OPTIONS.includes(c.interestStatus) ? c.interestStatus : "Select Status"}
+                    value={normalizeInterestStatus(c.interestStatus)}
+                    disabled={locked}
                     onChange={(e) => updateContact(c.id, { interestStatus: e.target.value })}
                   >
                     {CALL_LIST_INTEREST_STATUS_OPTIONS.map((s) => (
@@ -1150,15 +1117,16 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
                 <td>
                   <select
                     className="inline-select call-list-program-select"
-                    value={c.program || ""}
+                    value={normalizeCallProgram(c.program)}
+                    disabled={locked}
                     onChange={(e) => updateContact(c.id, { program: e.target.value, callListCategory: category })}
                     aria-label={category === "Services" ? "Service" : "Program"}
                   >
                     <option value="">
                       {category === "Services" ? "Select Service" : "Select Program"}
                     </option>
-                    {!((category === "Services" ? SERVICE_CALL_LIST_SERVICES : TRAINING_CALL_LIST_PROGRAMS).includes(c.program)) && c.program ? (
-                      <option value={c.program}>{c.program}</option>
+                    {!((category === "Services" ? SERVICE_CALL_LIST_SERVICES : TRAINING_CALL_LIST_PROGRAMS).includes(c.program)) && normalizeCallProgram(c.program) ? (
+                      <option value={normalizeCallProgram(c.program)}>{normalizeCallProgram(c.program)}</option>
                     ) : null}
                     {(category === "Services" ? SERVICE_CALL_LIST_SERVICES : TRAINING_CALL_LIST_PROGRAMS).map((option) => (
                       <option key={option} value={option}>{option}</option>
@@ -1166,12 +1134,8 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
                   </select>
                 </td>
                 <td>
-                  <div className="remark-cell">
-                    <input
-                      value={c.remark}
-                      placeholder="Add remark"
-                      onChange={(e) => updateContact(c.id, { remark: e.target.value })}
-                    />
+                    <div className="remark-cell">
+                    <RemarkField readOnly={locked} value={c.remark || ""} onChange={(value) => updateContact(c.id, { remark: value }, false)} onCommit={(value) => updateContact(c.id, { remark: value })} label={`Remark for ${c.name || "contact"}`} />
                   </div>
                 </td>
                 <td>
@@ -1179,26 +1143,17 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
                     <button className="row-icon-btn edit" title={isConvertedToLead(c) ? "View" : "Edit"} onClick={() => setModalState(c)}>
                       {isConvertedToLead(c) ? <IconView size={16} /> : <IconEdit size={16} />}
                     </button>
-                    {isSnoozed(c) ? (
-                      <button className="row-icon-btn snooze" title="Resume" onClick={() => handleResume(c)}>
-                        <IconResume size={16} />
-                      </button>
-                    ) : (
-                      <button className="row-icon-btn snooze" title="Snooze" onClick={() => handleSnooze(c)}>
-                        <IconSnooze size={16} />
-                      </button>
-                    )}
                   </div>
                 </td>
               </tr>
-            ))}
+            })}
           </tbody>
         </table>
       </div>
       <Pagination page={page} totalPages={totalPages} onChange={setPage} />
 
       {modalState && (
-        <ContactFormModal
+        <ContactFormModal category={category}
           initial={modalState}
           readOnly={isConvertedToLead(modalState)}
           onClose={() => setModalState(null)}
@@ -1284,20 +1239,25 @@ function AddLeadTab({ setLeads, showToast, currentUser }) {
   );
 }
 
-function AssignedLeadsTab({ leads, currentUser }) {
+function AssignedLeadsTab({ leads, callLeadRows, currentUser }) {
+  const currentUserKeys = [currentUser?.id, currentUser?._id, currentUser?.username, currentUser?.name]
+    .filter(Boolean)
+    .map((value) => String(value).trim().toLowerCase());
   const currentUserId = String(currentUser?.id || currentUser?._id || "").trim();
-  const assignedLeads = leads.filter((lead) => String(lead.assignedTo || "").trim() === currentUserId);
+  const assignedLeads = leads.filter((lead) => [lead.assignedTo, lead.assignedToName]
+    .filter(Boolean)
+    .some((value) => currentUserKeys.includes(String(value).trim().toLowerCase())));
 
   return (
-    <div className="panel">
-      <div className="panel-head">
+    <div className="assigned-leads-page">
+      <div className="panel-head" hidden>
         <div>
           <h3>Assigned Leads</h3>
           <p className="panel-subtitle">Leads assigned to {currentUser?.name || currentUser?.username || "you"}</p>
         </div>
         <span className="badge info">{assignedLeads.length}</span>
       </div>
-      <div className="table-wrap">
+      <div className="table-wrap" hidden>
         <table className="table">
           <thead>
             <tr>
@@ -1328,11 +1288,20 @@ function AssignedLeadsTab({ leads, currentUser }) {
           </tbody>
         </table>
       </div>
+      <CallLeadsPanel
+        rows={callLeadRows}
+        assignedTo={currentUserId}
+        showAssignee={false}
+        showActions={false}
+        canEditCallData={false}
+        title={`Assigned Call Leads (${callLeadRows.filter((row) => isLeadContact(row) && String(row.callLeadAssignedTo || "") === currentUserId).length})`}
+        subtitle="Qualifying service and training call-list contacts assigned to you"
+      />
     </div>
   );
 }
 
-function LeadFormModal({ initial, onClose, onSave, currentUser, readOnly = false }) {
+function LeadFormModal({ initial, onClose, onSave, currentUser, users = [], saving = false, readOnly = false, hideAssignment = false }) {
   const initialType = initial.type || (getCallListCategory(initial.program) === "Services" ? "Service" : getCallListCategory(initial.program) === "Internship" ? "Internship" : "Training");
   const interestOptions = (type) => type === "Service"
     ? SERVICE_CALL_LIST_SERVICES
@@ -1345,19 +1314,16 @@ function LeadFormModal({ initial, onClose, onSave, currentUser, readOnly = false
     phone: initial.phone || initial.contact || "",
     email: initial.email || "",
     alternatePhone: initial.alternatePhone || "",
-    city: initial.city || "Ajmer",
+    city: initial.city || "",
     company: initial.company || "",
     type: initialType,
-    interest: initial.interest || initial.program || interestOptions(initialType)[0],
+    interest: initial.interest || initial.program || "",
     value: initial.value ?? "",
     status: initial.status || "Select Status",
     leadSource: initial.leadSource || initial.source || "Website",
-    enteredBy: initial.enteredBy
-      || initial.crmExecutiveName
-      || initial.crmExecutive
-      || (currentUser ? `${currentUser.name || currentUser.username || "User"} (${currentUser.position || currentUser.role || "CRM Executive"})` : ""),
-    assignedTo: initial.assignedTo || TEAM_MEMBERS[0],
-    assignedDate: initial.assignedDate || initial.createdDate || todayISO(),
+    enteredBy: initial.enteredBy || String(currentUser?.id || currentUser?._id || currentUser?.username || ""),
+    assignedTo: initial.assignedTo || "",
+    assignedDate: initial.assignedDate || "",
     notes: initial.notes || initial.remark || "",
   }));
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
@@ -1418,6 +1384,7 @@ function LeadFormModal({ initial, onClose, onSave, currentUser, readOnly = false
         <div className="field">
           <span>Interest *</span>
           <select value={form.interest} onChange={(e) => set("interest", e.target.value)}>
+            <option value="">Select interest</option>
             {availableInterests.map((interest) => <option key={interest}>{interest}</option>)}
           </select>
         </div>
@@ -1441,21 +1408,30 @@ function LeadFormModal({ initial, onClose, onSave, currentUser, readOnly = false
           </select>
         </div>
 
-        <p className="form-section-title">Assignment</p>
-        <div className="field">
-          <span>Entered By *</span>
-          <input value={form.enteredBy} readOnly />
-        </div>
-        <div className="field">
-          <span>Assigned To *</span>
-          <select value={form.assignedTo} onChange={(e) => set("assignedTo", e.target.value)}>
-            {TEAM_MEMBERS.map((member) => <option key={member}>{member}</option>)}
-          </select>
-        </div>
-        <div className="field">
-          <span>Assigned Date</span>
-          <input type="date" value={form.assignedDate} onChange={(e) => set("assignedDate", e.target.value)} />
-        </div>
+        {hideAssignment ? <>
+          <p className="form-section-title">Created By</p>
+          <div className="field">
+            <span>Entered By</span>
+            <input value={form.enteredBy} readOnly />
+          </div>
+        </> : <>
+          <p className="form-section-title">Assignment</p>
+          <div className="field">
+            <span>Entered By *</span>
+            <input value={form.enteredBy} readOnly />
+          </div>
+          <div className="field">
+            <span>Assigned To *</span>
+            <select value={form.assignedTo} onChange={(e) => set("assignedTo", e.target.value)}>
+              <option value="">Select Assignee</option>
+              {users.map((user) => <option key={user.id || user._id} value={user.id || user._id}>{user.name || user.username}</option>)}
+            </select>
+          </div>
+          <div className="field">
+            <span>Assigned Date</span>
+            <input type="date" value={form.assignedDate} onChange={(e) => set("assignedDate", e.target.value)} />
+          </div>
+        </>}
 
         <p className="form-section-title">Additional Information</p>
         <div className="field span-full">
@@ -1469,7 +1445,7 @@ function LeadFormModal({ initial, onClose, onSave, currentUser, readOnly = false
           Cancel
         </button>
         {!readOnly && (
-          <button className="primary-button" onClick={handleSave}>
+          <button className="primary-button" disabled={saving} onClick={handleSave}>
             <IconCheck size={16} /> Save lead
           </button>
         )}
@@ -1478,242 +1454,97 @@ function LeadFormModal({ initial, onClose, onSave, currentUser, readOnly = false
   );
 }
 
-function LeadsTab({ leads, setLeads, showToast, currentUser }) {
-  const [searchInput, setSearchInput] = useState("");
-  const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState("All");
-  const [programFilter, setProgramFilter] = useState("All");
-  const [modalState, setModalState] = useState(null);
-
-  const emptyLead = {
-    id: null,
-    createdDate: todayISO(),
-    program: PROGRAMS[0],
-    name: "",
-    contact: "",
-    interestType: "Interested",
-    remark: "",
-    status: "Select Status",
+function LeadsTab({ rows, users, currentUser, onSave, onDelete, onCreateLead, showToast }) {
+  const [initial, setInitial] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const create = async (form) => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      const savedLead = await onCreateLead(form);
+      await onSave(initial.record, { leadCreated: true, createdLeadId: savedLead?.id, createdLeadDate: savedLead?.createdAt || todayISO(), callLeadStatus: "Approved" });
+      setInitial(null);
+      showToast("Lead created and automatically approved.");
+    } catch (error) { showToast(error.message || "Could not create lead"); }
+    finally { setSaving(false); }
   };
-
-  const filtered = leads.filter((l) => {
-    const query = search.trim().toLowerCase();
-    const matchesSearch = !query || (l.name || "").toLowerCase().includes(query) || (l.contact || "").includes(query);
-    const matchesStatus = statusFilter === "All" || (l.status || "Pending") === statusFilter;
-    const matchesProgram = programFilter === "All" || l.program === programFilter;
-    return matchesSearch && matchesStatus && matchesProgram;
-  });
-
-  const updateLead = (id, patch) => setLeads((prev) => prev.map((l) => (l.id === id ? { ...l, ...patch } : l)));
-  const handleDelete = (l) => {
-    if (window.confirm(`Delete lead "${l.name}"?`)) {
-      setLeads((prev) => prev.filter((x) => x.id !== l.id));
-      showToast("Lead deleted");
-    }
-  };
-  const handleSaveModal = (form) => {
-    if (form.id) {
-      updateLead(form.id, form);
-      showToast("Lead updated");
-    } else {
-      setLeads((prev) => [{ ...form, id: genId("lead") }, ...prev]);
-      showToast("Lead added");
-    }
-    setModalState(null);
-  };
-  const handleSearch = () => {
-    if (search.trim()) {
-      setSearchInput("");
-      setSearch("");
-      return;
-    }
-    setSearch(searchInput.trim());
-  };
-  const currentAssignee = String(currentUser?.name || currentUser?.username || "").trim().toLowerCase();
-  const isAssignedToOther = (lead) => {
-    const assignedTo = String(lead.assignedTo || "").trim().toLowerCase();
-    return Boolean(assignedTo && currentAssignee && assignedTo !== currentAssignee);
-  };
-
-  return (
-    <div className="panel leads-panel">
-      <div className="panel-head">
-        <h3>Leads</h3>
-        <button className="primary-button" onClick={() => setModalState(emptyLead)}>
-          <IconPlus size={16} /> Add Lead
-        </button>
-      </div>
-
-      <div className="module-toolbar">
-        <div className="toolbar-search">
-          <IconSearch size={16} />
-          <input
-            placeholder="Search leads by name or contact"
-            value={searchInput}
-            onChange={(e) => {
-              setSearchInput(e.target.value);
-              setSearch(e.target.value);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") setSearch(searchInput.trim());
-            }}
-          />
-          <button type="button" className="toolbar-search-action" onClick={handleSearch}>
-            {search.trim() ? "Clear" : "Search"}
-          </button>
-        </div>
-        <div className="toolbar-filters">
-          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
-            <option value="All">All Statuses</option>
-            <option>Pending</option>
-            <option>Approved</option>
-            <option>Rejected</option>
-          </select>
-          <select value={programFilter} onChange={(e) => setProgramFilter(e.target.value)}>
-            <option value="All">All Services / Programs</option>
-            {[...new Set([...PROGRAMS, ...SERVICE_CALL_LIST_SERVICES, ...TRAINING_CALL_LIST_PROGRAMS])].map((p) => (
-              <option key={p}>{p}</option>
-            ))}
-          </select>
-        </div>
-      </div>
-
-      <div className="table-wrap">
-        <table className="table">
-          <thead>
-            <tr>
-              <th>S. No.</th>
-              <th>Lead Create Date</th>
-              <th>Service / Program</th>
-              <th>Lead Type</th>
-              <th>Name</th>
-              <th>Interest Type</th>
-              <th>Remark</th>
-              <th>Status</th>
-              <th>Action</th>
-              <th>Assigned To</th>
-              <th>Call Now</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.length === 0 && <EmptyRow colSpan={11} text="No leads match the selected filters." />}
-            {filtered.map((l, idx) => {
-              const assignedToOther = isAssignedToOther(l);
-              return (
-              <tr key={l.id} className={assignedToOther ? "lead-assigned-row" : ""}>
-                <td>{idx + 1}</td>
-                <td>{formatDisplayDate(l.createdDate)}</td>
-                <td>{l.program || "-"}</td>
-                <td><span className="lead-type-label">{leadTypeLabel(l)}</span></td>
-                <td><strong>{l.name || "-"}</strong></td>
-                <td>{l.interestType || l.interest || "Interested"}</td>
-                <td>
-                  <div className="remark-cell">
-                    <input
-                      value={l.remark || l.notes || ""}
-                      placeholder="Add remark"
-                      onChange={(e) => updateLead(l.id, { remark: e.target.value })}
-                      disabled={assignedToOther}
-                    />
-                  </div>
-                </td>
-                <td>
-                  <select className={clsx("inline-select", "lead-status-select", l.status === "Approved" && "approved", l.status === "Rejected" && "rejected")} value={l.status || "Select Status"} onChange={(e) => updateLead(l.id, { status: e.target.value })} disabled={assignedToOther}>
-                    <option>Select Status</option>
-                    <option>Pending</option>
-                    <option>Approved</option>
-                    <option>Rejected</option>
-                  </select>
-                </td>
-                <td>
-                  <button
-                    className="fill-enquiry-button"
-                    title={l.status === "Approved" ? "Fill enquiry" : "Approve this lead first"}
-                    disabled={assignedToOther || l.status !== "Approved"}
-                    onClick={() => setModalState(l)}
-                    aria-label="Fill Enquiry"
-                  ><IconFillEnquiry size={19} /></button>
-                </td>
-                <td>
-                  <select
-                    className="inline-select lead-assignee-select"
-                    value={l.assignedTo || ""}
-                    onChange={(e) => updateLead(l.id, { assignedTo: e.target.value })}
-                    disabled={assignedToOther}
-                    aria-label={`Assign ${l.name || "lead"}`}
-                  >
-                    <option value="">Select Assignee</option>
-                    {TEAM_MEMBERS.map((member) => <option key={member}>{member}</option>)}
-                  </select>
-                </td>
-                <td><button className="row-icon-btn call" title="Call now" onClick={() => { window.location.href = `tel:${l.contact || ""}`; }}><IconPhone size={16} /></button></td>
-              </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-
-      {modalState && <LeadFormModal initial={modalState} currentUser={currentUser} onClose={() => setModalState(null)} onSave={handleSaveModal} />}
-    </div>
-  );
+  return <>
+    <CallLeadsPanel rows={rows} users={users} onSave={onSave} onDelete={onDelete} onAdd={(row) => setInitial({ record: row, form: callLeadForm(row) })} showAssignee lockCreatedLead highlightAssigned />
+    {initial && <LeadFormModal initial={initial.form} users={users} currentUser={currentUser} saving={saving} onClose={() => setInitial(null)} onSave={create} hideAssignment />}
+  </>;
 }
 
-/* ============================ SALES REPORTS TAB ============================ */
-
 function SalesReportsTab({ contacts, showToast }) {
+  const [reportScope, setReportScope] = useState("Services");
   const [program, setProgram] = useState("All");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  const reportDate = (contact) => String(contact.lastWorkedAt || contact.createdLeadDate || contact.date || contact.createdAt || "").slice(0, 10);
+  const reportCategory = (contact) => contact.listType === "training" ? "Training" : contact.listType === "services" ? "Services" : getCallListCategory(contact.program);
+  const scopedContacts = contacts.filter((contact) => reportScope === "All" || reportCategory(contact) === reportScope);
+  const programOptions = [...new Set([...PROGRAMS, ...scopedContacts.map((contact) => contact.program).filter(Boolean)])];
 
-  const filteredContacts = contacts.filter((c) => {
+  const filteredContacts = scopedContacts.filter((c) => {
     const matchesProgram = program === "All" || c.program === program;
-    const matchesFrom = !dateFrom || c.date >= dateFrom;
-    const matchesTo = !dateTo || c.date <= dateTo;
+    const recordDate = reportDate(c);
+    const matchesFrom = !dateFrom || recordDate >= dateFrom;
+    const matchesTo = !dateTo || recordDate <= dateTo;
     return matchesProgram && matchesFrom && matchesTo;
   });
 
-  const categories = ["Services", "Training", "Internship", "STIP"];
-  const categorySummary = categories.map((category) => {
-    const rows = filteredContacts.filter((contact) => getCallListCategory(contact.program) === category);
-    const converted = rows.filter((contact) => ["Converted", "Approved"].includes(contact.interestStatus)).length;
-    return { category, total: rows.length, converted, rate: rows.length ? Math.round((converted / rows.length) * 100) : 0 };
-  });
-
-  const reportRows = PROGRAMS.map((p) => {
-    const total = filteredContacts.filter((c) => c.program === p).length;
-    const converted = filteredContacts.filter((c) => c.program === p && c.interestStatus === "Converted").length;
-    return {
-      Program: p,
-      "Total Contacts": total,
-      Converted: converted,
-      "Conversion Rate": total ? `${Math.round((converted / total) * 100)}%` : "0%",
-    };
-  }).filter((r) => r["Total Contacts"] > 0);
+  const totalContacts = filteredContacts.length;
+  const followUps = filteredContacts.filter((contact) => normalizeCallStatus(contact.callStatus) === "Follow Up").length;
+  const completed = filteredContacts.filter((contact) => normalizeCallStatus(contact.callStatus) === "Completed").length;
+  const interested = filteredContacts.filter((contact) => normalizeInterestStatus(contact.interestStatus) === "Interested").length;
+  const notInterested = filteredContacts.filter((contact) => normalizeInterestStatus(contact.interestStatus) === "Not Interested").length;
+  const createdLeads = filteredContacts.filter((contact) => contact.leadCreated || contact.createdLeadId || contact.callLeadStatus === "Approved").length;
+  const conversionRate = totalContacts ? Math.round((createdLeads / totalContacts) * 100) : 0;
+  const pipeline = [
+    { label: "Total contacts", value: totalContacts, tone: "neutral" },
+    { label: "Interested", value: interested, tone: "blue" },
+    { label: "Follow ups", value: followUps, tone: "amber" },
+    { label: "Completed", value: completed, tone: "purple" },
+    { label: "Leads created", value: createdLeads, tone: "green" },
+  ];
+  const programRows = [...new Set(filteredContacts.map((contact) => contact.program).filter(Boolean))]
+    .map((programName) => {
+      const rows = filteredContacts.filter((contact) => contact.program === programName);
+      const leadsCreated = rows.filter((contact) => contact.leadCreated || contact.createdLeadId || contact.callLeadStatus === "Approved").length;
+      return { program: programName, total: rows.length, interested: rows.filter((contact) => normalizeInterestStatus(contact.interestStatus) === "Interested").length, leadsCreated, rate: rows.length ? Math.round((leadsCreated / rows.length) * 100) : 0 };
+    })
+    .sort((left, right) => right.total - left.total || right.leadsCreated - left.leadsCreated);
+  // Replaced visual blocks remain mounted below for backwards compatibility;
+  // the report panel hides them in favour of the operational dashboard.
+  const categorySummary = [];
+  const reportRows = [];
 
   const handleExport = () => {
-    if (!reportRows.length) {
+    if (!programRows.length) {
       showToast("Nothing to export for the selected filters");
       return;
     }
-    downloadCSV(`sales-report-${todayISO()}.csv`, reportRows);
+    downloadCSV(`sales-report-${todayISO()}.csv`, programRows.map((row) => ({ Program: row.program, "Total Contacts": row.total, Interested: row.interested, "Leads Created": row.leadsCreated, "Conversion Rate": `${row.rate}%` })));
     showToast("Report exported as CSV");
   };
 
   return (
-    <div className="panel">
+    <div className="panel sales-report-panel">
       <div className="panel-head">
-        <h3>Sales Reports</h3>
+        <div><h3>{reportScope === "Training" ? "Training Sales Report" : reportScope === "Services" ? "Service Sales Report" : "Sales Reports"}</h3><p className="panel-subtitle">Performance based on your assigned call-list contacts</p></div>
         <button className="ghost-button" onClick={handleExport}>
           <IconDownload size={16} /> Export CSV
         </button>
+      </div>
+
+      <div className="sales-report-scope" role="tablist" aria-label="Report type">
+        {["Services", "Training"].map((scope) => <button key={scope} type="button" role="tab" aria-selected={reportScope === scope} className={reportScope === scope ? "active" : ""} onClick={() => { setReportScope(scope); setProgram("All"); }}>{scope}</button>)}
       </div>
 
       <div className="module-toolbar">
         <div className="toolbar-filters">
           <select value={program} onChange={(e) => setProgram(e.target.value)}>
             <option value="All">All Programs</option>
-            {PROGRAMS.map((p) => (
+            {programOptions.map((p) => (
               <option key={p}>{p}</option>
             ))}
           </select>
@@ -1761,6 +1592,31 @@ function SalesReportsTab({ contacts, showToast }) {
           </tbody>
         </table>
       </div>
+      <div className="sales-report-summary">
+        <article><span>Total contacts</span><strong>{totalContacts}</strong><small>Within selected filters</small></article>
+        <article className="blue"><span>Interested</span><strong>{interested}</strong><small>{totalContacts ? Math.round((interested / totalContacts) * 100) : 0}% of contacts</small></article>
+        <article className="amber"><span>Follow ups due</span><strong>{followUps}</strong><small>Needs another conversation</small></article>
+        <article className="green"><span>Leads created</span><strong>{createdLeads}</strong><small>{conversionRate}% conversion rate</small></article>
+      </div>
+
+      <div className="sales-report-content">
+        <section className="sales-report-card sales-funnel">
+          <div className="sales-report-card-head"><div><h4>Sales funnel</h4><p>How contacts progress through your pipeline</p></div><span>{notInterested} not interested</span></div>
+          <div className="sales-funnel-bars">
+            {pipeline.map((step) => <div className="sales-funnel-row" key={step.label}><div><span>{step.label}</span><strong>{step.value}</strong></div><div className="sales-bar-track"><i className={step.tone} style={{ width: `${totalContacts ? Math.max((step.value / totalContacts) * 100, step.value ? 5 : 0) : 0}%` }} /></div></div>)}
+          </div>
+        </section>
+        <section className="sales-report-card sales-conversion-card">
+          <p>Conversion rate</p><strong>{conversionRate}%</strong><div className="sales-conversion-ring" style={{ "--progress": `${conversionRate * 3.6}deg` }}><span>{createdLeads}<small>leads</small></span></div><small>Created leads out of {totalContacts} contacts</small>
+        </section>
+      </div>
+
+      <section className="sales-report-card sales-program-performance">
+        <div className="sales-report-card-head"><div><h4>Program performance</h4><p>Contact volume and leads created by service or training program</p></div></div>
+        {!programRows.length ? <p className="sales-report-empty">No contact data matches the selected filters.</p> : <div className="sales-program-list">
+          {programRows.map((row) => <div className="sales-program-row" key={row.program}><div className="sales-program-name"><strong>{row.program}</strong><span>{row.total} contacts · {row.interested} interested</span></div><div className="sales-program-bar"><i style={{ width: `${totalContacts ? (row.total / totalContacts) * 100 : 0}%` }} /></div><div className="sales-program-result"><strong>{row.leadsCreated}</strong><span>leads · {row.rate}%</span></div></div>)}
+        </div>}
+      </section>
     </div>
   );
 }
@@ -1779,7 +1635,7 @@ function emptyTaskForm() {
   };
 }
 
-function TaskFormModal({ initial, onClose, onSave }) {
+function TaskFormModal({ initial, onClose, onSave, selfAssignee = "" }) {
   const [form, setForm] = useState(initial);
   const [errors, setErrors] = useState({});
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
@@ -1807,12 +1663,8 @@ function TaskFormModal({ initial, onClose, onSave }) {
           <textarea value={form.description} onChange={(e) => set("description", e.target.value)} />
         </div>
         <div className="field">
-          <span>Assignee</span>
-          <select value={form.assignee} onChange={(e) => set("assignee", e.target.value)}>
-            {TEAM_MEMBERS.map((p) => (
-              <option key={p}>{p}</option>
-            ))}
-          </select>
+          <span>Assigned to</span>
+          <input value={selfAssignee || form.assignee || "You"} readOnly aria-label="Task is assigned to you" />
         </div>
         <div className="field">
           <span>Priority</span>
@@ -1847,34 +1699,50 @@ function TaskFormModal({ initial, onClose, onSave }) {
   );
 }
 
-function TasksTab({ tasks, setTasks, showToast }) {
+function TasksTab({ tasks, setTasks, showToast, currentUser }) {
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [priorityFilter, setPriorityFilter] = useState("All");
-  const [assigneeFilter, setAssigneeFilter] = useState("All");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
   const [modalState, setModalState] = useState(null);
+
+  useEffect(() => {
+    let active = true;
+    fetchTasks().then((items) => { if (active && Array.isArray(items)) setTasks(items); })
+      .catch((error) => { if (active) showToast(error.message || "Could not load tasks"); });
+    return () => { active = false; };
+  }, [setTasks, showToast]);
 
   const filtered = tasks.filter((t) => {
     const matchesSearch = !search.trim() || t.title.toLowerCase().includes(search.trim().toLowerCase());
     const matchesPriority = priorityFilter === "All" || t.priority === priorityFilter;
-    const matchesAssignee = assigneeFilter === "All" || t.assignee === assigneeFilter;
-    return matchesSearch && matchesPriority && matchesAssignee;
+    const createdDate = String(t.createdAt || "").slice(0, 10);
+    const matchesFromDate = !fromDate || (createdDate && createdDate >= fromDate);
+    const matchesToDate = !toDate || (createdDate && createdDate <= toDate);
+    return matchesSearch && matchesPriority && matchesFromDate && matchesToDate;
   });
-
-  const updateTask = (id, patch) => setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
-  const handleDelete = (t) => {
-    if (window.confirm(`Delete task "${t.title}"?`)) {
-      setTasks((prev) => prev.filter((x) => x.id !== t.id));
-      showToast("Task deleted");
-    }
+  const taskSummary = {
+    total: tasks.length,
+    todo: tasks.filter((task) => task.status === "To Do").length,
+    progress: tasks.filter((task) => task.status === "In Progress").length,
+    done: tasks.filter((task) => task.status === "Done").length,
   };
-  const handleSaveModal = (form) => {
+
+  const updateTask = async (id, patch) => {
+    try {
+      const saved = await updateTaskApi(id, patch);
+      setTasks((prev) => prev.map((task) => task.id === id ? saved : task));
+    } catch (error) { showToast(error.message || "Could not update task"); }
+  };
+  const handleSaveModal = async (form) => {
     if (form.id) {
-      updateTask(form.id, form);
-      showToast("Task updated");
+      await updateTask(form.id, form); showToast("Task updated");
     } else {
-      setTasks((prev) => [{ ...form, id: genId("task") }, ...prev]);
-      showToast("Task created");
+      try {
+        const saved = await createTaskApi({ ...form, id: genId("task"), assigneeId: currentUser?.id || currentUser?._id });
+        setTasks((prev) => [saved, ...prev]); showToast("Personal task created");
+      } catch (error) { showToast(error.message || "Could not create task"); return; }
     }
     setModalState(null);
   };
@@ -1889,10 +1757,17 @@ function TasksTab({ tasks, setTasks, showToast }) {
   return (
     <div className="panel">
       <div className="panel-head">
-        <h3>Tasks</h3>
-        <button className="primary-button" onClick={() => setModalState(emptyTaskForm())}>
+        <div><h3>My tasks</h3><p className="panel-subtitle">Tasks assigned by Admin and tasks you created for yourself</p></div>
+        <button className="primary-button" onClick={() => setModalState({ ...emptyTaskForm(), assignee: currentUser?.name || currentUser?.username || "Me", assigneeId: currentUser?.id || currentUser?._id || "" })}>
           <IconPlus size={16} /> New Task
         </button>
+      </div>
+
+      <div className="crm-task-summary">
+        <div><span>All tasks</span><strong>{taskSummary.total}</strong></div>
+        <div className="todo"><span>To do</span><strong>{taskSummary.todo}</strong></div>
+        <div className="progress"><span>In progress</span><strong>{taskSummary.progress}</strong></div>
+        <div className="done"><span>Completed</span><strong>{taskSummary.done}</strong></div>
       </div>
 
       <div className="module-toolbar">
@@ -1920,12 +1795,14 @@ function TasksTab({ tasks, setTasks, showToast }) {
               <option key={p}>{p}</option>
             ))}
           </select>
-          <select value={assigneeFilter} onChange={(e) => setAssigneeFilter(e.target.value)}>
-            <option value="All">All Assignees</option>
-            {TEAM_MEMBERS.map((p) => (
-              <option key={p}>{p}</option>
-            ))}
-          </select>
+          <label className="task-date-filter">
+            <span>Created from</span>
+            <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} />
+          </label>
+          <label className="task-date-filter">
+            <span>Created to</span>
+            <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} />
+          </label>
         </div>
       </div>
 
@@ -1938,8 +1815,8 @@ function TasksTab({ tasks, setTasks, showToast }) {
               <th>Assignee</th>
               <th>Priority</th>
               <th>Status</th>
+              <th>Created Date</th>
               <th>Due Date</th>
-              <th>Action</th>
             </tr>
           </thead>
           <tbody>
@@ -1955,24 +1832,15 @@ function TasksTab({ tasks, setTasks, showToast }) {
                     {TASK_STATUSES.map((status) => <option key={status}>{status}</option>)}
                   </select>
                 </td>
+                <td>{formatDisplayDate(t.createdAt)}</td>
                 <td>{formatDisplayDate(t.dueDate)}</td>
-                <td>
-                  <div className="row-actions">
-                    <button className="row-icon-btn edit" title="Edit" onClick={() => setModalState(t)}>
-                      <IconEdit size={15} />
-                    </button>
-                    <button className="row-icon-btn delete" title="Delete" onClick={() => handleDelete(t)}>
-                      <IconTrash size={15} />
-                    </button>
-                  </div>
-                </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
 
-      {modalState && <TaskFormModal initial={modalState} onClose={() => setModalState(null)} onSave={handleSaveModal} />}
+      {modalState && <TaskFormModal initial={modalState} selfAssignee={currentUser?.name || currentUser?.username || "You"} onClose={() => setModalState(null)} onSave={handleSaveModal} />}
     </div>
   );
 }
@@ -1981,9 +1849,7 @@ function TasksTab({ tasks, setTasks, showToast }) {
 
 function MarkAttendanceTab({ attendance, setAttendance, showToast, profile }) {
   const today = todayISO();
-  const [sessionStarted, setSessionStarted] = useState(false);
-  const sessionDateRef = useRef(today);
-  const todaysRecord = sessionStarted ? attendance.find((a) => a.date === today) : null;
+  const todaysRecord = attendance.find((a) => a.date === today) || null;
   const [currentTime, setCurrentTime] = useState(() => new Date());
   const [status, setStatus] = useState(todaysRecord?.status || "");
   const [remark, setRemark] = useState(todaysRecord?.remark || "");
@@ -1991,43 +1857,29 @@ function MarkAttendanceTab({ attendance, setAttendance, showToast, profile }) {
   const checkOut = todaysRecord?.checkOut && todaysRecord.checkOut !== "-" ? todaysRecord.checkOut : "";
   const formatTime = (date) => date.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
 
-  const monthRows = attendance.filter((a) => monthKeyOf(a.date) === currentMonthKey());
-  const counts = ATTENDANCE_STATUSES.reduce((acc, s) => {
-    acc[s] = monthRows.filter((r) => r.status === s).length;
-    return acc;
-  }, {});
-
   useEffect(() => {
     const timer = window.setInterval(() => setCurrentTime(new Date()), 30000);
     return () => window.clearInterval(timer);
   }, []);
 
-  useEffect(() => {
-    if (sessionDateRef.current === today) return;
-    sessionDateRef.current = today;
-    setSessionStarted(false);
-    setStatus("");
-    setRemark("");
-  }, [today]);
+  useEffect(() => { setStatus(todaysRecord?.status || ""); setRemark(todaysRecord?.remark || ""); }, [todaysRecord?.id]);
 
-  const handleCheckIn = () => {
+  const handleCheckIn = async () => {
     if (checkIn || !status) return;
-    const time = formatTime(new Date());
-    setAttendance((prev) => {
-      const exists = prev.some((record) => record.date === today);
-      if (exists) return prev.map((record) => (record.date === today ? { ...record, status, remark, checkIn: time, checkOut: "" } : record));
-      return [{ id: genId("att"), date: today, status, remark, checkIn: time, checkOut: "" }, ...prev];
-    });
-    setSessionStarted(true);
-    showToast("Checked in successfully");
+    try {
+      const saved = await createAttendance({ date: today, status, remark });
+      setAttendance((prev) => [saved, ...prev.filter((record) => record.id !== saved.id)]);
+      showToast("Checked in successfully");
+    } catch (error) { showToast(error.message || "Could not mark attendance"); }
   };
 
-  const handleCheckOut = () => {
+  const handleCheckOut = async () => {
     if (!checkIn || checkOut) return;
-    setAttendance((prev) => {
-      return prev.map((a) => (a.date === today ? { ...a, checkOut: formatTime(new Date()) } : a));
-    });
-    showToast("Checked out successfully");
+    try {
+      const saved = await updateAttendance(todaysRecord.id, {});
+      setAttendance((prev) => prev.map((record) => record.id === saved.id ? saved : record));
+      showToast("Checked out successfully");
+    } catch (error) { showToast(error.message || "Could not check out"); }
   };
 
   return (
@@ -2158,7 +2010,7 @@ function LeaveRequestTab({ leaveRequests, setLeaveRequests, showToast }) {
   const [form, setForm] = useState({ type: LEAVE_TYPES[0], from: todayISO(), to: todayISO(), reason: "" });
   const [errors, setErrors] = useState({});
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     const nextErrors = {};
     if (!form.from) nextErrors.from = "Start date is required";
     if (!form.to) nextErrors.to = "End date is required";
@@ -2168,20 +2020,13 @@ function LeaveRequestTab({ leaveRequests, setLeaveRequests, showToast }) {
       setErrors(nextErrors);
       return;
     }
-    setLeaveRequests((prev) => [
-      { id: genId("leave"), ...form, status: "Pending", appliedOn: todayISO() },
-      ...prev,
-    ]);
-    setForm({ type: LEAVE_TYPES[0], from: todayISO(), to: todayISO(), reason: "" });
-    setErrors({});
-    showToast("Leave request submitted");
-  };
-
-  const handleCancel = (l) => {
-    if (window.confirm("Cancel this leave request?")) {
-      setLeaveRequests((prev) => prev.filter((x) => x.id !== l.id));
-      showToast("Leave request cancelled");
-    }
+    try {
+      const saved = await createLeave(form);
+      setLeaveRequests((prev) => [saved, ...prev.filter((leave) => leave.id !== saved.id)]);
+      setForm({ type: LEAVE_TYPES[0], from: todayISO(), to: todayISO(), reason: "" });
+      setErrors({});
+      showToast("Leave request submitted");
+    } catch (error) { showToast(error.message || "Could not submit leave request"); }
   };
 
   return (
@@ -2238,11 +2083,10 @@ function LeaveRequestTab({ leaveRequests, setLeaveRequests, showToast }) {
                 <th>Reason</th>
                 <th>Applied On</th>
                 <th>Status</th>
-                <th>Action</th>
               </tr>
             </thead>
             <tbody>
-              {leaveRequests.length === 0 && <EmptyRow colSpan={7} text="No leave requests yet." />}
+              {leaveRequests.length === 0 && <EmptyRow colSpan={6} text="No leave requests yet." />}
               {leaveRequests.map((l) => (
                 <tr key={l.id}>
                   <td>{l.type}</td>
@@ -2253,8 +2097,8 @@ function LeaveRequestTab({ leaveRequests, setLeaveRequests, showToast }) {
                   <td>
                     <span className={clsx("badge", leaveStatusBadgeClass(l.status))}>{l.status}</span>
                   </td>
-                  <td>
-                    {l.status === "Pending" ? (
+                  <td hidden>
+                    {false ? (
                       <button className="row-icon-btn delete" title="Cancel" onClick={() => handleCancel(l)}>
                         <IconTrash size={16} />
                       </button>
@@ -2274,7 +2118,7 @@ function LeaveRequestTab({ leaveRequests, setLeaveRequests, showToast }) {
 
 /* ================================ SETTINGS TAB ============================== */
 
-function SettingsTab({ profile, setProfile, preferences, setPreferences, showToast }) {
+function SettingsTab({ profile, setProfile, preferences, setPreferences, showToast, currentUser, onProfileUpdated }) {
   const [profileForm, setProfileForm] = useState(profile);
   const [prefForm, setPrefForm] = useState(preferences);
   const [passwordForm, setPasswordForm] = useState({ current: "", next: "", confirm: "" });
@@ -2289,26 +2133,40 @@ function SettingsTab({ profile, setProfile, preferences, setPreferences, showToa
     setProfileForm((f) => ({ ...f, avatarUrl: url }));
   };
 
-  const handleSaveProfile = () => {
-    setProfile(profileForm);
-    setMessage({ type: "success", text: "Profile updated successfully" });
-    showToast("Profile saved");
+  const handleSaveProfile = async () => {
+    try {
+      const saved = await updateMyProfile({ name: profileForm.name, email: profileForm.email, phone: profileForm.phone });
+      const nextProfile = { ...profileForm, ...saved };
+      setProfile(nextProfile);
+      setProfileForm(nextProfile);
+      onProfileUpdated?.(saved);
+      setMessage({ type: "success", text: "Profile updated successfully" });
+      showToast("Profile saved");
+    } catch (error) { setMessage({ type: "error", text: error.message || "Could not save profile" }); }
   };
 
-  const handleSavePreferences = () => {
-    setPreferences(prefForm);
-    showToast("Preferences saved");
+  const handleSavePreferences = async () => {
+    try {
+      const saved = await updateMyProfile({ notificationPreferences: prefForm });
+      setPreferences(prefForm);
+      setProfile((current) => ({ ...current, ...saved }));
+      onProfileUpdated?.(saved);
+      showToast("Preferences saved");
+    } catch (error) { showToast(error.message || "Could not save preferences"); }
   };
 
-  const handleChangePassword = () => {
+  const handleChangePassword = async () => {
     const nextErrors = {};
     if (!passwordForm.current) nextErrors.current = "Enter your current password";
     if (!passwordForm.next || passwordForm.next.length < 6) nextErrors.next = "New password must be at least 6 characters";
     if (passwordForm.next !== passwordForm.confirm) nextErrors.confirm = "Passwords do not match";
     setPwErrors(nextErrors);
     if (Object.keys(nextErrors).length) return;
-    setPasswordForm({ current: "", next: "", confirm: "" });
-    showToast("Password updated");
+    try {
+      await changePassword(currentUser?.id || currentUser?._id, passwordForm.current, passwordForm.next);
+      setPasswordForm({ current: "", next: "", confirm: "" });
+      showToast("Password updated");
+    } catch (error) { showToast(error.message || "Could not update password"); }
   };
 
   return (
@@ -2317,17 +2175,25 @@ function SettingsTab({ profile, setProfile, preferences, setPreferences, showToa
         <div className="settings-section-header">
           <h3>Profile</h3>
         </div>
-        <div className="settings-identity">
-          <div className="avatar-preview">
+        <div className="profile-id-card">
+          <div className="profile-id-card-top">
+            <div className="avatar-preview">
             {profileForm.avatarUrl ? (
               <img src={profileForm.avatarUrl} alt="avatar" />
             ) : (
               <div className="avatar large">{(profileForm.name || "?").charAt(0)}</div>
             )}
+            </div>
+            <div className="profile-id-card-name">
+              <span>System Technologies</span>
+              <strong>{profileForm.name || "CRM Executive"}</strong>
+              <em>{profileForm.role || "CRM Executive"}</em>
+            </div>
           </div>
-          <div>
-            <strong>{profileForm.name}</strong>
-            <span>{profileForm.role}</span>
+          <div className="profile-id-card-details">
+            <span><small>Employee ID</small><b>{currentUser?.id || currentUser?._id || "-"}</b></span>
+            <span><small>Email</small><b>{profileForm.email || "-"}</b></span>
+            <span><small>Phone</small><b>{profileForm.phone || "-"}</b></span>
           </div>
         </div>
         <div className="avatar-upload">
@@ -2343,7 +2209,7 @@ function SettingsTab({ profile, setProfile, preferences, setPreferences, showToa
           </div>
           <div className="field">
             <span>Role</span>
-            <input value={profileForm.role} onChange={(e) => setProfileForm((f) => ({ ...f, role: e.target.value }))} />
+            <input value={profileForm.role} readOnly />
           </div>
           <div className="field">
             <span>Email</span>
@@ -2429,6 +2295,20 @@ function SettingsTab({ profile, setProfile, preferences, setPreferences, showToa
   );
 }
 
+function NotificationsTab({ notifications, onRead, onMarkAll }) {
+  const unread = notifications.filter((item) => !item.read).length;
+  return <div className="panel notifications-panel">
+    <div className="panel-head notification-page-head"><div><h3>Notifications</h3><p className="panel-subtitle">Assignments, leave updates, and work activity</p></div><div className="notification-page-actions"><span className="notification-count">{unread} unread</span><button className="ghost-button" onClick={onMarkAll} disabled={!unread}>Mark all read</button></div></div>
+    <div className="notification-list">
+      {!notifications.length && <div className="notifications-empty"><div><IconBell size={28} /></div><strong>All caught up</strong><p>New work updates will appear here.</p></div>}
+      {notifications.map((item) => <button key={item.id} className={clsx("notification-item", !item.read && "unread")} onClick={() => onRead(item.id)}>
+        <span className="notification-dot" />
+        <span><strong>{item.message}</strong><small>{formatDisplayDate(item.createdAt)}</small></span>
+      </button>)}
+    </div>
+  </div>;
+}
+
 /* ================================== SIDEBAR ================================= */
 
 const NAV_GROUPS = [
@@ -2441,18 +2321,14 @@ const NAV_GROUPS = [
     items: [
       { key: "servicecalllist", label: "Service Call List", icon: IconPhone },
       { key: "trainingcalllist", label: "Training Call List", icon: IconPhone },
-      { key: "leads", label: "Leads", icon: IconUsers },
-      { key: "assignedleads", label: "Assigned Leads", icon: IconUsers },
+      { key: "leads", label: "Call Leads", icon: IconUsers },
       { key: "salesreports", label: "Sales Report", icon: IconChart },
     ],
   },
   {
     label: "Work",
-    items: [{ key: "tasks", label: "Tasks", icon: IconTasks }],
-  },
-  {
-    label: "Attendance",
     items: [
+      { key: "tasks", label: "Tasks", icon: IconTasks },
       { key: "markattendance", label: "Mark Attendance", icon: IconAttendance },
       { key: "attendancereport", label: "Attendance Report", icon: IconAttendance },
       { key: "leaverequest", label: "Leave Request", icon: IconUsers },
@@ -2460,7 +2336,7 @@ const NAV_GROUPS = [
   },
   {
     label: "Account",
-    items: [{ key: "settings", label: "Settings", icon: IconSettings }],
+    items: [{ key: "notifications", label: "Notifications", icon: IconBell }, { key: "settings", label: "Settings", icon: IconSettings }],
   },
 ];
 
@@ -2468,12 +2344,12 @@ const TAB_TITLES = {
   dashboard: ["Dashboard", "Overview of your CRM performance"],
   servicecalllist: ["Service Call List", "Daily contacts for IT services"],
   trainingcalllist: ["Training Call List", "Daily contacts for training programs"],
-  leads: ["Leads", "Follow-up contacts converted to leads"],
-  assignedleads: ["Assigned Leads", "Leads assigned to you"],
+  leads: ["Call Leads", "Interested contacts marked Follow Up or Completed"],
   salesreports: ["Sales Report", "Simple sales performance overview"],
   tasks: ["Tasks", "Create, assign and track work"],
   salessummary: ["Sales Summary", "Services, Training, Internship & STIP performance"],
   settings: ["Settings", "Profile, preferences and security"],
+  notifications: ["Notifications", "Updates about your work"],
   markattendance: ["Mark Attendance", "Log today's attendance"],
   attendancereport: ["Attendance Report", "Monthly attendance history"],
   leaverequest: ["Leave Request", "Apply for and track leave"],
@@ -2560,37 +2436,35 @@ function Sidebar({ activeTab, onNavigate, profile, badges, onLogout }) {
 
 function normalizeSourceContact(row) {
   return {
+    ...row,
     id: String(row.id || row._id || `source-contact-${Date.now()}-${Math.random()}`),
     date: row.date || todayISO(),
     name: row.name || "",
     contact: row.contact || row.number || row.phone || "",
-    callStatus: row.callStatus && row.callStatus !== "Select Status" ? row.callStatus : "Pending",
+    callStatus: normalizeCallStatus(row.callStatus),
     interactionType: row.interactionType || "Call",
-    interestStatus: row.interestStatus || "Select Status",
-    program: row.program && row.program !== "-" ? row.program : row.category || "IT Services",
+    interestStatus: normalizeInterestStatus(row.interestStatus),
+    program: normalizeCallProgram(row.program),
     remark: row.remark || "",
     active: row.active !== false && !row.snoozed,
     snoozeUntil: row.snoozeUntil || null,
     crmExecutiveName: row.crmExecutiveName || row.assignedToName || "",
     sourceRecord: true,
+    listType: row.listType || "services",
+    callListCategory: row.listType === "training" ? "Training" : "Services",
+    callClicked: Boolean(row.callClicked),
+    whatsappClicked: Boolean(row.whatsappClicked),
+    callLead: row.callLead || null,
   };
 }
 
-function mergeSourceRecords(currentRecords, sourceRecords, normalize) {
-  if (!sourceRecords.length) return currentRecords;
-  const sourceIds = new Set(sourceRecords.map((record) => String(record.id)));
-  const locallyCreated = currentRecords.filter((record) => !sourceIds.has(String(record.id)) && !record.sourceRecord);
-  const existingById = new Map(currentRecords.map((record) => [String(record.id), record]));
-  const synced = sourceRecords.map((record) => ({
-    ...existingById.get(String(record.id)),
-    ...record,
-  }));
-  return [...synced, ...locallyCreated];
-}
-
 function isLeadContact(contact) {
-  return contact.interestStatus === "Interested"
-    && ["Follow Up", "Completed"].includes(contact.callStatus);
+  const isCreatedLead = Boolean(contact.leadCreated || contact.createdLeadId || contact.callLeadStatus === "Approved");
+  const isCompletedInterested = normalizeInterestStatus(contact.interestStatus) === "Interested"
+    && normalizeCallStatus(contact.callStatus) === "Completed";
+  // A created/approved lead is highlighted immediately. A completed,
+  // interested call is also ready to highlight even before lead creation.
+  return isCreatedLead || isCompletedInterested;
 }
 
 function leadTypeLabel(lead) {
@@ -2607,7 +2481,7 @@ function leadFromContact(contact) {
   return {
     id: `contact-lead-${contact.id}`,
     sourceContactId: String(contact.id),
-    createdDate: contact.date || todayISO(),
+    createdDate: contact.createdLeadDate || contact.date || todayISO(),
     program: contact.program || "",
     name: contact.name || "",
     contact: contact.contact || "",
@@ -2633,28 +2507,84 @@ export default function CrmExecutiveDashboard({
   currentUser,
   leads: externalLeads = [],
   sourceContacts = [],
+  onUpdateCallListContact,
+  onCreateLead,
+  onDeleteCallContact,
+  users = [],
+  onProfileUpdated,
 }) {
   const [activeTab, setActiveTab] = useState(initialTab);
   const [toast, showToast] = useToast();
+  const [topMenu, setTopMenu] = useState("");
+  const topbarMenusRef = useRef(null);
 
-  const [contacts, setContacts] = useLocalStorageState("crmExec.contacts", seedContacts);
+  const [contacts, setContacts] = useState([]);
+  const [appNotifications, setAppNotifications] = useState([]);
   const [leads, setLeads] = useLocalStorageState("crmExec.leads", seedLeads);
   const [tasks, setTasks] = useLocalStorageState("crmExec.tasks", seedTasks);
-  const [attendance, setAttendance] = useLocalStorageState("crmExec.attendance", seedAttendance);
-  const [leaveRequests, setLeaveRequests] = useLocalStorageState("crmExec.leaveRequests", seedLeaveRequests);
+  const [dashboardTasks, setDashboardTasks] = useState([]);
+  const [attendance, setAttendance] = useState([]);
+  const [leaveRequests, setLeaveRequests] = useState([]);
   const [profile, setProfile] = useLocalStorageState("crmExec.profile", () => ({
     ...DEFAULT_PROFILE,
     ...(currentUser || {}),
   }));
-  const [preferences, setPreferences] = useLocalStorageState("crmExec.preferences", DEFAULT_PREFERENCES);
+  const [preferences, setPreferences] = useState(() => currentUser?.notificationPreferences || DEFAULT_PREFERENCES);
 
   const qualifiedLeadsInitialized = useRef(false);
 
   useEffect(() => {
-    setLeads((current) => current.map((lead) => (
-      lead.assignedTo ? { ...lead, assignedTo: "" } : lead
-    )));
-  }, [setLeads]);
+    try { window.localStorage.removeItem("crmExec.contacts"); }
+    catch { /* Ignore unavailable browser storage. */ }
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    fetchAttendance().then((records) => { if (active && Array.isArray(records)) setAttendance(records); })
+      .catch((error) => { if (active) showToast(error.message || "Could not load attendance"); });
+    return () => { active = false; };
+  }, [showToast]);
+
+  useEffect(() => {
+    let active = true;
+    fetchTasks()
+      .then((items) => { if (active && Array.isArray(items)) setDashboardTasks(items); })
+      .catch(() => { if (active) setDashboardTasks([]); });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    const refresh = () => fetchAppNotifications().then((items) => { if (active && Array.isArray(items)) setAppNotifications(items); }).catch(() => {});
+    refresh();
+    const timer = window.setInterval(refresh, 30000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, []);
+
+  useEffect(() => {
+    const closeOnOutsideClick = (event) => {
+      if (topbarMenusRef.current && !topbarMenusRef.current.contains(event.target)) setTopMenu("");
+    };
+    document.addEventListener("pointerdown", closeOnOutsideClick);
+    return () => document.removeEventListener("pointerdown", closeOnOutsideClick);
+  }, []);
+
+  const markNotificationRead = async (id) => {
+    try { const saved = await markAppNotificationRead(id); setAppNotifications((items) => items.map((item) => item.id === id ? { ...item, ...saved, read: true } : item)); }
+    catch (error) { showToast(error.message || "Could not update notification"); }
+  };
+  const markAllNotificationsRead = async () => {
+    const unread = appNotifications.filter((item) => !item.read);
+    await Promise.all(unread.map((item) => markAppNotificationRead(item.id)));
+    setAppNotifications((items) => items.map((item) => ({ ...item, read: true })));
+  };
+
+  useEffect(() => {
+    let active = true;
+    fetchLeaves().then((records) => { if (active && Array.isArray(records)) setLeaveRequests(records); })
+      .catch((error) => { if (active) showToast(error.message || "Could not load leave requests"); });
+    return () => { active = false; };
+  }, [showToast]);
 
   useEffect(() => {
     const qualifiedLeads = contacts.filter(isLeadContact).map(leadFromContact);
@@ -2677,21 +2607,9 @@ export default function CrmExecutiveDashboard({
   };
 
   useEffect(() => {
-    const sourceLeads = contacts.filter(isLeadContact).map(leadFromContact);
-    try {
-      window.localStorage.setItem(CRM_EXEC_LEADS_STORAGE_KEY, JSON.stringify(sourceLeads));
-      window.dispatchEvent(new CustomEvent("crmExecLeadsChanged", { detail: sourceLeads }));
-    } catch (error) {
-      /* Ignore unavailable browser storage. */
-    }
-  }, [contacts]);
-
-  useEffect(() => {
     const normalizedContacts = sourceContacts.map(normalizeSourceContact).filter((contact) => contact.name || contact.contact);
-    if (normalizedContacts.length) {
-      setContacts((current) => mergeSourceRecords(current, normalizedContacts, normalizeSourceContact));
-    }
-  }, [sourceContacts, setContacts]);
+    setContacts(normalizedContacts);
+  }, [sourceContacts]);
 
   const handleNavigate = (tab) => {
     setActiveTab(tab);
@@ -2714,6 +2632,7 @@ export default function CrmExecutiveDashboard({
     leads: leads.length || null,
     tasks: tasks.filter((t) => t.status !== "Done").length || null,
     leaverequest: leaveRequests.filter((l) => l.status === "Pending").length || null,
+    notifications: appNotifications.filter((item) => !item.read).length || null,
   };
 
   const [title, subtitle] = TAB_TITLES[activeTab] || ["", ""];
@@ -2737,11 +2656,16 @@ export default function CrmExecutiveDashboard({
                 <p className="topbar-subtitle">{subtitle}</p>
               </div>
             </div>
-            <div className="topbar-right">
-              <button className="icon-button" title="Notifications">
+            <div className="topbar-right" ref={topbarMenusRef}>
+              <div className="topbar-popover-wrap">
+              <button className="icon-button notification-bell" title="Notifications" onClick={() => setTopMenu((current) => current === "notifications" ? "" : "notifications")}>
                 <IconBell size={18} />
+                {appNotifications.some((item) => !item.read) && <span className="bell-badge">{appNotifications.filter((item) => !item.read).length}</span>}
               </button>
-              <div className="user-chip">
+              {topMenu === "notifications" && <div className="topbar-menu notifications-menu"><div className="topbar-menu-head"><strong>Notifications</strong><button onClick={markAllNotificationsRead}>Mark all read</button></div>{appNotifications.slice(0, 6).map((item) => <button key={item.id} className={clsx("topbar-notification", !item.read && "unread")} onClick={() => markNotificationRead(item.id)}>{item.message}</button>)}{!appNotifications.length && <p>No notifications yet.</p>}<button className="topbar-menu-link" onClick={() => { setTopMenu(""); handleNavigate("notifications"); }}>View all notifications</button></div>}
+              </div>
+              <div className="topbar-popover-wrap">
+              <button className="user-chip user-chip-button" onClick={() => setTopMenu((current) => current === "profile" ? "" : "profile")}>
                 {profile.avatarUrl ? (
                   <img
                     src={profile.avatarUrl}
@@ -2755,6 +2679,8 @@ export default function CrmExecutiveDashboard({
                   <strong style={{ display: "block", fontSize: "0.88rem" }}>{profile.name}</strong>
                   <span style={{ fontSize: "0.78rem", color: "var(--text-soft)" }}>{profile.role}</span>
                 </div>
+              </button>
+              {topMenu === "profile" && <div className="topbar-menu profile-menu"><div className="profile-menu-identity"><div className="avatar">{(profile.name || "?").charAt(0)}</div><div><strong>{profile.name}</strong><span>{profile.role}</span></div></div><div className="profile-menu-data"><span>Email <b>{profile.email || "-"}</b></span><span>Phone <b>{profile.phone || "-"}</b></span></div><button className="topbar-menu-link" onClick={() => { setTopMenu(""); handleNavigate("settings"); }}>View settings</button></div>}
               </div>
             </div>
           </div>
@@ -2763,8 +2689,8 @@ export default function CrmExecutiveDashboard({
             {activeTab === "dashboard" && (
               <DashboardTab
                 contacts={contacts}
-                leads={leads}
-                tasks={tasks}
+                leads={externalLeads}
+                tasks={dashboardTasks}
                 leaveRequests={leaveRequests}
                 onNavigate={handleNavigate}
               />
@@ -2779,6 +2705,7 @@ export default function CrmExecutiveDashboard({
                 addLabel="Add Service Contact"
                 currentUser={currentUser}
                 onContactChange={syncContactLead}
+                onPersistContact={onUpdateCallListContact}
               />
             )}
             {activeTab === "trainingcalllist" && (
@@ -2791,12 +2718,13 @@ export default function CrmExecutiveDashboard({
                 addLabel="Add Training Contact"
                 currentUser={currentUser}
                 onContactChange={syncContactLead}
+                onPersistContact={onUpdateCallListContact}
               />
             )}
-            {activeTab === "leads" && <LeadsTab leads={leads} setLeads={setLeads} showToast={showToast} currentUser={currentUser} />}
-            {activeTab === "assignedleads" && <AssignedLeadsTab leads={externalLeads} currentUser={currentUser} />}
+            {activeTab === "leads" && <LeadsTab rows={sourceContacts} users={users} showToast={showToast} currentUser={currentUser} onSave={onUpdateCallListContact} onDelete={onDeleteCallContact} onCreateLead={onCreateLead} />}
             {activeTab === "salesreports" && <SalesReportsTab contacts={contacts} showToast={showToast} />}
-            {activeTab === "tasks" && <TasksTab tasks={tasks} setTasks={setTasks} showToast={showToast} />}
+            {activeTab === "notifications" && <NotificationsTab notifications={appNotifications} onRead={markNotificationRead} onMarkAll={markAllNotificationsRead} />}
+            {activeTab === "tasks" && <TasksTab tasks={tasks} setTasks={setTasks} showToast={showToast} currentUser={currentUser} />}
             {activeTab === "settings" && (
               <SettingsTab
                 profile={profile}
@@ -2804,6 +2732,8 @@ export default function CrmExecutiveDashboard({
                 preferences={preferences}
                 setPreferences={setPreferences}
                 showToast={showToast}
+                currentUser={currentUser}
+                onProfileUpdated={onProfileUpdated}
               />
             )}
             {activeTab === "markattendance" && (

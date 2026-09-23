@@ -32,7 +32,7 @@ function normalizeLessonDuration(lessonData = {}) {
 
 // Course responses include sections, lessons, and tasks. Cache them briefly
 // to avoid repeating that read tree; every API mutation clears this cache.
-const COURSES_CACHE_TTL_MS = 60 * 1000;
+const COURSES_CACHE_TTL_MS = 5 * 60 * 1000;
 const coursesCache = new Map();
 const coursesCachePromises = new Map();
 const initializedEnrollments = new Set();

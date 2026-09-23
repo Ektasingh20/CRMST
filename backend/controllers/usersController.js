@@ -109,8 +109,7 @@ export async function updateUser(req, res) {
       payload.id = String(id);
     }
 
-    const isObjectId = /^[a-fA-F0-9]{24}$/.test(String(id));
-    const existing = (await User.findOne({ id: String(id) })) || (isObjectId ? await User.findById(id) : null);
+    const existing = (await User.findOne({ id: String(id) })) || await User.findOne({ _id: String(id) });
     if (!existing) {
       return res.status(404).json({ error: "User not found" });
     }
@@ -157,6 +156,38 @@ export async function listUsers(req, res) {
       const { password: _password, ...safeUser } = doc.toObject();
       return { id: safeUser.id || String(safeUser._id), ...safeUser };
     }));
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+export async function listAssignableUsers(req, res) {
+  if (!isMongoConnected) return mongoUnavailable(res);
+  try {
+    const items = await User.find()
+      .select("id name username role dept department position status")
+      .sort({ name: 1 });
+    const assignable = items.filter((user) => {
+      const role = String(user.role || "").trim().toLowerCase();
+      const department = String(user.dept || user.department || "").trim().toLowerCase();
+      const position = String(user.position || "").trim().toLowerCase();
+      const status = String(user.status || "Active").trim().toLowerCase();
+      return status !== "inactive" && (
+        role.includes("admin") || role.startsWith("operation")
+        || department.includes("admin") || department.startsWith("operation")
+        || position.includes("admin") || position.startsWith("operation")
+      );
+    });
+    return res.json(assignable.map((user) => ({
+      id: user.id || String(user._id),
+      _id: String(user._id),
+      name: user.name || "",
+      username: user.username || "",
+      role: user.role || "",
+      dept: user.dept || user.department || "",
+      position: user.position || "",
+      status: user.status || "Active",
+    })));
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }

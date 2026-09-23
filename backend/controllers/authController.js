@@ -51,6 +51,10 @@ export async function changePassword(req, res) {
   }
   try {
     const { userId, currentPassword, newPassword } = req.body;
+    const authenticatedUserId = String(req.user?.id || req.user?._id || "");
+    if (String(userId || "") !== authenticatedUserId) {
+      return res.status(403).json({ error: "You can only change your own password." });
+    }
     if (!userId || !currentPassword || !newPassword) {
       return res.status(400).json({ error: "Current password and new password are required" });
     }

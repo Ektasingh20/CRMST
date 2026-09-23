@@ -1,0 +1,14 @@
+.remark-modal-backdrop { position: fixed; inset: 0; z-index: 3000; display: grid; place-items: center; padding: 20px; background: rgba(25,18,13,.52); backdrop-filter: blur(4px); }
+.remark-modal { width: min(680px,100%); padding: 22px; border: 1px solid #e2d4c6; border-radius: 18px; background: #fffdfa; box-shadow: 0 28px 80px rgba(35,24,15,.28); }
+.remark-modal-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; margin-bottom: 16px; }
+.remark-modal-head small { color: #87542f; font-size: .68rem; font-weight: 800; letter-spacing: .14em; }
+.remark-modal-head h3 { margin: 4px 0 0; color: #29231f; font-size: 1.2rem; }
+.remark-modal-close { width: 38px; height: 38px; display: grid; place-items: center; border: 1px solid #e7dbcf; border-radius: 10px; background: #fff; color: #403730; cursor: pointer; }
+.remark-modal textarea { width: 100%; min-height: 240px; resize: vertical; padding: 14px 16px; border: 1px solid #d9c9ba; border-radius: 12px; outline: none; background: #fff; color: #29231f; font: inherit; line-height: 1.6; }
+.remark-modal textarea:focus { border-color: #87542f; box-shadow: 0 0 0 3px rgba(135,84,47,.12); }
+.remark-modal textarea[readonly] { background: #f8f4ef; }
+.remark-modal-meta { display: flex; justify-content: space-between; gap: 12px; margin-top: 7px; color: #81766d; font-size: .72rem; }
+.remark-modal-error { margin: 10px 0 0; color: #b42318; font-size: .8rem; }
+.remark-modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
+.crm-remark-input { text-overflow: ellipsis; }
+@media (max-width: 600px) { .remark-modal { padding: 17px; } .remark-modal textarea { min-height: 200px; } .remark-modal-actions { flex-direction: column-reverse; } .remark-modal-actions button { width: 100%; } }

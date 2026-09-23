@@ -2,6 +2,7 @@ import {
   login as apiLogin,
   signup as apiSignup,
   fetchUsers,
+  fetchAssignableUsers,
   createUser,
   updateUser,
   deleteUser,
@@ -38,6 +39,10 @@ import {
   submitCourseTask as submitCourseTaskApi,
   saveCourseLessonProgress as saveCourseLessonProgressApi,
   fetchCourseUploadAuth,
+  fetchCallListData,
+  importCallListData,
+  updateCallListData,
+  deleteCallListData,
   fetchStipPrograms,
   createStipProgram,
   updateStipProgram,
@@ -134,6 +139,8 @@ const COURSES_CACHE_KEY = "crmst-courses-cache-v2";
 // duplicate reads from refreshes, navigation, and React development renders.
 const COURSES_CACHE_TTL_MS = 60 * 1000;
 const COURSES_SUMMARY_CACHE_TTL_MS = 60 * 1000;
+const CALL_LIST_CACHE_KEY = "crmst-call-list-cache-v1";
+const CALL_LIST_CACHE_TTL_MS = 2 * 60 * 1000;
 
 function formatDurationTime(totalSeconds) {
   const seconds = Math.max(0, Math.round(Number(totalSeconds) || 0));
@@ -217,6 +224,33 @@ function writeCoursesCache(items, scope) {
   } catch {
     return false;
   }
+}
+
+function callListCacheKey(type = "") {
+  const user = getSavedUser();
+  const userKey = user?.id || user?._id || user?.username || "anonymous";
+  return `${CALL_LIST_CACHE_KEY}:${String(userKey)}:${String(type || "all")}`;
+}
+
+function readCallListCache(type = "") {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(callListCacheKey(type)) || "null");
+    return { items: Array.isArray(parsed?.items) ? parsed.items : [], fetchedAt: Number(parsed?.fetchedAt || 0) };
+  } catch {
+    return { items: [], fetchedAt: 0 };
+  }
+}
+
+function writeCallListCache(items, type = "") {
+  try { window.localStorage.setItem(callListCacheKey(type), JSON.stringify({ items, fetchedAt: Date.now() })); } catch {}
+}
+
+function removeCallListCache() {
+  try {
+    Object.keys(window.localStorage)
+      .filter((key) => key.startsWith(`${CALL_LIST_CACHE_KEY}:`))
+      .forEach((key) => window.localStorage.removeItem(key));
+  } catch {}
 }
 
 export function invalidateCoursesCache() {
@@ -341,6 +375,16 @@ export async function loadUsers() {
   }
 }
 
+export async function loadAssignableUsers() {
+  try {
+    const result = await fetchAssignableUsers();
+    return normalizeCollection(result);
+  } catch (err) {
+    console.warn("Failed loading assignable users", err);
+    return [];
+  }
+}
+
 export async function saveUsersToBackend(users) {
   return saveCollection({
     items: users,
@@ -350,9 +394,9 @@ export async function saveUsersToBackend(users) {
   });
 }
 
-export async function loadLeads() {
+export async function loadLeads(fresh = false) {
   try {
-    const result = await fetchLeads();
+    const result = await fetchLeads(fresh);
     return normalizeCollection(result);
   } catch (err) {
     console.warn("Failed loading leads", err);
@@ -549,6 +593,29 @@ export async function uploadStudentCourseResource(file, courseId, lessonId, task
 export async function saveStudentLessonProgress(courseId, lessonId, progress, studentId, section) {
   const patch = typeof progress === "boolean" ? { videoCompleted: progress } : progress || {};
   return saveCourseLessonProgressApi(courseId, lessonId, { studentId, ...patch, section });
+}
+
+export async function loadCallListData(type = "", force = false) {
+  const cached = readCallListCache(type);
+  if (!force && cached.items.length && Date.now() - cached.fetchedAt < CALL_LIST_CACHE_TTL_MS) return cached.items;
+  const records = await fetchCallListData(type);
+  if (Array.isArray(records)) writeCallListCache(records, type);
+  return records;
+}
+export async function uploadCallListData(payload) {
+  const result = await importCallListData(payload);
+  removeCallListCache();
+  return result;
+}
+export async function saveCallListData(type, id, patch, assignedTo = "") {
+  const result = await updateCallListData(type, id, patch, assignedTo);
+  removeCallListCache();
+  return result;
+}
+export async function removeCallListData(type, id, assignedTo = "") {
+  const result = await deleteCallListData(type, id, assignedTo);
+  removeCallListCache();
+  return result;
 }
 
 export async function uploadCourseAsset(file) {

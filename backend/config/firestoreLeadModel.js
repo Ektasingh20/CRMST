@@ -1,4 +1,8 @@
 import { getFirestore } from "firebase-admin/firestore";
+import { isDeepStrictEqual } from "node:util";
+import { createDocumentCache, cloneDocumentData } from "./documentCache.js";
+
+const originals = new WeakMap();
 
 function slug(value, fallback) {
   const normalized = String(value || "")
@@ -38,7 +42,8 @@ function matches(data, filter = {}) {
 
 class Document {
   constructor(Model, ref, data) {
-    Object.assign(this, data, { _Model: Model, _ref: ref, _id: ref.id });
+    Object.assign(this, cloneDocumentData(data), { _Model: Model, _ref: ref, id: ref.path, _id: ref.path });
+    originals.set(this, cloneDocumentData(this.toObject()));
   }
 
   toObject() {
@@ -47,9 +52,12 @@ class Document {
   }
 
   async save() {
-    const { _id, ...data } = this.toObject();
-    await this._ref.set(data, { merge: true });
-    this._Model._invalidateCache();
+    if (isDeepStrictEqual(this.toObject(), originals.get(this))) return this;
+    const { _id, ...data } = normalizeLeadData(this.toObject());
+    Object.assign(this, data);
+    await this._ref.set(data);
+    originals.set(this, cloneDocumentData(this.toObject()));
+    this._Model._cacheDocument(this._ref, data);
     return this;
   }
 }
@@ -90,40 +98,59 @@ function dateId(date = new Date()) {
   return `${day}-${month}-${date.getFullYear()}`;
 }
 
+function normalizeLeadData(data = {}) {
+  const normalized = { ...data };
+  normalized.listType = typeSlug(normalized.listType || normalized.type);
+  normalized.phone = normalized.phone || normalized.contact || "";
+  normalized.interest = normalized.interest || normalized.program || "";
+  normalized.notes = normalized.notes || normalized.remark || "";
+  normalized.source = normalized.source || normalized.leadSource || "";
+  normalized.createdAt = normalized.createdAt || normalized.createdDate || new Date().toISOString();
+
+  delete normalized._id;
+  delete normalized.contact;
+  delete normalized.program;
+  delete normalized.remark;
+  delete normalized.leadSource;
+  delete normalized.createdDate;
+  delete normalized.type;
+  return normalized;
+}
+
 export function createLeadModel() {
   const cacheTtlMs = 5 * 60 * 1000;
-  let cachedDocuments = null;
-  let cachedAt = 0;
-  let cachePromise = null;
+  const cache = createDocumentCache(cacheTtlMs);
   const Model = {
     modelName: "Lead",
     async _getCachedDocuments() {
-      if (!cachedDocuments || Date.now() - cachedAt >= cacheTtlMs) {
-        if (!cachePromise) {
-          cachePromise = getFirestore().collection("leads").listDocuments().then(async (rootDocuments) => {
+      const rows = await cache.get(async () => {
+            const rootDocuments = await getFirestore().collection("leads").listDocuments();
             const collectionPromises = (await Promise.all(rootDocuments.map((typeRef) =>
               typeRef.listCollections().then((collections) => collections.map((collection) => collection.get()))
             ))).flat();
             const nestedSnapshots = await Promise.all(collectionPromises);
-            cachedDocuments = nestedSnapshots
+            return nestedSnapshots
               .flatMap((snapshot) => snapshot.docs)
-              .map((doc) => new Document(Model, doc.ref, doc.data()));
-            cachedAt = Date.now();
-            return cachedDocuments;
-          }).finally(() => { cachePromise = null; });
-        }
-        await cachePromise;
-      }
-      return cachedDocuments;
+              .map((doc) => ({
+                ref: doc.ref,
+                data: {
+                  ...doc.data(),
+                  listType: doc.data()?.listType || doc.ref.path.split("/")[1] || "",
+                },
+              }));
+      });
+      return rows.map(({ ref, data }) => new Document(Model, ref, data));
     },
-    _invalidateCache() { cachedDocuments = null; cachedAt = 0; cachePromise = null; },
+    _invalidateCache() { cache.clear(); },
+    _cacheDocument(ref, data) { cache.put({ ref, data: cloneDocumentData(data) }); },
     find(filter = {}) { return new Query(Model, filter); },
     async findOne(filter = {}) { return (await Model.find(filter).limit(1))[0] || null; },
     findById(id) { return new Query(Model, { _id: String(id) }).limit(1); },
 
     async create(data) {
       const type = typeSlug(data.type);
-      const interest = interestId(data.interest);
+      const payload = normalizeLeadData({ ...data, listType: type });
+      const interest = interestId(payload.interest);
       const parent = getFirestore()
         .collection("leads")
         .doc(type)
@@ -142,17 +169,12 @@ export function createLeadModel() {
         }
 
         const ref = parent.doc(documentId);
-        const payload = {
-          ...data,
-          id: documentId,
-          type: data.type,
-          interest: data.interest,
-        };
-        transaction.create(ref, payload);
-        createdDocument = new Document(Model, ref, payload);
+        const documentData = { ...payload, id: documentId };
+        transaction.create(ref, documentData);
+        createdDocument = new Document(Model, ref, documentData);
       });
 
-      Model._invalidateCache();
+      Model._cacheDocument(createdDocument._ref, createdDocument.toObject());
       return createdDocument;
     },
 
@@ -162,12 +184,12 @@ export function createLeadModel() {
       const item = await Model.findOne(filter);
       if (!item && !options.upsert) return null;
       if (!item) return Model.create(values);
-      Object.assign(item, values);
+      Object.assign(item, values, { id: item._ref.path, _id: item._ref.path });
       return item.save();
     },
     async findOneAndDelete(filter) {
       const item = await Model.findOne(filter);
-      if (item) { await item._ref.delete(); Model._invalidateCache(); }
+      if (item) { await item._ref.delete(); cache.remove(item._ref.path); }
       return item;
     },
   };

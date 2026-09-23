@@ -1,4 +1,8 @@
 import { getFirestore } from "firebase-admin/firestore";
+import { isDeepStrictEqual } from "node:util";
+import { createDocumentCache, cloneDocumentData } from "./documentCache.js";
+
+const originals = new WeakMap();
 
 function matchesValue(value, expected) {
   if (expected && typeof expected === "object" && !Array.isArray(expected)) {
@@ -16,9 +20,17 @@ function matches(data, filter = {}) {
 }
 
 class Document {
-  constructor(Model, ref, data) { Object.assign(this, data, { _Model: Model, _ref: ref, _id: ref.id }); }
+  constructor(Model, ref, data) { Object.assign(this, cloneDocumentData(data), { _Model: Model, _ref: ref, _id: ref.id }); originals.set(this, cloneDocumentData(this.toObject())); }
   toObject() { const { _Model, _ref, ...data } = this; return data; }
-  async save() { const { _id, ...data } = this.toObject(); await this._ref.set(data, { merge: true }); this._Model._invalidateCache(); return this; }
+  async save() {
+    const snapshot = this.toObject();
+    if (isDeepStrictEqual(snapshot, originals.get(this))) return this;
+    const { _id, ...data } = snapshot;
+    await this._ref.set(data, { merge: true });
+    originals.set(this, cloneDocumentData(snapshot));
+    this._Model._cacheDocument(this._ref, data);
+    return this;
+  }
 }
 
 class Query {
@@ -40,29 +52,22 @@ class Query {
 }
 
 export function createCollectionModel(collectionName, modelName) {
-  // All writes through this model invalidate the cache, so a longer TTL cuts
-  // repeated full-collection reads without making normal CRUD stale.
+  // Successful writes update cached snapshots; keep the original expiry so
+  // changes made outside this process are still picked up on schedule.
   const cacheTtlMs = 2 * 60 * 1000;
-  let cachedDocuments = null;
-  let cachedAt = 0;
-  let cachePromise = null;
+  const cache = createDocumentCache(cacheTtlMs);
   const Model = {
     modelName,
     get collection() { return getFirestore().collection(collectionName); },
     async _getCachedDocuments() {
-      if (!cachedDocuments || Date.now() - cachedAt >= cacheTtlMs) {
-        if (!cachePromise) {
-          cachePromise = Model.collection.get().then((snapshot) => {
-            cachedDocuments = snapshot.docs.map((doc) => new Document(Model, doc.ref, doc.data()));
-            cachedAt = Date.now();
-            return cachedDocuments;
-          }).finally(() => { cachePromise = null; });
-        }
-        await cachePromise;
-      }
-      return cachedDocuments;
+      const rows = await cache.get(async () => {
+        const snapshot = await Model.collection.get();
+        return snapshot.docs.map((doc) => ({ ref: doc.ref, data: doc.data() }));
+      });
+      return rows.map(({ ref, data }) => new Document(Model, ref, data));
     },
-    _invalidateCache() { cachedDocuments = null; cachedAt = 0; cachePromise = null; },
+    _invalidateCache() { cache.clear(); },
+    _cacheDocument(ref, data) { cache.put({ ref, data: cloneDocumentData(data) }); },
     find(filter = {}) { return new Query(Model, filter); },
     async findOne(filter = {}) {
       const entries = Object.entries(filter);
@@ -85,7 +90,7 @@ export function createCollectionModel(collectionName, modelName) {
       const docId = data.id ? String(data.id) : undefined;
       const ref = docId ? Model.collection.doc(docId) : Model.collection.doc();
       await ref.set({ ...data });
-      Model._invalidateCache();
+      Model._cacheDocument(ref, data);
       return new Document(Model, ref, data);
     },
 
@@ -97,7 +102,7 @@ export function createCollectionModel(collectionName, modelName) {
       if (!item) return Model.create(values);
       Object.assign(item, values); await item.save(); return item;
     },
-    async findOneAndDelete(filter) { const item = await Model.findOne(filter); if (item) { await item._ref.delete(); Model._invalidateCache(); } return item; },
+    async findOneAndDelete(filter) { const item = await Model.findOne(filter); if (item) { await item._ref.delete(); cache.remove(item._ref.path); } return item; },
     async updateMany(filter, update) {
       const items = await Model.find(filter); const values = update.$set || update;
       await Promise.all(items.map(async (item) => { Object.assign(item, values); await item.save(); }));

@@ -1,15 +1,9 @@
 const FIELD_ALIASES = {
   name: ["name", "student name", "candidate name", "applicant name", "full name"],
   phone: ["phone", "mobile", "mobile number", "contact", "whatsapp number", "whatsapp", "phone number"],
-  email: ["email", "email address", "candidate email"],
-  city: ["city", "city name", "district"],
-  state: ["state", "state name"],
-  qualification: ["qualification", "education", "highest qualification"],
-  college: ["college", "college institute", "institute", "college name"],
   courseInterest: ["course interest", "course", "preferred course", "training interest"],
   programInterest: ["program interest", "program", "interest", "service interest", "training program"],
   source: ["source", "lead source", "campaign source", "reference"],
-  date: ["date", "created date", "entry date"],
 };
 
 function normalizeKey(value) {
@@ -31,8 +25,9 @@ function pickValue(record, values = []) {
 }
 
 function cleanPhone(value) {
-  const digits = String(value ?? "").replace(/\D/g, "");
-  return digits.length >= 10 ? digits.slice(-10) : digits;
+  let digits = String(value ?? "").replace(/\D/g, "");
+  if (digits.length === 12 && digits.startsWith("91")) digits = digits.slice(2);
+  return /^[6-9]\d{9}$/.test(digits) ? digits : "";
 }
 
 function normalizeText(value) {
@@ -58,34 +53,21 @@ export function normalizeCallingRecord(rawRecord = {}, mapping = {}) {
 
   const name = normalizeText(mappedFields.name ? rawRecord[mappedFields.name] : pickValue(rawRecord, FIELD_ALIASES.name));
   const phone = cleanPhone(mappedFields.phone ? rawRecord[mappedFields.phone] : pickValue(rawRecord, FIELD_ALIASES.phone));
-  const email = normalizeText(mappedFields.email ? rawRecord[mappedFields.email] : pickValue(rawRecord, FIELD_ALIASES.email)).toLowerCase();
-  const city = normalizeText(mappedFields.city ? rawRecord[mappedFields.city] : pickValue(rawRecord, FIELD_ALIASES.city));
-  const state = normalizeText(mappedFields.state ? rawRecord[mappedFields.state] : pickValue(rawRecord, FIELD_ALIASES.state));
-  const qualification = normalizeText(mappedFields.qualification ? rawRecord[mappedFields.qualification] : pickValue(rawRecord, FIELD_ALIASES.qualification));
-  const college = normalizeText(mappedFields.college ? rawRecord[mappedFields.college] : pickValue(rawRecord, FIELD_ALIASES.college));
   const courseInterest = normalizeText(mappedFields.courseInterest ? rawRecord[mappedFields.courseInterest] : pickValue(rawRecord, FIELD_ALIASES.courseInterest));
   const programInterest = normalizeText(mappedFields.programInterest ? rawRecord[mappedFields.programInterest] : pickValue(rawRecord, FIELD_ALIASES.programInterest));
   const source = normalizeText(mappedFields.source ? rawRecord[mappedFields.source] : pickValue(rawRecord, FIELD_ALIASES.source)) || "Website";
-  const date = normalizeText(mappedFields.date ? rawRecord[mappedFields.date] : pickValue(rawRecord, FIELD_ALIASES.date));
 
   return {
     name: name || "Unknown Candidate",
     phone,
-    email,
-    city,
-    state,
-    qualification,
-    college,
     courseInterest,
     programInterest,
     source,
-    date,
     callStatus: "Pending",
     interestStatus: "Not Contacted",
     programType: programInterest || "Training",
     internshipInterest: "Need Details",
     active: true,
-    snoozed: false,
     assignedTo: "",
     followUpDate: "",
     followUpTime: "",

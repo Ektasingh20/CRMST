@@ -1,5 +1,13 @@
+import CallLeadsPanel from "./CallLeadsPanel.jsx";
+import RemarkField from "./RemarkField.jsx";
+import { callLeadForm, isCallLead } from "./callLeads.js";
+import { subscribeCallListChanges } from "./backendApi.js";
+import { mergeCallListRows } from "./callListConfig.js";
+import { TRAINING_CALL_LIST_PROGRAMS, SERVICE_CALL_LIST_SERVICES, CALL_STATUS_OPTIONS, CALL_LIST_INTEREST_STATUS_OPTIONS, normalizeCallStatus, normalizeInterestStatus, normalizeCallProgram, callListPrograms, matchesCallListFilters } from "./callListConfig.js";
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
+import { jsPDF } from "jspdf";
+import autoTable from "jspdf-autotable";
 import {
   Activity,
   ArrowRight,
@@ -81,6 +89,7 @@ import {
   authLogin,
   authSignup,
   loadUsers,
+  loadAssignableUsers,
   loadLeads,
   loadServices,
   saveServicesToBackend,
@@ -104,15 +113,18 @@ import {
   loadStipPrograms,
   loadStipApplications,
   loadTasks,
+  createTask,
   saveTasksToBackend,
   loadLeaves,
   saveLeavesToBackend,
+  updateLeave,
   loadAttendance,
   saveAttendanceToBackend,
   loadEmployees,
   saveEmployeesToBackend,
   createUser,
   updateUser,
+  changePassword,
   deleteUser,
   createLead as createLeadApi,
   updateLead,
@@ -138,6 +150,10 @@ import {
   invalidateCoursesCache,
   getCurrentUser,
   logoutUser,
+  loadCallListData,
+  uploadCallListData,
+  saveCallListData,
+  removeCallListData,
 } from "./backendClient";
 import ErrorBoundary from "./ErrorBoundary";
 import StudentDashboard from "./src/student-dashboard/StudentDashboard";
@@ -156,7 +172,7 @@ const STUDENT_DASHBOARD_URL = "http://localhost:5175";
 
 const USERS_STORAGE_KEY = "crmst-users.txt";
 const LEADS_STORAGE_KEY = "crmst-leads.txt";
-const LEADS_CACHE_VERSION = 2;
+const LEADS_CACHE_VERSION = 3;
 const SESSION_STORAGE_KEY = "crmst-current-user";
 const SAVED_LOGIN_STORAGE_KEY = "crmst-saved-login";
 const SERVICES_STORAGE_KEY = "crmst-services.txt";
@@ -190,6 +206,18 @@ function isAdminUser(user) {
   return ["admin", "administrator", "super admin", "superadmin"].includes(role)
     || department === "admin"
     || username === "admin";
+}
+
+function isLeadAssignmentUser(user) {
+  const role = String(user?.role || "").trim().toLowerCase();
+  const department = String(user?.dept || user?.department || "").trim().toLowerCase();
+  const position = String(user?.position || "").trim().toLowerCase();
+  const status = String(user?.status || "Active").trim().toLowerCase();
+  return status !== "inactive" && (
+    role.includes("admin") || role.startsWith("operation")
+    || department.includes("admin") || department.startsWith("operation")
+    || position.includes("admin") || position.startsWith("operation")
+  );
 }
 
 function getStudentCacheUserKey(user) {
@@ -419,43 +447,9 @@ const sidebarSections = [
   },
 ];
 
-const trainingCatalog = [
-  "Front End Development Foundation",
-  "Back End Development",
-  "Full Stack Development",
-  "Video Editing",
-  "AutoCAD (2D & 3D)",
-  "Wordpress Web Design",
-  "Android App Development",
-  "VFX & ANIMATION",
-  "Graphics & Visual Designing",
-  "Adobe Photoshop",
-  "CorelDraw",
-  "Digital marketing",
-  "Adobe Illustrator",
-  "3D INTERIOR EXTERIOR DESIGN",
-];
+const trainingCatalog = TRAINING_CALL_LIST_PROGRAMS;
 
-const serviceCatalog = [
-  "Website Development",
-  "Android & iOS App Development",
-  "Graphic Designing",
-  "Branding & Brand Promotion",
-  "Digital Marketing",
-  "VFX & Animation",
-  "CRM Solutions",
-  "Cloud Solutions",
-  "Marketing Tools & Automation",
-  "Content Creation & Copywriting",
-  "UI/UX Design",
-  "Social Media Management",
-  "E-commerce Development & Management",
-  "Performance Marketing",
-  "Influencer Marketing",
-  "Photography & Videography",
-  "Public Relations (PR)",
-  "Bulk Marketing (Highlighted Service)",
-];
+const serviceCatalog = SERVICE_CALL_LIST_SERVICES;
 
 const internshipTracks = ["Front End (React.js)", "Back End (Node.js)", "Full Stack"];
 
@@ -543,7 +537,7 @@ const initialLeads = [
     status: "Pending",
     source: "WhatsApp",
     leadSource: "WhatsApp",
-    assignedTo: "1",
+    assignedTo: "",
     assignedDate: "",
     notes: "",
     createdAt: "2026-07-10",
@@ -1112,7 +1106,7 @@ function readLeadsFromStorage(user) {
   try {
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) {
-      return { items: sanitizeImageCollection(parsed), hasCache: parsed.length > 0 };
+      return { items: [], hasCache: false };
     }
     if (
       parsed?.version === LEADS_CACHE_VERSION
@@ -1240,14 +1234,7 @@ function App() {
   const [folderUploadState, setFolderUploadState] = useState(null);
   const [openSectionIds, setOpenSectionIds] = useState([]);
   const [focusedLessonId, setFocusedLessonId] = useState("");
-  const [crmUploadRows, setCrmUploadRows] = useState(() => {
-    try {
-      const saved = window.localStorage.getItem("admin-crm-upload-rows");
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
+  const [crmUploadRows, setCrmUploadRows] = useState([]);
 
   const [settingsForm, setSettingsForm] = useState({ name: "", email: "", phone: "", emergencyContact: "", maritalStatus: "", education: "", dept: "", position: "", role: "", joined: "", state: "", branch: "", branchCode: "", address: "", username: "", imageUrl: "", imagePublicId: "" });
   const [passwordForm, setPasswordForm] = useState({ current: "", new: "", confirm: "" });
@@ -1265,15 +1252,20 @@ function App() {
   const [usernameError, setUsernameError] = useState("");
 
   const [users, setUsers] = useState(initialUsers);
+  const [leadAssignmentUsers, setLeadAssignmentUsers] = useState([]);
   const [leads, setLeads] = useState(initialLeads);
   const [leadsLoadedFromBackend, setLeadsLoadedFromBackend] = useState(false);
   const leadRecoveryAttempted = useRef(false);
+  const adminAllLeadsLoadedForUser = useRef("");
+  const staleCallLeadCleanup = useRef(new Set());
   const leadsCacheHydrated = useRef(false);
   const leadCacheUserKey = useRef("");
   const isHydratingInitialData = useRef(true);
   const [crmReports] = useState(initialCrmReports);
-  const [tasks] = useState(initialTasks);
-  const [leaves] = useState(initialLeaves);
+  const [tasks, setTasks] = useState(initialTasks);
+  const [attendance, setAttendance] = useState([]);
+  const [adminTaskForm, setAdminTaskForm] = useState({ title: "", description: "", assigneeId: "", priority: "Medium", dueDate: new Date().toISOString().slice(0, 10) });
+  const [leaves, setLeaves] = useState([]);
   const [interns, setInterns] = useState(initialInterns);
   const [logs] = useState(initialLogs);
   const [serviceRows, setServiceRows] = useState(initialServiceRows);
@@ -1353,55 +1345,48 @@ function App() {
   });
   const [editingLeadId, setEditingLeadId] = useState(null);
   const [editingLeadReturnPage, setEditingLeadReturnPage] = useState("sales-approved");
+  const [leadCreationSource, setLeadCreationSource] = useState(null);
 
   useEffect(() => {
-    const applyExecutiveLeads = (items) => {
-      if (!Array.isArray(items)) return;
-      setLeads((current) => [
-        ...current.filter((lead) => !lead.crmExecSource && !lead.sourceContactId),
-        ...items.map((lead) => ({ ...lead, crmExecSource: true })),
-      ]);
-    };
-    const readExecutiveLeads = () => {
-      try {
-        const saved = window.localStorage.getItem(CRM_EXEC_LEADS_STORAGE_KEY);
-        applyExecutiveLeads(saved ? JSON.parse(saved) : []);
-      } catch {
-        /* Ignore malformed browser-only CRM executive data. */
-      }
-    };
-    const handleExecutiveLeads = (event) => applyExecutiveLeads(event.detail);
-    readExecutiveLeads();
-    window.addEventListener("crmExecLeadsChanged", handleExecutiveLeads);
-    window.addEventListener("storage", readExecutiveLeads);
-    return () => {
-      window.removeEventListener("crmExecLeadsChanged", handleExecutiveLeads);
-      window.removeEventListener("storage", readExecutiveLeads);
-    };
+    try { window.localStorage.removeItem("admin-crm-upload-rows"); }
+    catch { /* Ignore unavailable browser storage. */ }
   }, []);
 
   useEffect(() => {
-    if (!currentUser) return;
-    try {
-      const saved = window.localStorage.getItem(CRM_EXEC_LEADS_STORAGE_KEY);
-      const executiveLeads = saved ? JSON.parse(saved) : [];
-      if (!Array.isArray(executiveLeads)) return;
-      setLeads((current) => [
-        ...current.filter((lead) => !lead.crmExecSource && !lead.sourceContactId),
-        ...executiveLeads.map((lead) => ({ ...lead, crmExecSource: true })),
-      ]);
-    } catch {
-      /* Ignore malformed browser-only CRM executive data. */
-    }
-  }, [currentUser, leadsLoadedFromBackend]);
+    if (!currentUser || !(isLeadAssignmentUser(currentUser) || isCrmExecutive(currentUser.role))) return;
+    let cancelled = false;
+    const refreshCallLists = () => loadCallListData().then((records) => {
+      if (!cancelled && Array.isArray(records)) {
+        setCrmUploadRows(mergeCallListRows(records));
+
+      }
+    }).catch(() => { /* Preserve the last snapshot during a temporary connection failure. */ });
+    let streamConnected = false;
+    const unsubscribe = subscribeCallListChanges(({ record, deleted }) => {
+      if (cancelled) return;
+      setCrmUploadRows((current) => {
+        const remaining = current.filter((row) => !(row.id === record.id && row.listType === record.listType));
+        return deleted ? mergeCallListRows(remaining) : mergeCallListRows([record], remaining);
+      });
+    }, () => {
+      if (streamConnected) refreshCallLists();
+      streamConnected = true;
+    });
+    refreshCallLists();
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [currentUser]);
 
   useEffect(() => {
-    try {
-      window.localStorage.setItem("admin-crm-upload-rows", JSON.stringify(crmUploadRows));
-    } catch {
-      /* Ignore unavailable browser storage. */
-    }
-  }, [crmUploadRows]);
+    if (!currentUser || !isCrmExecutive(currentUser.role)) return;
+    let active = true;
+    loadAssignableUsers().then((assignees) => {
+      if (active && Array.isArray(assignees)) setLeadAssignmentUsers(assignees);
+    }).catch(() => { /* Keep the last available assignment roster. */ });
+    return () => { active = false; };
+  }, [currentUser]);
 
   useEffect(() => {
     // load local fallback immediately
@@ -1463,8 +1448,8 @@ function App() {
           return;
         }
         if (isCrmExecutive(session.role)) {
-          if (savedLeadCache.hasCache) return;
-          const remoteLeads = await loadLeads();
+          const [remoteLeads, remoteAssignees] = await Promise.all([loadLeads(), loadAssignableUsers()]);
+          if (Array.isArray(remoteAssignees)) setLeadAssignmentUsers(remoteAssignees);
           if (Array.isArray(remoteLeads)) {
             setLeads(remoteLeads.map(normalizeLeadForUi));
             leadsCacheHydrated.current = true;
@@ -1472,15 +1457,25 @@ function App() {
           }
           return;
         }
-        const [remoteUsers, remoteLeads, remoteServices, remoteCourses, remoteStip, remoteInterns] = await Promise.all([
+        const [remoteUsers, remoteLeads, remoteServices, remoteCourses, remoteStip, remoteInterns, remoteTasks, remoteAttendance, remoteLeaves] = await Promise.all([
           loadUsers(),
-          savedLeadCache.hasCache ? Promise.resolve(null) : loadLeads(),
+          loadLeads(true),
           loadServices(),
           loadCourses(),
           loadStipPrograms(),
           loadStipApplications(),
+          loadTasks(),
+          loadAttendance(),
+          loadLeaves(),
         ]);
-        if (remoteUsers.length) setUsers(remoteUsers);
+        if (Array.isArray(remoteTasks)) setTasks(remoteTasks);
+        if (Array.isArray(remoteAttendance)) setAttendance(remoteAttendance);
+        if (Array.isArray(remoteLeaves)) setLeaves(remoteLeaves);
+        if (remoteUsers.length) {
+          setUsers(remoteUsers);
+          const savedProfile = remoteUsers.find((user) => String(user._id || user.id) === String(session._id || session.id));
+          if (savedProfile) setCurrentUser(savedProfile);
+        }
         if (Array.isArray(remoteLeads)) {
           setLeads(remoteLeads.map(normalizeLeadForUi));
           leadsCacheHydrated.current = true;
@@ -1544,8 +1539,7 @@ function App() {
   }, [currentUser]);
 
   useEffect(() => {
-    const role = String(currentUser?.role || "").trim().toLowerCase();
-    if (!currentUser || role === "student") {
+    if (!isAdminUser(currentUser)) {
       setAllEnrollmentRequests([]);
       return undefined;
     }
@@ -1567,8 +1561,7 @@ function App() {
   }, [currentUser]);
 
   useEffect(() => {
-    const role = String(currentUser?.role || "").trim().toLowerCase();
-    if (!currentUser || role === "student" || activePage !== "enrollment-requests") return undefined;
+    if (!isAdminUser(currentUser) || activePage !== "enrollment-requests") return undefined;
 
     let active = true;
     const applyIncomingRequest = (request) => {
@@ -1590,14 +1583,14 @@ function App() {
     const syncEnrollmentRequests = async () => {
       if (document.visibilityState !== "visible") return;
       try {
-        const result = await loadPendingEnrollmentRequests(true);
+        const result = await loadPendingEnrollmentRequests();
         if (active && Array.isArray(result)) setAllEnrollmentRequests(result);
       } catch (err) {
         if (active && err?.status !== 401) console.warn("Enrollment request sync failed", err);
       }
     };
 
-    const interval = window.setInterval(syncEnrollmentRequests, 60000);
+    const interval = window.setInterval(syncEnrollmentRequests, 5 * 60 * 1000);
     document.addEventListener("visibilitychange", syncEnrollmentRequests);
     return () => {
       active = false;
@@ -1878,6 +1871,9 @@ function App() {
   // lesson or uploads a new video. This runs only for a visible browser tab.
   useEffect(() => {
     if (!currentUser) return undefined;
+    const coursePage = ["course-view", "course-add", "course-check", "dashboard"].includes(activePage)
+      || String(currentUser.role || "").toLowerCase() === "student";
+    if (!coursePage) return undefined;
     let active = true;
     const refreshCourses = async () => {
       if (document.visibilityState !== "visible") return;
@@ -1892,14 +1888,14 @@ function App() {
         console.warn("Course refresh failed", error);
       }
     };
-    const interval = window.setInterval(refreshCourses, 60000);
+    const interval = window.setInterval(refreshCourses, 5 * 60 * 1000);
     document.addEventListener("visibilitychange", refreshCourses);
     return () => {
       active = false;
       window.clearInterval(interval);
       document.removeEventListener("visibilitychange", refreshCourses);
     };
-  }, [currentUser]);
+  }, [currentUser, activePage]);
 
   const navResults = useMemo(() => {
     if (!deferredQuery.trim()) return sidebarSections;
@@ -1961,7 +1957,8 @@ function App() {
     return users.filter((user) => !isAdminUser(user));
   }, [users]);
 
-  const activeUsers = users.filter((user) => user.status === "Active");
+  const activeUsers = users.filter((user) => String(user?.status || "Active").trim().toLowerCase() !== "inactive");
+  const leadAssignableUsers = activeUsers.filter(isLeadAssignmentUser);
   const enteredBy = currentUser
     ? `${currentUser.name || currentUser.username || "User"} (${currentUser.position || currentUser.role || "User"})`
     : "";
@@ -2027,6 +2024,24 @@ function App() {
       setLeadsLoadedFromBackend(true);
     });
   }, [activePage, leadsLoadedFromBackend, wonLeads.length]);
+
+  useEffect(() => {
+    if (activePage !== "crm" || !isAdminUser(currentUser)) return undefined;
+    const userKey = String(currentUser?.id || currentUser?._id || currentUser?.username || "");
+    if (!userKey || adminAllLeadsLoadedForUser.current === userKey) return undefined;
+
+    adminAllLeadsLoadedForUser.current = userKey;
+    let active = true;
+    loadLeads(true).then((remoteLeads) => {
+      if (!active || !Array.isArray(remoteLeads)) return;
+      setLeads(remoteLeads.map(normalizeLeadForUi));
+      leadsCacheHydrated.current = true;
+      setLeadsLoadedFromBackend(true);
+    }).catch(() => {
+      adminAllLeadsLoadedForUser.current = "";
+    });
+    return () => { active = false; };
+  }, [activePage, currentUser]);
 
   useEffect(() => {
     if (contentRef.current) {
@@ -2178,7 +2193,7 @@ function App() {
       });
       setAvatarPreview(currentUser.imageUrl || "");
     }
-  }, [currentUser?._id]);
+  }, [currentUser]);
 
   async function handleSaveProfile() {
     if (!currentUser) return;
@@ -2231,7 +2246,7 @@ function App() {
 
     try {
       setSettingsSaving(true);
-      const { password: _password, ...updatedUser } = { ...currentUser, name, email, phone, emergencyContact, maritalStatus, education, dept, position, role, joined, state, branch, branchCode, address, username };
+      const updatedUser = { name, email, phone, emergencyContact, maritalStatus, education, dept, position, role, joined, state, branch, branchCode, address, username };
 
       if (avatarFile) {
         const compressed = await compressImageFile(avatarFile);
@@ -2243,16 +2258,10 @@ function App() {
         updatedUser.imagePublicId = settingsForm.imagePublicId;
       }
 
-      const allUsers = await loadUsers();
-      const duplicate = allUsers.find((u) => u._id !== currentUser._id && u.username.toLowerCase() === username.toLowerCase());
-      if (duplicate) {
-        setUsernameError("Username already exists");
-        setSettingsSaving(false);
-        return;
-      }
-
-      await updateUser(currentUser._id, updatedUser);
-      setCurrentUser(updatedUser);
+      const userId = currentUser._id || currentUser.id;
+      const savedUser = await updateUser(userId, updatedUser);
+      setCurrentUser(savedUser);
+      setUsers((items) => items.map((user) => String(user._id || user.id) === String(userId) ? savedUser : user));
       setAvatarFile(null);
       setSettingsMessage("Profile updated successfully.");
       setSettingsMessageType("success");
@@ -2290,7 +2299,7 @@ function App() {
 
     try {
       setPasswordSaving(true);
-      const result = await changePassword(currentUser._id, current, newPass);
+      const result = await changePassword(currentUser._id || currentUser.id, current, newPass);
       setPasswordMessage(result.message || "Password changed successfully.");
       setPasswordMessageType("success");
       setPasswordForm({ current: "", new: "", confirm: "" });
@@ -2306,6 +2315,13 @@ function App() {
     const file = event.target.files?.[0];
     if (!file) return;
     event.target.value = "";
+
+    if (!file.type.startsWith("image/")) {
+      setSettingsMessage("Please choose an image file.");
+      setSettingsMessageType("error");
+      return;
+    }
+    setSettingsMessage("");
 
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -3356,11 +3372,37 @@ function App() {
   async function updateCrmLead(lead) {
     const savedLead = await updateLead(lead.id, lead);
     setLeads((current) => current.map((item) => String(item.id) === String(lead.id) ? normalizeLeadForUi(savedLead) : item));
+    return normalizeLeadForUi(savedLead);
   }
 
   async function createCrmLead(lead) {
     const savedLead = await createLeadApi(lead);
     setLeads((current) => [normalizeLeadForUi(savedLead), ...current]);
+    return savedLead;
+  }
+
+  async function assignTaskToCrmExecutive(event) {
+    event.preventDefault();
+    if (!adminTaskForm.title.trim() || !adminTaskForm.assigneeId) {
+      notify("Enter a task title and select a CRM Executive.");
+      return;
+    }
+    try {
+      const saved = await createTask({ ...adminTaskForm, id: `task-${Date.now()}` });
+      setTasks((current) => [saved, ...current]);
+      setAdminTaskForm({ title: "", description: "", assigneeId: "", priority: "Medium", dueDate: new Date().toISOString().slice(0, 10) });
+      notify("Task assigned and saved to the backend.");
+    } catch (error) { notify(error.message || "Could not assign task."); }
+  }
+
+  async function updateLeaveRequestStatus(leave, status) {
+    try {
+      const saved = await updateLeave(leave.id, { status });
+      setLeaves((current) => current.map((item) => item.id === saved.id ? saved : item));
+      notify(`Leave request ${status.toLowerCase()}.`);
+    } catch (error) {
+      notify(error.message || "Could not update leave request.");
+    }
   }
 
  async function addMember(event) {
@@ -3559,6 +3601,9 @@ function App() {
           createdAt: new Date().toISOString().slice(0, 10),
         });
         setLeads((current) => [normalizeLeadForUi(savedLead), ...current]);
+        if (leadCreationSource) {
+          await saveCallContact(leadCreationSource, { leadCreated: true, createdLeadId: savedLead.id, createdLeadDate: savedLead.createdAt, callLeadStatus: "Approved" });
+        }
       }
     } catch (err) {
       notify(err.message || (editingLeadId ? "Lead could not be updated." : "Lead could not be saved."));
@@ -3567,6 +3612,7 @@ function App() {
     const wasEditing = Boolean(editingLeadId);
     const returnPage = editingLeadReturnPage;
     setEditingLeadId(null);
+    setLeadCreationSource(null);
     setCreateLead({
       name: "",
       phone: "",
@@ -3581,12 +3627,87 @@ function App() {
       source: "Website",
       leadSource: "Website",
       enteredBy,
-      assignedTo: String(activeUsers[0]?.id ?? 1),
+      assignedTo: String(leadAssignableUsers[0]?.id || leadAssignableUsers[0]?._id || ""),
       assignedDate: new Date().toISOString().slice(0, 10),
       notes: "",
     });
     notify(wasEditing ? "Lead updated in the backend." : "Lead saved to the pipeline.");
-    setActivePage(wasEditing ? returnPage : "co-leads");
+    setActivePage(wasEditing ? returnPage : "crm");
+  }
+
+  async function saveCallContact(contact, patch) {
+    let nextPatch = patch;
+    const nextContact = { ...contact, ...patch };
+    const approvalCancelled = ["Pending", "Rejected"].includes(patch.callLeadStatus);
+    const noLongerQualifies = !isCallLead(nextContact);
+    const qualifiesAgain = !isCallLead(contact) && isCallLead(nextContact);
+    const contactPhone = String(contact.contact || contact.phone || "").replace(/\D/g, "").slice(-10);
+    const linkedCreatedLeadIds = [...new Set([
+      contact.createdLeadId,
+      ...leads.filter((lead) => {
+        const leadPhone = String(lead.phone || lead.contact || "").replace(/\D/g, "").slice(-10);
+        const leadSource = String(lead.source || lead.leadSource || "").trim().toLowerCase();
+        return contactPhone && leadPhone === contactPhone && leadSource === "phone call";
+      }).map((lead) => lead.id),
+    ].filter(Boolean).map(String))];
+    const resetCreatedLead = (approvalCancelled || noLongerQualifies || qualifiesAgain)
+      && Boolean(contact.leadCreated || contact.createdLeadId || contact.callLeadStatus === "Approved" || linkedCreatedLeadIds.length);
+    if (resetCreatedLead) {
+      for (const leadId of linkedCreatedLeadIds) {
+        await deleteLead(leadId);
+      }
+      const removedLeadIds = new Set(linkedCreatedLeadIds);
+      setLeads((current) => current.filter((lead) => !removedLeadIds.has(String(lead.id))));
+      nextPatch = {
+        ...patch,
+        leadCreated: false,
+        createdLeadId: "",
+        createdLeadDate: "",
+        callLeadStatus: approvalCancelled ? patch.callLeadStatus : "Pending",
+      };
+    }
+    const saved = await saveCallListData(contact.listType, contact.id, nextPatch, contact.assignedTo);
+    setCrmUploadRows((current) => current.map((row) => row.id === saved.id && row.listType === saved.listType ? saved : row));
+    return saved;
+  }
+
+  useEffect(() => {
+    if (!isAdminUser(currentUser)) return;
+    crmUploadRows.forEach((contact) => {
+      const key = `${contact.listType || "list"}:${contact.id}`;
+      if (isCallLead(contact)) {
+        staleCallLeadCleanup.current.delete(key);
+        return;
+      }
+      const contactPhone = String(contact.contact || contact.phone || "").replace(/\D/g, "").slice(-10);
+      const hasCreatedLead = Boolean(contact.leadCreated || contact.createdLeadId || contact.callLeadStatus === "Approved")
+        || leads.some((lead) => {
+          const leadPhone = String(lead.phone || lead.contact || "").replace(/\D/g, "").slice(-10);
+          const leadSource = String(lead.source || lead.leadSource || "").trim().toLowerCase();
+          return contactPhone && leadPhone === contactPhone && leadSource === "phone call";
+        });
+      if (!hasCreatedLead) {
+        staleCallLeadCleanup.current.delete(key);
+        return;
+      }
+      if (staleCallLeadCleanup.current.has(key)) return;
+      staleCallLeadCleanup.current.add(key);
+      saveCallContact(contact, { callLeadStatus: "Pending" })
+        .catch(() => staleCallLeadCleanup.current.delete(key));
+    });
+  }, [crmUploadRows, leads, currentUser]);
+
+  async function deleteCallContact(contact) {
+    await removeCallListData(contact.listType, contact.id, contact.assignedTo);
+    setCrmUploadRows((current) => current.filter((row) => !(row.id === contact.id && row.listType === contact.listType)));
+  }
+
+  function addLeadFromCall(contact) {
+    setCreateLead({ ...callLeadForm(contact), assignedDate: new Date().toISOString().slice(0, 10) });
+    setEditingLeadId(null);
+    setLeadCreationSource(contact);
+    setEditingLeadReturnPage(activePage);
+    setActivePage("sales-add");
   }
 
   function editApprovedLead(lead) {
@@ -3604,7 +3725,7 @@ function App() {
       source: lead.source || lead.leadSource || "Website",
       leadSource: lead.leadSource || lead.source || "Website",
       enteredBy: lead.enteredBy || lead.crmExecutive || "",
-      assignedTo: String(lead.assignedTo || activeUsers[0]?.id || 1),
+      assignedTo: String(lead.assignedTo || leadAssignableUsers[0]?.id || leadAssignableUsers[0]?._id || ""),
       assignedDate: lead.assignedDate || new Date().toISOString().slice(0, 10),
       notes: lead.notes || "",
     });
@@ -3984,6 +4105,11 @@ function App() {
           onCreateLead={createCrmLead}
           onLogout={logout}
           currentUser={currentUser}
+          users={leadAssignmentUsers.length ? leadAssignmentUsers : activeUsers.filter(isLeadAssignmentUser)}
+          onUpdateCallListContact={saveCallContact}
+          onDeleteCallContact={deleteCallContact}
+          onProfileUpdated={(updatedProfile) => setCurrentUser((current) => ({ ...current, ...updatedProfile }))}
+
         />
         {toast ? <div className="toast">{toast}</div> : null}
       </ErrorBoundary>
@@ -4068,7 +4194,7 @@ function App() {
 
         <div className="sidebar-footer">
           <div className="user-chip">
-            <div className="avatar">{initials(currentUser?.name ?? "Admin User")}</div>
+            <div className="avatar">{currentUser?.imageUrl ? <img src={currentUser.imageUrl} alt={currentUser.name || "Profile"} /> : initials(currentUser?.name ?? "Admin User")}</div>
             <div>
               <strong>{currentUser?.name ?? "Admin User"}</strong>
               <span>{currentUser?.role ?? "Super Admin"}</span>
@@ -4198,8 +4324,8 @@ function App() {
 
                   <Panel title="Pending follow-ups">
                     <div className="follow-up-list">
-                      {followUps.slice(0, 5).map((lead) => (
-                        <div key={lead.id} className="follow-up-item">
+                      {followUps.slice(0, 5).map((lead, index) => (
+                        <div key={`${lead.id || lead.name || "lead"}-${index}`} className="follow-up-item">
                           <span className="dot" />
                           <div>
                             <strong>{lead.name}</strong>
@@ -4346,8 +4472,8 @@ function App() {
                       {leads
                         .filter((l) => l.type === "Service")
                         .slice(0, 5)
-                        .map((lead) => (
-                          <div key={lead.id} className="follow-up-item">
+                        .map((lead, index) => (
+                          <div key={`${lead.id || lead.name || "lead"}-${index}`} className="follow-up-item">
                             <span className="dot" />
                             <div>
                               <strong>{lead.interest}</strong>
@@ -4442,6 +4568,7 @@ function App() {
                   </Panel>
                   <Panel title="User Roles">
                     <div className="follow-up-list">
+                      <option value="">Select Assignee</option>
                       {activeUsers.map((user) => (
                         <div key={user.id} className="follow-up-item">
                           <span className="dot" />
@@ -4474,8 +4601,8 @@ function App() {
                 <section className="dashboard-grid">
                   <Panel title="Pending Follow-ups">
                     <div className="follow-up-list">
-                      {followUps.map((lead) => (
-                        <div key={lead.id} className="follow-up-item">
+                      {followUps.map((lead, index) => (
+                        <div key={`${lead.id || lead.name || "lead"}-${index}`} className="follow-up-item">
                           <span className="dot" />
                           <div>
                             <strong>{lead.name}</strong>
@@ -4569,13 +4696,12 @@ function App() {
           )}
 
           {activePage === "crm" && (
-            <Panel title={`All company leads (${leads.length})`}>
-              <LeadsTable leads={leads} users={users} onEdit={editApprovedLead} onSave={saveFrontendLead} onDelete={deleteFrontendLead} />
-            </Panel>
+            <AdminAllLeadsTable title={`All Leads (${leads.length})`} leads={leads} users={activeUsers} adminName={currentUser?.name || currentUser?.username || "Admin"} onEdit={editApprovedLead} onSave={updateCrmLead} onDelete={deleteFrontendLead} />
           )}
 
           {activePage === "crm-upload" && (
-            <CrmUploadDataPage rows={crmUploadRows} setRows={setCrmUploadRows} users={users} />
+            <CrmUploadDataPage rows={crmUploadRows} setRows={setCrmUploadRows} users={users} isAdmin={isAdminUser(currentUser)}
+              onCallLeadEdit={addLeadFromCall} onSaveCall={saveCallContact} onDeleteCall={deleteCallContact} />
           )}
 
           {activePage === "user-create" && (
@@ -4881,6 +5007,8 @@ function App() {
                         setCreateLead((current) => ({ ...current, interest: event.target.value }))
                       }
                     >
+                      <option value="">Select interest</option>
+                      {createLead.interest && ![...trainingCatalog, ...serviceCatalog, ...internshipTracks].includes(createLead.interest) && <option>{createLead.interest}</option>}
                       {(createLead.type === "Training"
                         ? trainingCatalog
                         : createLead.type === "Service"
@@ -4938,12 +5066,18 @@ function App() {
                     <select
                       value={createLead.assignedTo}
                       onChange={(event) =>
-                        setCreateLead((current) => ({ ...current, assignedTo: event.target.value }))
+                        setCreateLead((current) => ({
+                          ...current,
+                          assignedTo: event.target.value,
+                          assignedDate: event.target.value ? (current.assignedDate || new Date().toISOString().slice(0, 10)) : current.assignedDate,
+                        }))
                       }
                     >
-                      {activeUsers.map((user) => (
-                        <option key={user.id} value={user.id}>
-                          {user.name}
+                      <option value="">Select Admin / Operations</option>
+                      {createLead.assignedTo && !leadAssignableUsers.some((user) => String(user.id || user._id) === String(createLead.assignedTo)) && <option value={createLead.assignedTo}>{createLead.assignedTo}</option>}
+                      {leadAssignableUsers.map((user) => (
+                        <option key={user.id || user._id} value={user.id || user._id}>
+                          {user.name || user.username}
                         </option>
                       ))}
                     </select>
@@ -4983,9 +5117,10 @@ function App() {
           )}
 
           {activePage === "sales-approved" && (
-            <Panel title="Assigned leads">
-              <LeadsTable leads={assignedLeads} users={users} onEdit={editApprovedLead} />
-            </Panel>
+            <>
+              <AdminAllLeadsTable title={`Assigned Leads (${assignedLeads.length})`} leads={assignedLeads} users={activeUsers} adminName={currentUser?.name || currentUser?.username || "Admin"} onEdit={editApprovedLead} onSave={updateCrmLead} onDelete={deleteFrontendLead} hideOwnership />
+              <CallLeadsPanel rows={crmUploadRows} users={activeUsers} assignedTo={currentUserId} onSave={saveCallContact} onDelete={deleteCallContact} onAdd={addLeadFromCall} lockCreatedLead allowReturnToOwner title={`Assigned Call Leads (${crmUploadRows.filter((row) => isCallLead(row) && String(row.callLeadAssignedTo || "") === currentUserId).length})`} subtitle={`Qualifying call leads assigned to ${currentUser?.name || currentUser?.username || "you"}`} />
+            </>
           )}
 
           {activePage === "sales-report" && (
@@ -5077,21 +5212,23 @@ function App() {
             </>
           )}
 
-          {activePage === "co-leads" && (
-            <Panel title={`All company leads (${leads.length})`}>
-              <LeadsTable leads={leads} users={users} onEdit={editApprovedLead} />
-            </Panel>
-          )}
-
           {activePage === "co-approved" && (
-            <Panel title="Assigned leads">
-              <LeadsTable leads={assignedLeads} users={users} onEdit={editApprovedLead} />
-            </Panel>
+            <>
+              <AdminAllLeadsTable title={`Assigned Leads (${assignedLeads.length})`} leads={assignedLeads} users={activeUsers} adminName={currentUser?.name || currentUser?.username || "Admin"} onEdit={editApprovedLead} onSave={updateCrmLead} onDelete={deleteFrontendLead} hideOwnership />
+              <CallLeadsPanel rows={crmUploadRows} users={activeUsers} assignedTo={currentUserId} onSave={saveCallContact} onDelete={deleteCallContact} onAdd={addLeadFromCall} lockCreatedLead allowReturnToOwner title={`Assigned Call Leads (${crmUploadRows.filter((row) => isCallLead(row) && String(row.callLeadAssignedTo || "") === currentUserId).length})`} subtitle={`Qualifying call leads assigned to ${currentUser?.name || currentUser?.username || "you"}`} />
+            </>
           )}
 
           {activePage === "hr-assign" && (
-            <Panel title="Assigned tasks">
-              <TaskTable tasks={tasks} />
+            <Panel title="Assign task to CRM Executive">
+              <form className="form-grid" onSubmit={assignTaskToCrmExecutive}>
+                <label className="field"><span>CRM Executive *</span><select value={adminTaskForm.assigneeId} onChange={(event) => setAdminTaskForm((current) => ({ ...current, assigneeId: event.target.value }))}><option value="">Select CRM Executive</option>{activeUsers.filter((user) => isCrmExecutive(user.role)).map((user) => <option key={user.id || user._id} value={user.id || user._id}>{user.name || user.username}</option>)}</select></label>
+                <label className="field"><span>Task title *</span><input value={adminTaskForm.title} onChange={(event) => setAdminTaskForm((current) => ({ ...current, title: event.target.value }))} placeholder="e.g. Follow up warm leads" /></label>
+                <label className="field"><span>Priority</span><select value={adminTaskForm.priority} onChange={(event) => setAdminTaskForm((current) => ({ ...current, priority: event.target.value }))}><option>High</option><option>Medium</option><option>Low</option></select></label>
+                <label className="field"><span>Due date</span><input type="date" value={adminTaskForm.dueDate} onChange={(event) => setAdminTaskForm((current) => ({ ...current, dueDate: event.target.value }))} /></label>
+                <label className="field span-full"><span>Description</span><textarea rows="3" value={adminTaskForm.description} onChange={(event) => setAdminTaskForm((current) => ({ ...current, description: event.target.value }))} placeholder="Add instructions or expected outcome" /></label>
+                <div className="form-actions span-full"><button type="submit" className="primary-button"><ClipboardCheck size={16} /> Assign Task</button></div>
+              </form>
             </Panel>
           )}
 
@@ -5103,7 +5240,13 @@ function App() {
 
           {activePage === "hr-leaves" && (
             <Panel title="Leave requests">
-              <div className="table-wrap">
+              <div className="admin-leave-overview">
+                <div><span>Total requests</span><strong>{leaves.length}</strong></div>
+                <div className="pending"><span>Pending review</span><strong>{leaves.filter((leave) => leave.status === "Pending").length}</strong></div>
+                <div className="approved"><span>Approved</span><strong>{leaves.filter((leave) => leave.status === "Approved").length}</strong></div>
+                <div className="rejected"><span>Rejected</span><strong>{leaves.filter((leave) => leave.status === "Rejected").length}</strong></div>
+              </div>
+              <div className="table-wrap admin-leave-table-wrap">
                 <table className="table">
                 <thead>
                   <tr>
@@ -5117,21 +5260,28 @@ function App() {
                   </tr>
                 </thead>
                 <tbody>
+                  {leaves.length === 0 && <tr><td colSpan="7" className="empty-cell">No leave requests yet.</td></tr>}
                   {leaves.map((leave) => (
                     <tr key={leave.id}>
                       <td>
                         <div className="person-cell">
-                          <div className="avatar soft">{initials(leave.emp)}</div>
-                          <strong>{leave.emp}</strong>
+                          <div className="avatar soft">{initials(leave.employeeName || "CRM Executive")}</div>
+                          <strong>{leave.employeeName || "CRM Executive"}</strong>
                         </div>
                       </td>
                       <td>{leave.type}</td>
-                      <td>{leave.from}</td>
-                      <td>{leave.to}</td>
-                      <td>{leave.days}</td>
+                      <td>{formatDateDDMMYYYY(leave.from)}</td>
+                      <td>{formatDateDDMMYYYY(leave.to)}</td>
+                      <td>{leave.from && leave.to ? Math.floor((new Date(`${leave.to}T00:00:00`) - new Date(`${leave.from}T00:00:00`)) / 86400000) + 1 : "-"}</td>
                       <td>{leave.reason}</td>
                       <td>
-                        <span className={badgeClass(leave.status)}>{leave.status}</span>
+                        {leave.status === "Pending" ? (
+                          <select className="leave-decision-select" value={leave.status} onChange={(event) => updateLeaveRequestStatus(leave, event.target.value)}>
+                            <option value="Pending">Pending</option>
+                            <option value="Approved">Approve</option>
+                            <option value="Rejected">Reject</option>
+                          </select>
+                        ) : <span className={badgeClass(leave.status)}>{leave.status}</span>}
                       </td>
                     </tr>
                   ))}
@@ -5148,40 +5298,25 @@ function App() {
                 <thead>
                   <tr>
                     <th>Employee</th>
-                    <th>Role</th>
-                    <th>Present</th>
-                    <th>Absent</th>
-                    <th>Late</th>
-                    <th>Leave</th>
-                    <th>Attendance%</th>
+                    <th>Date</th>
+                    <th>Status</th>
+                    <th>Check In</th>
+                    <th>Check Out</th>
+                    <th>Remark</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {activeUsers.map((user, index) => {
-                    const present = 19 + index;
-                    const absent = index % 2;
-                    const late = (index + 1) % 2;
-                    const leave = leaves.filter(
-                      (entry) => entry.emp === user.name && entry.status === "Approved",
-                    ).length;
-                    const total = present + absent + late;
-                    return (
-                      <tr key={user.id}>
-                        <td>
-                          <div className="person-cell">
-                            <div className="avatar soft">{initials(user.name)}</div>
-                            <strong>{user.name}</strong>
-                          </div>
-                        </td>
-                        <td>{user.role}</td>
-                        <td>{present}</td>
-                        <td>{absent}</td>
-                        <td>{late}</td>
-                        <td>{leave}</td>
-                        <td>{Math.round((present / total) * 100)}%</td>
-                      </tr>
-                    );
-                  })}
+                  {attendance.length === 0 && <tr><td colSpan="6" className="empty-cell">No attendance records yet.</td></tr>}
+                  {attendance.map((record) => (
+                    <tr key={record.id}>
+                      <td><strong>{record.employeeName || "CRM Executive"}</strong></td>
+                      <td>{formatDateDDMMYYYY(record.date)}</td>
+                      <td><span className={badgeClass(record.status)}>{record.status}</span></td>
+                      <td>{record.checkIn || "-"}</td>
+                      <td>{record.checkOut || "-"}</td>
+                      <td>{record.remark || "-"}</td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
               </div>
@@ -5626,7 +5761,7 @@ function App() {
                             <small>{request.requestedAt ? new Date(request.requestedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</small>
                           </div>
                           <div role="cell"><span className={badgeClass(request.status === "contacted" ? "approved" : request.status === "approved" ? "approved" : request.status === "rejected" ? "rejected" : "pending")}>{request.status.charAt(0).toUpperCase() + request.status.slice(1)}</span></div>
-                          <div className="enrollment-request-remark" role="cell"><input defaultValue={request.remark || ""} placeholder="Add remark" onBlur={(event) => { const remark = event.target.value.trim(); if (remark !== String(request.remark || "")) handleUpdateEnrollmentRequestStatus(request, request.status, remark); }} /></div>
+                          <div className="enrollment-request-remark" role="cell"><RemarkField value={request.remark || ""} onCommit={(remark) => handleUpdateEnrollmentRequestStatus(request, request.status, remark.trim())} label={`Remark for ${request.studentName || "student"}`} /></div>
                           <div className="submission-action" role="cell">
                             {request.status === "pending" ? <button type="button" className="primary-button compact" onClick={() => handleUpdateEnrollmentRequestStatus(request, "contacted")}>Contacted</button> : null}
                             {request.status === "contacted" ? <>
@@ -5651,7 +5786,7 @@ function App() {
                         <div className="submission-context" role="cell"><strong>{request.courseName || "Course request"}</strong></div>
                         <div className="submission-task" role="cell"><strong>{request.requestedAt ? new Date(request.requestedAt).toLocaleDateString() : "Soon"}</strong><small>{request.requestedAt ? new Date(request.requestedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</small></div>
                         <div role="cell"><span className={badgeClass(request.status === "rejected" ? "rejected" : "approved")}>{request.status === "completed" ? "Completed" : request.status.charAt(0).toUpperCase() + request.status.slice(1)}</span></div>
-                        <div className="enrollment-request-remark" role="cell"><input defaultValue={request.remark || ""} placeholder="Add remark" onBlur={(event) => { const remark = event.target.value.trim(); if (remark !== String(request.remark || "")) handleUpdateEnrollmentRequestStatus(request, "completed", remark); }} /></div>
+                        <div className="enrollment-request-remark" role="cell"><RemarkField value={request.remark || ""} onCommit={(remark) => handleUpdateEnrollmentRequestStatus(request, "completed", remark.trim())} label={`Remark for ${request.studentName || "student"}`} /></div>
                         <div className="submission-action" role="cell"><button type="button" className="ghost-button compact" onClick={() => handleUpdateEnrollmentRequestStatus(request, "pending")}>Reopen</button></div>
                       </div>
                     ))}
@@ -5881,8 +6016,8 @@ function App() {
                     </div>
                     <div className="settings-identity">
                       <div className="avatar large">
-                        {settingsForm.imageUrl ? (
-                          <img src={settingsForm.imageUrl} alt={settingsForm.name} />
+                        {avatarPreview ? (
+                          <img src={avatarPreview} alt={settingsForm.name || "Profile"} />
                         ) : (
                           initials(settingsForm.name || currentUser?.name || "Admin")
                         )}
@@ -5959,6 +6094,7 @@ function App() {
                             <Upload size={16} />
                             {settingsForm.imageUrl ? "Change photo" : "Upload photo"}
                           </label>
+                          <small>Select a photo, then click Save Changes to update your profile and sidebar.</small>
                           {avatarPreview && (
                             <div className="avatar-preview">
                               <img src={avatarPreview} alt="Preview" />
@@ -6667,13 +6803,32 @@ function Panel({ title, children }) {
   );
 }
 
-function CrmUploadDataPage({ rows, setRows, users }) {
+function CrmUploadDataPage({ rows, setRows, users, isAdmin, onCallLeadEdit, onSaveCall, onDeleteCall }) {
   const [selectedFile, setSelectedFile] = useState(null);
   const [selectedEmployee, setSelectedEmployee] = useState("");
-  const [dateFilter, setDateFilter] = useState("");
+  const [listType, setListType] = useState("services");
+  const [uploading, setUploading] = useState(false);
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
+  const [page, setPage] = useState(1);
   const [employeeFilter, setEmployeeFilter] = useState("All");
+  const [listTypeFilter, setListTypeFilter] = useState("All");
+  const [searchDraft, setSearchDraft] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [callStatusFilter, setCallStatusFilter] = useState("All");
+  const [programFilter, setProgramFilter] = useState("All");
+  const [interestFilter, setInterestFilter] = useState("All");
   const [uploadError, setUploadError] = useState("");
+  const [uploadSuccess, setUploadSuccess] = useState("");
   const [selectedIds, setSelectedIds] = useState([]);
+  const [formatOpen, setFormatOpen] = useState(false);
+  const assignableUsers = users.filter((user) => {
+    const role = String(user?.role || "").trim().toLowerCase();
+    const department = String(user?.dept || user?.department || "").trim().toLowerCase();
+    const position = String(user?.position || "").trim().toLowerCase();
+    const status = String(user?.status || "Active").trim().toLowerCase();
+    return status === "active" && (role === "admin" || role.includes("crm") || department.includes("crm") || position.includes("crm"));
+  });
 
   const normalizeHeader = (value) => String(value || "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
 
@@ -6683,9 +6838,12 @@ function CrmUploadDataPage({ rows, setRows, users }) {
     if (!file) return;
     setSelectedFile(file);
     setUploadError("");
+    setUploadSuccess("");
   };
 
   const handleUpload = async () => {
+    setUploadSuccess("");
+    setUploadError("");
     if (!selectedEmployee) {
       setUploadError("Please select an employee.");
       return;
@@ -6695,6 +6853,7 @@ function CrmUploadDataPage({ rows, setRows, users }) {
       return;
     }
     try {
+      setUploading(true);
       const workbook = XLSX.read(await selectedFile.arrayBuffer(), { type: "array" });
       const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
       const sourceRows = XLSX.utils.sheet_to_json(firstSheet, { defval: "" });
@@ -6706,51 +6865,95 @@ function CrmUploadDataPage({ rows, setRows, users }) {
       if (!nameHeader || !numberHeader) throw new Error("The Excel file must contain name and number fields.");
 
       const importedRows = sourceRows
-        .map((row, index) => ({
-          id: `crm-upload-${Date.now()}-${index}`,
-          date: new Date().toISOString().slice(0, 10),
+        .map((row) => ({
           name: String(row[nameHeader] || "").trim(),
-          number: String(row[numberHeader] || "").trim(),
-          assignedTo: selectedEmployee,
-          callStatus: "Not Called",
-          interestStatus: "Cold",
-          program: "-",
-          remark: "",
-          snoozed: false,
+          contact: String(row[numberHeader] || "").trim(),
         }))
-        .filter((row) => row.name || row.number);
+        .filter((row) => {
+          const digits = row.contact.replace(/\D/g, "");
+          const normalized = digits.length === 12 && digits.startsWith("91") ? digits.slice(2) : digits;
+          return row.name && /^[6-9]\d{9}$/.test(normalized);
+        });
 
       if (!importedRows.length) throw new Error("No usable name and number rows were found.");
-      setRows((currentRows) => [...currentRows, ...importedRows]);
+      const employee = users.find((user) => String(user.id || user._id) === String(selectedEmployee));
+      const result = await uploadCallListData({ listType, assignedTo: selectedEmployee, assignedToName: employee?.name || employee?.username || "", rows: importedRows });
+      setRows((currentRows) => mergeCallListRows(result.rows, currentRows));
+      const created = result.created ?? result.rows.length;
+      const duplicateMessage = result.duplicates?.length
+        ? ` Skipped ${result.duplicates.length} duplicate contact(s).`
+        : "";
+      setUploadSuccess((created > 0
+        ? `Data uploaded successfully. ${created} contact(s) uploaded.`
+        : "No new contacts uploaded.") + duplicateMessage);
       setSelectedFile(null);
       setSelectedEmployee("");
       setUploadError("");
     } catch (error) {
       setUploadError(error.message || "Unable to read this Excel file.");
-    }
+    } finally { setUploading(false); }
   };
 
-  const visibleRows = rows.filter((row) => {
-    const matchesDate = !dateFilter || row.date === dateFilter;
-    const matchesEmployee = employeeFilter === "All" || row.assignedTo === employeeFilter;
-    return matchesDate && matchesEmployee;
+  const filteredRows = rows.filter((row) => matchesCallListFilters(row, {
+    search: searchQuery, program: programFilter, callStatus: callStatusFilter,
+    interest: interestFilter, employee: employeeFilter, listType: listTypeFilter,
+  })).filter((row) => {
+    const date = String(row.createdAt || row.date || "").slice(0, 10);
+    return (!fromDate || date >= fromDate) && (!toDate || date <= toDate);
   });
+  const pageSize = 15;
+  const totalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize));
+  const visibleRows = filteredRows.slice((page - 1) * pageSize, page * pageSize);
+  useEffect(() => { setPage(1); }, [searchQuery, programFilter, callStatusFilter, interestFilter, employeeFilter, listTypeFilter, fromDate, toDate]);
+  useEffect(() => { setPage((current) => Math.min(current, totalPages)); }, [totalPages]);
+  const showListType = listTypeFilter === "All";
+  const directoryTitle = listTypeFilter === "services"
+    ? "Daily Service Contacts / Call List"
+    : listTypeFilter === "training"
+      ? "Daily Training Contacts / Call List"
+      : "All Contacts / Call List";
   const allVisibleSelected = visibleRows.length > 0 && visibleRows.every((row) => selectedIds.includes(row.id));
+  const serialByRow = new Map();
+  const serialCounts = new Map();
+  filteredRows.forEach((row) => {
+    const listKey = listTypeFilter === "All" ? "all" : (row.listType || "list");
+    const serial = (serialCounts.get(listKey) || 0) + 1;
+    serialCounts.set(listKey, serial);
+    serialByRow.set(row, serial);
+  });
 
   const updateRow = (id, patch) => {
+    const currentRow = rows.find((item) => item.id === id);
+    if (!currentRow || Object.entries(patch).every(([key, value]) => String(currentRow[key] ?? "") === String(value ?? ""))) return;
+    if (patch.callStatus === "Completed" && !normalizeCallProgram(currentRow?.program)) {
+      setUploadError(`Please select a ${currentRow?.listType === "training" ? "program" : "service"} before marking this contact Completed.`);
+      return;
+    }
+    setRows((currentRows) => currentRows.map((row) => (row.id === id ? { ...row, ...patch } : row)));
+    const row = currentRow;
+    if (row?.listType) Promise.resolve(onSaveCall ? onSaveCall(row, patch) : saveCallListData(row.listType, id, patch, row.assignedTo))
+      .then((saved) => {
+        setRows((currentRows) => currentRows.map((item) => item.id === saved.id ? saved : item));
+
+      })
+      .catch((error) => setUploadError(error.message));
+  };
+
+  const stageRow = (id, patch) => {
     setRows((currentRows) => currentRows.map((row) => (row.id === id ? { ...row, ...patch } : row)));
   };
 
   const editRow = (row) => {
     const name = window.prompt("Name", row.name);
     if (name === null) return;
-    const number = window.prompt("Contact number", row.number);
+    const number = window.prompt("Contact number", row.contact || row.number || "");
     if (number === null) return;
-    updateRow(row.id, { name: name.trim(), number: number.trim() });
+    updateRow(row.id, { name: name.trim(), contact: number.trim() });
   };
 
-  const deleteRow = (row) => {
+  const deleteRow = async (row) => {
     if (!window.confirm(`Delete ${row.name || "this contact"}?`)) return;
+    try { if (row.listType) await removeCallListData(row.listType, row.id, row.assignedTo); } catch (error) { setUploadError(error.message); return; }
     setRows((currentRows) => currentRows.filter((item) => item.id !== row.id));
     setSelectedIds((currentIds) => currentIds.filter((id) => id !== row.id));
   };
@@ -6766,64 +6969,129 @@ function CrmUploadDataPage({ rows, setRows, users }) {
     });
   };
 
-  const deleteSelected = () => {
+  const deleteSelected = async () => {
     if (!selectedIds.length) return;
     if (!window.confirm(`Delete ${selectedIds.length} selected record${selectedIds.length === 1 ? "" : "s"}?`)) return;
-    setRows((currentRows) => currentRows.filter((row) => !selectedIds.includes(row.id)));
-    setSelectedIds([]);
+    try {
+      await Promise.all(rows.filter((row) => selectedIds.includes(row.id) && row.listType).map((row) => removeCallListData(row.listType, row.id, row.assignedTo)));
+      setRows((currentRows) => currentRows.filter((row) => !selectedIds.includes(row.id)));
+      setSelectedIds([]);
+    } catch (error) { setUploadError(error.message || "Could not delete selected records."); }
+  };
+
+  const exportCallListPdf = () => {
+    const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+    pdf.setFontSize(16); pdf.text(directoryTitle, 14, 14);
+    pdf.setFontSize(9); pdf.setTextColor(100); pdf.text(`${filteredRows.length} filtered contact(s)`, 14, 20);
+    autoTable(pdf, {
+      startY: 25,
+      head: [["S. No.", "Date", "Name", "Contact", "Call Status", "Interest", "Service / Program", "Remark", "Assigned To"]],
+      body: filteredRows.map((row, index) => [index + 1, formatAdminDate(row.createdAt || row.date), row.name || "-", row.contact || row.number || "-", normalizeCallStatus(row.callStatus), normalizeInterestStatus(row.interestStatus), normalizeCallProgram(row.program) || "-", row.remark || "-", row.assignedToName || users.find((user) => String(user.id || user._id) === String(row.assignedTo))?.name || "Unassigned"]),
+      styles: { fontSize: 7, cellPadding: 2, overflow: "linebreak" }, headStyles: { fillColor: [127, 78, 43] },
+    });
+    pdf.save(`call-list-${new Date().toISOString().slice(0, 10)}.pdf`);
   };
 
   return (
     <div className="crm-upload-page">
       <section className="panel">
         <div className="panel-head crm-upload-section-title">
-          <span className="crm-upload-section-icon"><Upload size={19} /></span>
-          <h3>Upload New Call List</h3>
+          <div><span className="crm-upload-eyebrow">CALL LIST IMPORT</span><h3>Upload contacts</h3><p>Assign a service or training contact list to a CRM employee.</p></div>
+          <button type="button" className="ghost-button crm-format-button" onClick={() => setFormatOpen(true)}>View file format</button>
         </div>
         <div className="crm-upload-form">
           <label className="field">
-            <span>Assign to Employee:</span>
-            <select value={selectedEmployee} onChange={(event) => setSelectedEmployee(event.target.value)}>
-              <option value="">Select Employee</option>
-              {users.map((user) => <option key={user.id || user._id} value={user.id || user._id}>{user.name || user.username}</option>)}
+            <span>List type</span>
+            <select value={listType} onChange={(event) => setListType(event.target.value)}>
+              <option value="services">Service</option>
+              <option value="training">Training</option>
             </select>
           </label>
           <label className="field">
-            <span>Upload Call List (CSV/XLSX):</span>
-            <input type="file" accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv" onChange={handleFileChange} />
+            <span>Assign to employee</span>
+            <select value={selectedEmployee} onChange={(event) => setSelectedEmployee(event.target.value)}>
+              <option value="">Select Employee</option>
+              {assignableUsers.map((user) => <option key={user.id || user._id} value={user.id || user._id}>{user.name || user.username}</option>)}
+            </select>
           </label>
-          <button type="button" className="primary-button crm-upload-button" onClick={handleUpload}>
-            <Upload size={17} /> Upload
+          <label className="field">
+            <span>Excel or CSV file</span>
+            <span className="crm-file-picker"><FileText size={18} /><span>{selectedFile?.name || "Choose .xlsx, .xls or .csv file"}</span><input type="file" accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv" onChange={handleFileChange} /></span>
+          </label>
+          <button type="button" className="primary-button crm-upload-button" onClick={handleUpload} disabled={uploading}>
+            <Upload size={17} /> {uploading ? "Uploading…" : "Upload list"}
           </button>
           {uploadError && <p className="field-error crm-upload-error">{uploadError}</p>}
+          {uploadSuccess && <p className="crm-upload-success" role="status">{uploadSuccess}</p>}
         </div>
       </section>
 
-      <section className="panel">
-        <div className="panel-head crm-upload-section-title">
-          <span className="crm-upload-section-icon"><ContactRound size={19} /></span>
-          <h3>Call List Records Directory</h3>
-          {selectedIds.length > 0 && (
-            <button type="button" className="crm-upload-delete-selected" onClick={deleteSelected}>
-              <Trash2 size={15} /> Delete Selected ({selectedIds.length})
-            </button>
-          )}
+      {formatOpen && (
+        <div className="crm-format-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setFormatOpen(false); }}>
+          <div className="crm-format-card" role="dialog" aria-modal="true" aria-labelledby="crm-format-title">
+            <div className="crm-format-head">
+              <div><span className="crm-upload-eyebrow">EXCEL / CSV FORMAT</span><h3 id="crm-format-title">Use only two columns</h3></div>
+              <button type="button" className="icon-button" aria-label="Close file format" onClick={() => setFormatOpen(false)}><X size={18} /></button>
+            </div>
+            <p>Your first row must contain these exact headings. Every contact row needs both values.</p>
+            <div className="crm-format-sheet" aria-label="File format example">
+              <strong>Name</strong><strong>Number</strong>
+              <span>Rohit Malhotra</span><span>9820011223</span>
+            </div>
+            <p className="crm-format-note">Date, call status, interest, source and all other fields are added automatically with default values.</p>
+          </div>
         </div>
-        <div className="crm-directory-filters">
-          <label className="field">
-            <span>Filter by Date:</span>
-            <input type="date" value={dateFilter} onChange={(event) => setDateFilter(event.target.value)} />
-          </label>
-          <label className="field">
-            <span>Filter by CRM Employee:</span>
-            <select value={employeeFilter} onChange={(event) => setEmployeeFilter(event.target.value)}>
-              <option value="All">All CRM Employees</option>
-              {users.map((user) => <option key={user.id || user._id} value={user.id || user._id}>{user.name || user.username}</option>)}
-            </select>
-          </label>
-          <button type="button" className="primary-button crm-filter-button" onClick={() => { setDateFilter(dateFilter); setEmployeeFilter(employeeFilter); }}>
-            <Search size={16} /> Filter
+      )}
+
+      <section className="panel crm-directory-panel">
+        <div className="panel-head crm-directory-head">
+          <div>
+            <h3>{directoryTitle}</h3>
+            <p>{showListType ? "Service and training contacts" : listTypeFilter === "services" ? "Daily contacts for services" : "Daily contacts for training programs"}</p>
+          </div>
+          <div className="crm-directory-head-actions">
+            <button type="button" className="primary-button" onClick={exportCallListPdf} disabled={!filteredRows.length}><FileText size={15} /> Export PDF ({filteredRows.length})</button>
+            {selectedIds.length > 0 && <button type="button" className="crm-upload-delete-selected" onClick={deleteSelected}><Trash2 size={15} /> Delete Selected ({selectedIds.length})</button>}
+          </div>
+        </div>
+        <div className="crm-list-type-switch" aria-label="Choose call list">
+          <button type="button" className={listTypeFilter === "services" ? "active" : ""} onClick={() => { setListTypeFilter((current) => current === "services" ? "All" : "services"); setProgramFilter("All"); }}>
+            <span className="crm-list-type-icon"><PhoneCall size={19} /></span>
+            <span><strong>Service Call List</strong><small>{rows.filter((row) => row.listType === "services").length} contacts</small></span>
           </button>
+          <button type="button" className={listTypeFilter === "training" ? "active" : ""} onClick={() => { setListTypeFilter((current) => current === "training" ? "All" : "training"); setProgramFilter("All"); }}>
+            <span className="crm-list-type-icon"><ContactRound size={19} /></span>
+            <span><strong>Training Call List</strong><small>{rows.filter((row) => row.listType === "training").length} contacts</small></span>
+          </button>
+        </div>
+        <div className="crm-directory-toolbar">
+          <form className="crm-directory-search" onSubmit={(event) => { event.preventDefault(); setSearchQuery(searchDraft.trim()); }}>
+            <label><Search size={16} /><input value={searchDraft} onChange={(event) => { setSearchDraft(event.target.value); setSearchQuery(event.target.value.trim()); }} placeholder="Search by name or contact number" /></label>
+            <button type="submit">Search</button>
+          </form>
+          <select aria-label="Service or training program" value={programFilter} onChange={(event) => setProgramFilter(event.target.value)}>
+            <option value="All">{listTypeFilter === "training" ? "All Training Programs" : listTypeFilter === "services" ? "All Services" : "All Services / Programs"}</option>
+            <option value="">Unspecified</option>
+            {[...new Set([...callListPrograms(listTypeFilter), ...rows.filter((row) => listTypeFilter === "All" || row.listType === listTypeFilter).map((row) => normalizeCallProgram(row.program)).filter(Boolean)])].map((program) => <option key={program}>{program}</option>)}
+          </select>
+          <select aria-label="Call status" value={callStatusFilter} onChange={(event) => setCallStatusFilter(event.target.value)}>
+            <option value="All">All Call Status</option>
+            {CALL_STATUS_OPTIONS.map((status) => <option key={status}>{status}</option>)}
+          </select>
+          <select aria-label="Interest status" value={interestFilter} onChange={(event) => setInterestFilter(event.target.value)}>
+            <option value="All">All Interest</option>
+            {CALL_LIST_INTEREST_STATUS_OPTIONS.map((status) => <option key={status}>{status}</option>)}
+          </select>
+          <select aria-label="CRM employee" value={employeeFilter} onChange={(event) => setEmployeeFilter(event.target.value)}>
+            <option value="All">All Employees</option>
+            {users.map((user) => <option key={user.id || user._id} value={user.id || user._id}>{user.name || user.username}</option>)}
+          </select>
+        </div>
+        <div className="crm-directory-date-row">
+          <span>Lead creation date</span>
+          <label className="table-date-filter"><span>From</span><input aria-label="From date" type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} /></label>
+          <label className="table-date-filter"><span>To</span><input aria-label="To date" type="date" min={fromDate} value={toDate} onChange={(event) => setToDate(event.target.value)} /></label>
+          <button type="button" className="crm-directory-reset" onClick={() => { setSearchDraft(""); setSearchQuery(""); setProgramFilter("All"); setListTypeFilter("All"); setCallStatusFilter("All"); setInterestFilter("All"); setEmployeeFilter("All"); setFromDate(""); setToDate(""); }}>Reset</button>
         </div>
         <div className="table-wrap crm-call-list-table-wrap">
           <table className="table crm-call-list-table">
@@ -6836,50 +7104,56 @@ function CrmUploadDataPage({ rows, setRows, users }) {
                 <th>Date</th>
                 <th>Name</th>
                 <th>Contact</th>
-                <th>Call</th>
+                <th>Call / WhatsApp</th>
                 <th>Call Status</th>
                 <th>Interest Status</th>
-                <th>Program</th>
+                <th>{listTypeFilter === "training" ? "Program" : listTypeFilter === "services" ? "Service" : "Service / Program"}</th>
                 <th>Remark</th>
+                <th>Assigned To</th>
                 <th>Action</th>
               </tr>
             </thead>
             <tbody>
               {!visibleRows.length && (
-                <tr><td colSpan={11} className="panel-empty">No call list records found.</td></tr>
+                <tr><td colSpan={12} className="panel-empty">No call list records found.</td></tr>
               )}
-              {visibleRows.map((row, index) => (
-                <tr key={row.id}>
+              {visibleRows.map((row) => (
+                <tr key={`${row.listType || "list"}:${row.id}`}>
                   <td className="crm-upload-selection-cell">
                     <input type="checkbox" checked={selectedIds.includes(row.id)} onChange={() => toggleSelected(row.id)} aria-label={`Select ${row.name || "record"}`} />
                   </td>
-                  <td>{index + 1}</td>
-                  <td>{formatAdminDate(row.date)}</td>
-                  <td><strong>{row.name || "-"}</strong></td>
-                  <td>{row.number || "-"}</td>
+                  <td>{serialByRow.get(row)}</td>
+                  <td>{formatAdminDate(row.createdAt)}</td>
+                  <td><div className="crm-contact-name"><strong>{row.name || "-"}</strong></div></td>
+                  <td>{row.contact || row.number || "-"}</td>
                   <td>
-                    <button type="button" className="row-icon-btn call" title="Call" onClick={() => { window.location.href = `tel:${row.number}`; }}>
-                      <PhoneCall size={16} />
-                    </button>
+                    <div className="row-actions">
+                      <button type="button" className={`row-icon-btn call ${row.callClicked ? "contacted" : ""}`} title="Call" onClick={() => { updateRow(row.id, { callClicked: true }); window.location.href = `tel:${row.contact || row.number}`; }}><PhoneCall size={16} /></button>
+                      <button type="button" className={`row-icon-btn whatsapp ${row.whatsappClicked ? "contacted" : ""}`} title="WhatsApp" onClick={() => { updateRow(row.id, { whatsappClicked: true }); window.open(`https://wa.me/91${String(row.contact || row.number || "").replace(/\D/g, "").slice(-10)}`, "_blank", "noopener,noreferrer"); }}><MessageCircle size={16} /></button>
+                    </div>
                   </td>
                   <td>
-                    <select className="inline-select" value={row.callStatus || "Not Called"} onChange={(event) => updateRow(row.id, { callStatus: event.target.value })}>
-                      {[
-                        "Not Called", "Connected", "Not Connected", "Busy", "Switched Off", "Invalid Number",
-                      ].map((status) => <option key={status}>{status}</option>)}
+                    <select className="inline-select" value={normalizeCallStatus(row.callStatus)} onChange={(event) => updateRow(row.id, { callStatus: event.target.value })}>
+                      {CALL_STATUS_OPTIONS.map((status) => <option key={status}>{status}</option>)}
                     </select>
                   </td>
                   <td>
-                    <select className="inline-select" value={row.interestStatus || "Cold"} onChange={(event) => updateRow(row.id, { interestStatus: event.target.value })}>
-                      {["Hot", "Warm", "Cold", "Not Interested", "Converted"].map((status) => <option key={status}>{status}</option>)}
+                    <select className="inline-select" value={normalizeInterestStatus(row.interestStatus)} onChange={(event) => updateRow(row.id, { interestStatus: event.target.value })}>
+                      {CALL_LIST_INTEREST_STATUS_OPTIONS.map((status) => <option key={status}>{status}</option>)}
                     </select>
                   </td>
-                  <td>{row.program || "-"}</td>
-                  <td><input className="crm-remark-input" value={row.remark || ""} placeholder="Add remark" onChange={(event) => updateRow(row.id, { remark: event.target.value })} /></td>
+                  <td>
+                    <select className="inline-select crm-program-select" value={normalizeCallProgram(row.program)} onChange={(event) => updateRow(row.id, { program: event.target.value })}>
+                      <option value="">{row.listType === "training" ? "Select Program" : "Select Service"}</option>
+                      {normalizeCallProgram(row.program) && !callListPrograms(row.listType).includes(normalizeCallProgram(row.program)) && <option value={normalizeCallProgram(row.program)}>{normalizeCallProgram(row.program)}</option>}
+                      {callListPrograms(row.listType).map((program) => <option key={program}>{program}</option>)}
+                    </select>
+                  </td>
+                  <td><RemarkField value={row.remark || ""} onChange={(value) => stageRow(row.id, { remark: value })} onCommit={(value) => updateRow(row.id, { remark: value })} label={`Remark for ${row.name || "contact"}`} /></td>
+                  <td><select className="inline-select" aria-label={`Assign call list contact ${row.name || "record"}`} value={row.assignedTo || ""} onChange={(event) => updateRow(row.id, { assignedTo: event.target.value, assignedToName: assignableUsers.find((user) => String(user.id || user._id) === String(event.target.value))?.name || "" })}><option value="">Unassigned</option>{row.assignedTo && !assignableUsers.some((user) => String(user.id || user._id) === String(row.assignedTo)) && <option value={row.assignedTo}>{row.assignedToName || row.assignedTo}</option>}{assignableUsers.map((user) => <option key={user.id || user._id} value={user.id || user._id}>{user.name || user.username}</option>)}</select></td>
                   <td>
                     <div className="row-actions">
                       <button type="button" className="row-icon-btn edit" title="Edit" onClick={() => editRow(row)}><Edit3 size={16} /></button>
-                      <button type="button" className="row-icon-btn snooze" title={row.snoozed ? "Resume" : "Snooze"} onClick={() => updateRow(row.id, { snoozed: !row.snoozed })}><Clock3 size={16} /></button>
                       <button type="button" className="row-icon-btn delete" title="Delete" onClick={() => deleteRow(row)}><Trash2 size={16} /></button>
                     </div>
                   </td>
@@ -6888,14 +7162,24 @@ function CrmUploadDataPage({ rows, setRows, users }) {
             </tbody>
           </table>
         </div>
+        <div className="admin-leads-pagination">
+          <span>Showing {filteredRows.length ? (page - 1) * pageSize + 1 : 0}-{Math.min(page * pageSize, filteredRows.length)} of {filteredRows.length}</span>
+          <div className="admin-leads-pagination-actions">
+            <button type="button" className="ghost-button compact" disabled={page === 1} onClick={() => setPage((current) => current - 1)}>Previous</button>
+            <span>Page {page} of {totalPages}</span>
+            <button type="button" className="ghost-button compact" disabled={page === totalPages} onClick={() => setPage((current) => current + 1)}>Next</button>
+          </div>
+        </div>
       </section>
+      <CallLeadsPanel canDelete={isAdmin} rows={rows} users={users} onSave={onSaveCall} onDelete={onDeleteCall} onAdd={onCallLeadEdit} showSourceOwner={isAdmin} />
     </div>
   );
 }
 
 function formatAdminDate(value) {
   if (!value) return "-";
-  const date = new Date(`${value}T00:00:00`);
+  const datePart = String(value).slice(0, 10);
+  const date = new Date(`${datePart}T00:00:00`);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
 }
 
@@ -7603,12 +7887,20 @@ function Field({ label, children }) {
   );
 }
 
-function LeadsTable({ leads, users, onEdit, onSave, onDelete }) {
+function LeadsTable({ leads, users, onEdit, onSave, onDelete, wrapperClassName = "" }) {
   const [operationDrafts, setOperationDrafts] = useState({});
+  const leadTime = (lead) => {
+    const raw = lead.createdAt || lead.createdDate || lead.assignedDate || lead.date || "";
+    const parsed = Date.parse(String(raw));
+    if (!Number.isNaN(parsed)) return parsed;
+    const match = String(raw).match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
+    return match ? new Date(Number(match[3]), Number(match[2]) - 1, Number(match[1])).getTime() : 0;
+  };
+  const orderedLeads = [...leads].sort((left, right) => leadTime(right) - leadTime(left));
   const getAssignedName = (lead) => users.find((user) => String(user.id || user._id) === String(lead.assignedTo))?.name ?? lead.assignedTo ?? "-";
   const getCrmExecutiveName = (lead) => lead.crmExecutiveName || lead.createdByName || lead.createdBy || lead.generatedBy || "-";
   return (
-    <div className="table-wrap">
+    <div className={`table-wrap ${wrapperClassName}`.trim()}>
       <table className="table">
         <thead>
           <tr>
@@ -7625,8 +7917,8 @@ function LeadsTable({ leads, users, onEdit, onSave, onDelete }) {
           </tr>
         </thead>
         <tbody>
-          {leads.map((lead, index) => (
-            <tr key={lead.id}>
+          {orderedLeads.map((lead, index) => (
+            <tr key={`${lead.id || lead.name || "lead"}-${index}`}>
               <td>{index + 1}</td>
               <td><strong>{lead.name || lead.clientSourceName || "-"}</strong></td>
               <td>
@@ -7641,22 +7933,17 @@ function LeadsTable({ leads, users, onEdit, onSave, onDelete }) {
               </td>
               <td>{lead.clientSourceName || lead.source || lead.leadSource || lead.name || "-"}</td>
               <td>{lead.executiveName || getCrmExecutiveName(lead) || getAssignedName(lead)}</td>
-              <td>{lead.remark || lead.notes || "-"}</td>
+              <td><RemarkField value={lead.remark || lead.notes || ""} readOnly label={`Remark for ${lead.name || "lead"}`} /></td>
               <td>{lead.leadName || lead.program || lead.interest || lead.type || "-"}</td>
               <td><span className={badgeClass(lead.leadStatus || lead.status || "Select Status")}>{lead.leadStatus || lead.status || "Select Status"}</span></td>
               <td>
-                <input
-                  className="crm-remark-input"
-                  value={operationDrafts[lead.id] ?? lead.operationRemarks ?? ""}
-                  placeholder="Add operation remark"
-                  onChange={(event) => setOperationDrafts((current) => ({ ...current, [lead.id]: event.target.value }))}
-                />
+                <RemarkField value={operationDrafts[lead.id] ?? lead.operationRemarks ?? ""} placeholder="Add operation remark" label={`Operation remark for ${lead.name || "lead"}`} onChange={(value) => setOperationDrafts((current) => ({ ...current, [lead.id]: value }))} onCommit={(value) => onSave?.({ ...lead, operationRemarks: value })} />
               </td>
               <td>
                 <div className="row-actions">
-                  <button type="button" className="row-icon-btn edit" title="Edit" onClick={() => onEdit?.(lead)}><Edit3 size={14} /></button>
-                  <button type="button" className="row-icon-btn" title="Save" onClick={() => onSave?.({ ...lead, operationRemarks: operationDrafts[lead.id] ?? lead.operationRemarks ?? "" })}><CheckCheck size={14} /></button>
-                  <button type="button" className="row-icon-btn delete" title="Delete" onClick={() => onDelete?.(lead)}><Trash2 size={14} /></button>
+                  {onEdit && <button type="button" className="row-icon-btn edit" title="Edit" onClick={() => onEdit(lead)}><Edit3 size={14} /></button>}
+                  {onSave && <button type="button" className="row-icon-btn" title="Save" onClick={() => onSave({ ...lead, operationRemarks: operationDrafts[lead.id] ?? lead.operationRemarks ?? "" })}><CheckCheck size={14} /></button>}
+                  {onDelete && <button type="button" className="row-icon-btn delete" title="Delete" onClick={() => onDelete(lead)}><Trash2 size={14} /></button>}
                 </div>
               </td>
             </tr>
@@ -7665,6 +7952,151 @@ function LeadsTable({ leads, users, onEdit, onSave, onDelete }) {
       </table>
     </div>
   );
+}
+
+function AdminAllLeadsTable({ title = "All Leads", leads, users, adminName = "Admin", onEdit, onSave, onDelete, hideOwnership = false }) {
+  const [remarkDrafts, setRemarkDrafts] = useState({});
+  const [filters, setFilters] = useState({ search: "", fromDate: "", toDate: "", type: "All", enteredBy: "All", assignedTo: "All", status: "All" });
+  const assignableUsers = users.filter(isLeadAssignmentUser);
+  const [page, setPage] = useState(1);
+  const pageSize = 15;
+  const leadTime = (lead) => {
+    const raw = lead.updatedAt || lead.createdAt || lead.createdDate || lead.assignedDate || lead.date || "";
+    const parsed = Date.parse(String(raw));
+    if (!Number.isNaN(parsed)) return parsed;
+    const match = String(raw).match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
+    return match ? new Date(Number(match[3]), Number(match[2]) - 1, Number(match[1])).getTime() : 0;
+  };
+  const typeLabel = (lead) => {
+    const type = String(lead.listType || lead.type || "").trim().toLowerCase();
+    if (type === "training") return "Training";
+    if (type === "service" || type === "services") return "Service";
+    if (type === "internship") return "Internship";
+    const interest = String(lead.interest || lead.program || "").toLowerCase();
+    if (trainingCatalog.some((item) => item.toLowerCase() === interest)) return "Training";
+    if (serviceCatalog.some((item) => item.toLowerCase() === interest)) return "Service";
+    return lead.type || "-";
+  };
+  const statusValue = (lead) => /follow[ -]?up/i.test(String(lead.status || "")) ? "Pending" : (lead.status || "Pending");
+  const enteredByValue = (lead) => lead.enteredBy || lead.enteredByName || lead.crmExecutiveName || lead.createdByName || adminName;
+  const assignedName = (lead) => assignableUsers.find((user) => String(user.id || user._id) === String(lead.assignedTo))?.name || lead.assignedToName || "Unassigned";
+  const uniqueOptions = (values) => [...new Map(values
+    .map((value) => String(value || "").trim()).filter(Boolean)
+    .map((value) => [value.toLowerCase(), value])).values()].sort((a, b) => a.localeCompare(b));
+  const enteredByOptions = uniqueOptions(leads.map(enteredByValue));
+  const orderedLeads = [...leads].sort((left, right) => leadTime(right) - leadTime(left));
+  const filteredLeads = orderedLeads.filter((lead) => {
+    const search = filters.search.trim().toLowerCase();
+    const rawDate = lead.createdAt || lead.createdDate || lead.assignedDate || lead.date || "";
+    const parsedDate = new Date(rawDate);
+    const dateKey = /^\d{4}-\d{2}-\d{2}/.test(String(rawDate))
+      ? String(rawDate).slice(0, 10)
+      : Number.isNaN(parsedDate.getTime()) ? "" : parsedDate.toISOString().slice(0, 10);
+    const searchable = [lead.name, lead.phone, lead.contact, lead.city, lead.interest, lead.program, typeLabel(lead), enteredByValue(lead), assignedName(lead), lead.remark, lead.notes, statusValue(lead)]
+      .map((value) => String(value || "").toLowerCase()).join(" ");
+    return (!search || searchable.includes(search))
+      && (!filters.fromDate || dateKey >= filters.fromDate)
+      && (!filters.toDate || dateKey <= filters.toDate)
+      && (filters.type === "All" || typeLabel(lead) === filters.type)
+      && (filters.enteredBy === "All" || String(enteredByValue(lead)).toLowerCase() === filters.enteredBy.toLowerCase())
+      && (filters.assignedTo === "All" || (filters.assignedTo === "Unassigned" ? !lead.assignedTo : String(lead.assignedTo) === filters.assignedTo))
+      && (filters.status === "All" || statusValue(lead) === filters.status);
+  });
+  const totalPages = Math.max(1, Math.ceil(filteredLeads.length / pageSize));
+  const visibleLeads = filteredLeads.slice((page - 1) * pageSize, page * pageSize);
+  useEffect(() => {
+    setPage(1);
+  }, [filters.search, filters.fromDate, filters.toDate, filters.type, filters.enteredBy, filters.assignedTo, filters.status]);
+  useEffect(() => {
+    setPage((current) => Math.min(current, totalPages));
+  }, [totalPages]);
+  const updateFilter = (name, value) => setFilters((current) => ({ ...current, [name]: value }));
+  const resetFilters = () => setFilters({ search: "", fromDate: "", toDate: "", type: "All", enteredBy: "All", assignedTo: "All", status: "All" });
+  const exportFilteredPdf = () => {
+    const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+    pdf.setFontSize(16);
+    pdf.text("All Leads Report", 14, 14);
+    pdf.setFontSize(9);
+    pdf.setTextColor(100);
+    pdf.text(`Exported ${new Date().toLocaleString()} | ${filteredLeads.length} filtered lead(s)`, 14, 20);
+    autoTable(pdf, {
+      startY: 25,
+      head: [hideOwnership
+        ? ["S. No.", "Date", "Name", "Phone", "City", "Lead Type", "Interest", "Remark", "Status"]
+        : ["S. No.", "Date", "Name", "Phone", "City", "Lead Type", "Interest", "Entered By", "Assigned To", "Remark", "Status"]],
+      body: filteredLeads.map((lead, index) => hideOwnership ? [
+        index + 1,
+        formatAdminDate(lead.createdAt || lead.createdDate || lead.assignedDate || lead.date),
+        lead.name || "-", lead.phone || lead.contact || "-", lead.city || "-", typeLabel(lead),
+        lead.interest || lead.program || "-", lead.remark || lead.notes || "-", statusValue(lead),
+      ] : [
+        index + 1,
+        formatAdminDate(lead.createdAt || lead.createdDate || lead.assignedDate || lead.date),
+        lead.name || "-", lead.phone || lead.contact || "-", lead.city || "-", typeLabel(lead),
+        lead.interest || lead.program || "-", enteredByValue(lead), assignedName(lead),
+        lead.remark || lead.notes || "-", statusValue(lead),
+      ]),
+      styles: { fontSize: 7, cellPadding: 1.8, overflow: "linebreak" },
+      headStyles: { fillColor: [127, 78, 43] },
+      columnStyles: { 0: { cellWidth: 10 }, 1: { cellWidth: 18 }, 3: { cellWidth: 22 }, 9: { cellWidth: 30 } },
+    });
+    pdf.save(`all-leads-${new Date().toISOString().slice(0, 10)}.pdf`);
+  };
+  return <section className="panel admin-all-leads-panel">
+    <div className="panel-head admin-all-leads-head">
+      <div className="admin-leads-title-group">
+        <h3>{title}</h3>
+        {!hideOwnership && <div className="admin-lead-type-tabs" role="group" aria-label="Quick filter by lead type">
+          <button type="button" className={filters.type === "Training" ? "active" : ""} aria-pressed={filters.type === "Training"} onClick={() => updateFilter("type", filters.type === "Training" ? "All" : "Training")}>Training</button>
+          <button type="button" className={filters.type === "Service" ? "active" : ""} aria-pressed={filters.type === "Service"} onClick={() => updateFilter("type", filters.type === "Service" ? "All" : "Service")}>Service</button>
+          <button type="button" className={filters.type === "Internship" ? "active" : ""} aria-pressed={filters.type === "Internship"} onClick={() => updateFilter("type", filters.type === "Internship" ? "All" : "Internship")}>Internship</button>
+        </div>}
+      </div>
+      <button type="button" className="primary-button admin-leads-export" onClick={exportFilteredPdf} disabled={!filteredLeads.length}><FileText size={16} /> Export PDF ({filteredLeads.length})</button>
+    </div>
+    <div className="panel-body">
+      <div className="admin-all-leads-directory">
+        <div className={`admin-leads-toolbar ${hideOwnership ? "ownership-hidden" : ""}`}>
+      <div className="admin-leads-main-filters">
+      <div className="admin-leads-search"><Search size={17} /><input value={filters.search} onChange={(event) => updateFilter("search", event.target.value)} placeholder="Search name, phone, city, interest..." /></div>
+      <select aria-label="Filter by lead type" value={filters.type} onChange={(event) => updateFilter("type", event.target.value)}><option value="All">All Lead Types</option>{["Service", "Training", "Internship"].map((type) => <option key={type}>{type}</option>)}</select>
+      {!hideOwnership && <select aria-label="Filter by entered by" value={filters.enteredBy} onChange={(event) => updateFilter("enteredBy", event.target.value)}><option value="All">All Entered By</option>{enteredByOptions.map((name) => <option key={name} value={name}>{name}</option>)}</select>}
+      {!hideOwnership && <select aria-label="Filter by assigned user" value={filters.assignedTo} onChange={(event) => updateFilter("assignedTo", event.target.value)}><option value="All">All Assigned Users</option><option value="Unassigned">Unassigned</option>{assignableUsers.map((user) => <option key={user.id || user._id} value={user.id || user._id}>{user.name || user.username}</option>)}</select>}
+      <select aria-label="Filter by status" value={filters.status} onChange={(event) => updateFilter("status", event.target.value)}><option value="All">All Statuses</option>{["Pending", "Interested", "Not Interested", "Converted", "Lost"].map((status) => <option key={status}>{status}</option>)}</select>
+      </div>
+      <div className="admin-leads-date-row">
+      <span className="admin-leads-date-caption">Lead creation date</span>
+      <label className="table-date-filter"><span>From</span><input aria-label="From date" type="date" max={filters.toDate || undefined} value={filters.fromDate} onChange={(event) => updateFilter("fromDate", event.target.value)} /></label>
+      <label className="table-date-filter"><span>To</span><input aria-label="To date" type="date" min={filters.fromDate} value={filters.toDate} onChange={(event) => updateFilter("toDate", event.target.value)} /></label>
+      <button type="button" className="ghost-button admin-leads-reset" onClick={resetFilters}>Reset</button>
+      </div>
+        </div>
+        <div className={`table-wrap admin-all-leads-table ${hideOwnership ? "ownership-hidden" : ""}`}>
+    <table className="table">
+      <thead><tr><th>S. No.</th><th>Lead Create Date</th><th>Name</th><th>Phone</th><th>City</th><th>Lead Type</th><th>Interest</th>{!hideOwnership && <th>Entered By</th>}{!hideOwnership && <th>Assigned To</th>}<th>Remark</th><th>Status</th><th>Action</th></tr></thead>
+      <tbody>
+        {!filteredLeads.length && <tr><td className="panel-empty" colSpan={hideOwnership ? 10 : 12}>{leads.length ? "No leads match the selected filters." : "No leads have been created yet."}</td></tr>}
+        {visibleLeads.map((lead, index) => <tr key={`${lead.id || lead._id || lead.name || "lead"}:${lead.listType || "list"}:${lead.phone || lead.contact || "contact"}:${index}`}>
+          <td>{(page - 1) * pageSize + index + 1}</td><td>{formatAdminDate(lead.createdAt || lead.createdDate || lead.assignedDate || lead.date)}</td><td><strong>{lead.name || "-"}</strong></td><td>{lead.phone || lead.contact || "-"}</td><td>{lead.city || "-"}</td><td><span className="lead-type-label">{typeLabel(lead)}</span></td><td title={lead.interest}>{lead.interest || lead.program || "-"}</td>{!hideOwnership && <td>{lead.enteredBy || lead.enteredByName || lead.crmExecutiveName || lead.createdByName || adminName}</td>}
+          {!hideOwnership && <td><select className="inline-select" aria-label={`Assign ${lead.name}`} value={lead.assignedTo || ""} onChange={(event) => onSave?.({ ...lead, assignedTo: event.target.value, assignedToName: assignableUsers.find((user) => String(user.id || user._id) === event.target.value)?.name || "" })}><option value="">Unassigned</option>{lead.assignedTo && !assignableUsers.some((user) => String(user.id || user._id) === String(lead.assignedTo)) && <option value={lead.assignedTo}>{lead.assignedToName || lead.assignedTo}</option>}{assignableUsers.map((user) => <option key={user.id || user._id} value={user.id || user._id}>{user.name || user.username}</option>)}</select></td>}
+          <td><RemarkField value={remarkDrafts[lead.id] ?? lead.remark ?? lead.notes ?? ""} onChange={(value) => setRemarkDrafts((current) => ({ ...current, [lead.id]: value }))} onCommit={(value) => onSave?.({ ...lead, remark: value, notes: value })} label={`Remark for ${lead.name || "lead"}`} /></td>
+          <td><select className={`inline-select lead-status-select ${statusValue(lead).toLowerCase().replace(/\s+/g, "-")}`} aria-label={`Status for ${lead.name}`} value={statusValue(lead)} onChange={(event) => onSave?.({ ...lead, status: event.target.value })}>{["Pending", "Interested", "Not Interested", "Converted", "Lost"].map((status) => <option key={status}>{status}</option>)}</select></td>
+          <td><div className="row-actions"><button type="button" className="row-icon-btn edit" title="Edit" onClick={() => onEdit?.(lead)}><Edit3 size={14} /></button><button type="button" className="row-icon-btn delete" title="Delete" onClick={() => onDelete?.(lead)}><Trash2 size={14} /></button></div></td>
+        </tr>)}
+      </tbody>
+    </table>
+    <div className="admin-leads-pagination">
+      <span>Showing {filteredLeads.length ? (page - 1) * pageSize + 1 : 0}-{Math.min(page * pageSize, filteredLeads.length)} of {filteredLeads.length} filtered lead(s)</span>
+      <div className="admin-leads-pagination-actions">
+        <button type="button" className="ghost-button compact" disabled={page === 1} onClick={() => setPage((current) => Math.max(1, current - 1))}>Previous</button>
+        <span>Page {page} of {totalPages}</span>
+        <button type="button" className="ghost-button compact" disabled={page === totalPages} onClick={() => setPage((current) => Math.min(totalPages, current + 1))}>Next</button>
+      </div>
+    </div>
+        </div>
+      </div>
+    </div>
+  </section>;
 }
 
 function TaskTable({ tasks }) {
@@ -7685,15 +8117,15 @@ function TaskTable({ tasks }) {
           <tr key={task.id}>
             <td>
               <div className="person-cell">
-                <div className="avatar soft">{initials(task.emp)}</div>
-                <strong>{task.emp}</strong>
+                <div className="avatar soft">{initials(task.emp || task.assignee || "CRM")}</div>
+                <strong>{task.emp || task.assignee || "Unassigned"}</strong>
               </div>
             </td>
             <td>{task.title}</td>
             <td>
               <span className={badgeClass(task.priority)}>{task.priority}</span>
             </td>
-            <td>{task.due}</td>
+            <td>{task.due || task.dueDate || "-"}</td>
             <td>
               <span className={badgeClass(task.status)}>{task.status}</span>
             </td>

@@ -1277,7 +1277,7 @@ export default function StudentDashboard({ user, onLogout, courses = [], notific
     const refreshWhenVisible = () => {
       if (document.visibilityState === "visible") onRefreshNotifications();
     };
-    const interval = window.setInterval(refreshWhenVisible, 60000);
+    const interval = window.setInterval(refreshWhenVisible, 5 * 60 * 1000);
     document.addEventListener("visibilitychange", refreshWhenVisible);
     return () => {
       window.clearInterval(interval);

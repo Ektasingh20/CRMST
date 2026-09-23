@@ -2,6 +2,39 @@ const TOKEN_KEY = "crmst-api-token";
 const SESSION_KEY = "crmst-current-user";
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "/api";
 
+export function subscribeCallListChanges(onChange, onReady) {
+  const controller = new AbortController();
+  let retry;
+  const connect = async () => {
+    try {
+      const token = getToken();
+      if (!token) return;
+      const response = await fetch(`${API_BASE}/calling/list-data/events`, {
+        headers: { Authorization: `Bearer ${token}` }, signal: controller.signal,
+      });
+      if (!response.ok || !response.body) throw new Error("Call stream unavailable");
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (!controller.signal.aborted) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let boundary;
+        while ((boundary = buffer.indexOf("\n\n")) >= 0) {
+          const message = buffer.slice(0, boundary); buffer = buffer.slice(boundary + 2);
+          if (!message.startsWith("data: ")) continue;
+          const event = JSON.parse(message.slice(6));
+          if (event.ready) onReady?.(); else onChange(event);
+        }
+      }
+    } catch { /* Reconnect and refresh the snapshot after a connection interruption. */ }
+    if (!controller.signal.aborted) retry = window.setTimeout(connect, 5000);
+  };
+  connect();
+  return () => { controller.abort(); window.clearTimeout(retry); };
+}
+
 function safeStorageGet(key) {
   try {
     return window.localStorage.getItem(key);
@@ -165,6 +198,10 @@ export async function fetchUsers() {
   return request("/users");
 }
 
+export async function fetchAssignableUsers() {
+  return request("/users/assignees");
+}
+
 export async function createUser(user) {
   return request("/users", {
     method: "POST",
@@ -192,8 +229,8 @@ export async function deleteUser(id) {
   });
 }
 
-export async function fetchLeads() {
-  return request("/leads");
+export async function fetchLeads(fresh = false) {
+  return request(`/leads${fresh ? "?fresh=1" : ""}`);
 }
 
 export async function createLead(lead) {
@@ -351,6 +388,33 @@ export async function saveCourseLessonProgress(courseId, lessonId, progress) {
 
 export async function fetchCourseUploadAuth() {
   return request("/courses/upload-auth");
+}
+
+export async function updateMyProfile(profile) {
+  return request("/users/me/profile", {
+    method: "PUT",
+    body: JSON.stringify(profile),
+  });
+}
+
+export async function fetchAppNotifications() { return request("/notifications/me"); }
+export async function markAppNotificationRead(id) { return request(`/notifications/me/${encodeURIComponent(id)}/read`, { method: "PATCH" }); }
+
+export async function fetchCallListData(type = "") {
+  return request(`/calling/list-data${type ? `?type=${encodeURIComponent(type)}` : ""}`);
+}
+
+export async function importCallListData(payload) {
+  return request("/calling/list-data/import", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export async function updateCallListData(type, id, patch, ownerAssignedTo = "") {
+  return request(`/calling/list-data/${encodeURIComponent(type)}/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify({ ...patch, lookupAssignedTo: ownerAssignedTo }) });
+}
+
+export async function deleteCallListData(type, id, assignedTo = "") {
+  const query = assignedTo ? `?assignedTo=${encodeURIComponent(assignedTo)}` : "";
+  return request(`/calling/list-data/${encodeURIComponent(type)}/${encodeURIComponent(id)}${query}`, { method: "DELETE" });
 }
 
 export async function shareCourseCertificate(courseId, image) {

@@ -2,7 +2,7 @@ import { getFirestore } from "firebase-admin/firestore";
 import { isAdmin } from "../utils/roles.js";
 
 const VALID_STATUSES = new Set(["pending", "contacted", "approved", "rejected", "completed"]);
-const REQUEST_CACHE_TTL_MS = 15 * 1000;
+const REQUEST_CACHE_TTL_MS = 2 * 60 * 1000;
 const studentRequestCache = new Map();
 let adminRequestCache = { value: null, expiresAt: 0 };
 
@@ -176,6 +176,9 @@ export async function updateEnrollmentRequestStatus(req, res) {
     }
 
     const remark = req.body?.remark === undefined ? String(snapshot.data()?.remark || "") : String(req.body.remark || "").trim();
+    if (normalizeStatus(snapshot.data()?.status) === status && String(snapshot.data()?.remark || "") === remark) {
+      return res.json({ id: ref.id, ...snapshot.data(), status, remark });
+    }
     const payload = { ...snapshot.data(), status, remark, updatedAt: new Date().toISOString() };
     await ref.set(payload, { merge: true });
     invalidateRequestCaches(studentId);
