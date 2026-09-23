@@ -1,4 +1,5 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
+import { demoProjects } from "./demoProjects";
 import {
   LayoutDashboard,
   CalendarCheck,
@@ -19,6 +20,13 @@ import {
   Plus,
   X,
   Menu,
+  FolderKanban,
+  ClipboardCheck,
+  Bug,
+  MessageSquare,
+  CircleCheck,
+  AlertCircle,
+  FileSearch,
 } from "lucide-react";
 
 /* ============================================================
@@ -247,6 +255,10 @@ img { display: block; max-width: 100%; }
 .table th { color: var(--text-soft); font-size: 0.74rem; letter-spacing: 0.12em; text-transform: uppercase; background: rgba(245, 237, 228, 0.96); }
 .table tbody tr:hover { background: rgba(245, 240, 236, 0.9); }
 .table tbody tr:last-child td { border-bottom: 0; }
+.attendance-report-table { min-width: 0; table-layout: fixed; font-size: 0.78rem; }
+.attendance-report-table th, .attendance-report-table td { padding: 11px 8px; overflow-wrap: anywhere; }
+.attendance-report-table th { font-size: 0.66rem; letter-spacing: 0.08em; }
+.attendance-report-table .badge { padding: 0 8px; font-size: 0.72rem; }
 
 .badge { display: inline-flex; align-items: center; justify-content: center; height: 30px; padding: 0 12px; border-radius: 999px; font-size: 0.82rem; font-weight: 700; }
 .badge.success { color: var(--success); background: var(--success-soft); }
@@ -347,6 +359,22 @@ img { display: block; max-width: 100%; }
 .icon-button.danger:hover { color: var(--danger); border-color: rgba(167, 69, 57, 0.3); }
 
 .dark-toggle { display: flex; align-items: center; gap: 8px; }
+.project-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 16px; padding: 18px 20px 20px; }
+.project-card { padding: 18px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface-strong); display: grid; gap: 14px; }
+.project-card h4 { margin: 0; font-size: 1rem; }
+.project-card p { margin: 0; color: var(--text-soft); font-size: 0.84rem; line-height: 1.6; }
+.project-meta { display: flex; flex-wrap: wrap; gap: 8px; color: var(--text-soft); font-size: 0.78rem; }
+.project-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.project-actions button { min-height: 38px; padding: 0 12px; font-size: 0.8rem; }
+.detail-list { display: grid; gap: 12px; padding: 18px 20px 20px; }
+.detail-row { display: grid; grid-template-columns: 140px minmax(0, 1fr); gap: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--line-soft); }
+.detail-row strong { color: var(--text-soft); font-size: 0.8rem; }
+.detail-row span { color: var(--text); line-height: 1.55; }
+.queue-list { display: grid; gap: 10px; padding: 16px 20px 20px; }
+.queue-item { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; padding: 15px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface-strong); }
+.queue-item h4 { margin: 0 0 5px; font-size: 0.92rem; }
+.queue-item p { margin: 0; color: var(--text-soft); font-size: 0.82rem; line-height: 1.5; }
+@media (max-width: 760px) { .detail-row { grid-template-columns: 1fr; gap: 4px; } .queue-item { flex-direction: column; } }
 `;
 
 /* ============================================================
@@ -354,26 +382,57 @@ img { display: block; max-width: 100%; }
    ============================================================ */
 
 const NAV_ITEMS = [
-  { key: "dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { key: "mark-attendance", label: "Mark Attendance", icon: CalendarCheck },
-  { key: "attendance-report", label: "Attendance Report", icon: ClipboardList },
-  { key: "settings", label: "Settings", icon: SettingsIcon },
-  { key: "my-task", label: "My Task", icon: CheckSquare },
-  { key: "all-task", label: "All Task", icon: ListChecks },
-  { key: "leave-request", label: "Leave Request", icon: UserCircle2 },
+  { key: "dashboard", label: "Dashboard", icon: LayoutDashboard, group: "Overview" },
+  { key: "mark-attendance", label: "Mark Attendance", icon: CalendarCheck, group: "Attendance" },
+  { key: "attendance-report", label: "Attendance Reports", icon: ClipboardList, group: "Attendance" },
+  { key: "new-projects", label: "New Projects", icon: FolderKanban, group: "Projects" },
+  { key: "active-projects", label: "Active Projects", icon: ClipboardCheck, group: "Projects" },
+  { key: "completed-projects", label: "Completed Projects", icon: CircleCheck, group: "Projects" },
+  { key: "my-tasks", label: "My Tasks", icon: CheckSquare, group: "Tasks" },
+  { key: "pending-tasks", label: "Pending Tasks", icon: ListChecks, group: "Tasks" },
+  { key: "overdue-tasks", label: "Overdue Tasks", icon: AlertCircle, group: "Tasks" },
+  { key: "open-bugs", label: "Open Bugs", icon: Bug, group: "Support" },
+  { key: "clarification", label: "Clarification", icon: MessageSquare, group: "Support" },
+  { key: "settings", label: "Settings", icon: SettingsIcon, group: "Account" },
+  { key: "leave-request", label: "Leave Request", icon: UserCircle2, group: "Account" },
 ];
+
+const NAV_GROUPS = ["Overview", "Attendance", "Projects", "Tasks", "Support", "Account"];
 
 const TITLES = {
   dashboard: "Dashboard",
   "mark-attendance": "Mark Attendance",
-  "attendance-report": "Attendance Report",
+  "attendance-report": "Attendance Reports",
+  "new-projects": "New Projects",
+  "active-projects": "Active Projects",
+  "my-tasks": "My Tasks",
+  "pending-tasks": "Pending Tasks",
+  "overdue-tasks": "Overdue Tasks",
+  "open-bugs": "Open Bugs",
+  clarification: "Clarification",
+  "completed-projects": "Completed Projects",
+  "project-details": "Project Details",
+  "project-review": "Project Review",
   settings: "Account Settings",
-  "my-task": "My Task",
-  "all-task": "All Task",
   "leave-request": "Leave Request",
 };
 
 const EMPLOYEE = { name: "Ekta Singh", crmId: 60, branch: "Ajmer", designation: "Full Stack Developer", department: "IT" };
+
+const INITIAL_PROJECTS = [
+  ...demoProjects,
+  { id: 1, name: "CRM Lead Workflow", projectName: "CRM Lead Workflow", client: "System Technologies", priority: "High", due: "30 Sep 2026", owner: "Operation Team", description: "Improve lead assignment, follow-up visibility, and conversion reporting.", structure: "Discovery > UI review > API integration > QA", assignedEmployeeId: "60", status: "New" },
+  { id: 2, name: "Employee Self Service", projectName: "Employee Self Service", client: "Internal Platform", priority: "Medium", due: "12 Oct 2026", owner: "HR Team", description: "Create a self-service workspace for attendance, leave, and employee documents.", structure: "Requirements > Prototype > Development > UAT", assignedEmployeeId: "60", status: "New" },
+  { id: 3, name: "Student Progress Portal", projectName: "Student Progress Portal", client: "Learning Program", priority: "Medium", due: "18 Oct 2026", owner: "Education Team", description: "Add progress tracking, task submissions, and certificate readiness views.", structure: "Planning > Frontend > Testing > Release", assignedEmployeeId: "60", status: "New" },
+];
+
+const WORK_ITEMS = {
+  "pending-tasks": { title: "Pending Tasks", subtitle: "Tasks waiting for your next action.", icon: ListChecks, items: [{ title: "Review CRM lead form fields", detail: "Confirm validation and mobile layout before the next release.", meta: "Due 24 Sep 2026", status: "Pending" }, { title: "Prepare product demo", detail: "Collect the latest workflow screenshots for stakeholders.", meta: "Due 26 Sep 2026", status: "Pending" }] },
+  "overdue-tasks": { title: "Overdue Tasks", subtitle: "Work items that need immediate attention.", icon: AlertCircle, items: [{ title: "Testing by Developer", detail: "Complete regression checks from the operation panel.", meta: "Due 18 Sep 2026", status: "Overdue" }] },
+  "open-bugs": { title: "Open Bugs", subtitle: "Reported issues assigned to the IT team.", icon: Bug, items: [{ title: "Lead filter resets on refresh", detail: "Saved filters are lost when returning to the leads screen.", meta: "Reported by Operations", status: "Open" }, { title: "Attendance export column width", detail: "Long employee names overlap the final status column in PDF export.", meta: "Reported by HR", status: "Open" }] },
+  clarification: { title: "Clarification", subtitle: "Missing requirements and questions awaiting an answer.", icon: MessageSquare, items: [{ title: "Project access levels", detail: "Confirm which roles can approve a project review and edit its milestones.", meta: "Waiting for Admin", status: "Needs clarification" }, { title: "Portal notification rules", detail: "Should completed task notifications be sent by email or only in-app?", meta: "Waiting for Product", status: "Needs clarification" }] },
+  "completed-projects": { title: "Completed Projects", subtitle: "Projects delivered by the IT team.", icon: CircleCheck, items: [{ title: "Attendance Reporting Refresh", detail: "Monthly filters and export actions are available to employees.", meta: "Completed 12 Sep 2026", status: "Completed" }, { title: "Profile Documents", detail: "Employee KYC and document upload cards are now available.", meta: "Completed 05 Sep 2026", status: "Completed" }] },
+};
 
 const INITIAL_ATTENDANCE = [
   { sn: 1, id: 60, name: "Ekta Singh", dept: "IT", branch: "Ajmer", date: "15-09-2026", day: "Tuesday", checkin: "12:20:00", checkout: "00:00:00", hours: "00:00:00", remark: "", status: "Present" },
@@ -472,25 +531,27 @@ function Sidebar({ page, setPage, mobileOpen, setMobileOpen, onLogout }) {
         </div>
 
         <nav className="nav">
-          <div className="nav-group">
-            <p>Workspace</p>
-            {NAV_ITEMS.map((item) => {
-              const Icon = item.icon;
-              const active = page === item.key;
-              return (
-                <button
-                  key={item.key}
-                  className={`nav-item${active ? " active" : ""}`}
-                  onClick={() => { setPage(item.key); setMobileOpen(false); }}
-                >
-                  <span className="nav-item-left">
-                    <Icon size={17} />
-                    <span>{item.label}</span>
-                  </span>
-                </button>
-              );
-            })}
-          </div>
+          {NAV_GROUPS.map((group) => (
+            <div className="nav-group" key={group}>
+              <p>{group}</p>
+              {NAV_ITEMS.filter((item) => item.group === group).map((item) => {
+                const Icon = item.icon;
+                const active = page === item.key;
+                return (
+                  <button
+                    key={item.key}
+                    className={`nav-item${active ? " active" : ""}`}
+                    onClick={() => { setPage(item.key); setMobileOpen(false); }}
+                  >
+                    <span className="nav-item-left">
+                      <Icon size={17} />
+                      <span>{item.label}</span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          ))}
         </nav>
 
         <div className="sidebar-footer">
@@ -507,7 +568,9 @@ function Sidebar({ page, setPage, mobileOpen, setMobileOpen, onLogout }) {
    PAGE: DASHBOARD
    ============================================================ */
 
-function DashboardPage() {
+function DashboardPage({ projects }) {
+  const activeProjects = projects.filter((project) => project.status === "Active");
+  const pendingTasks = activeProjects.flatMap((project) => project.tasks || []).filter((task) => !["completed", "done"].includes(String(task.status || "Pending").toLowerCase()));
   return (
     <div style={{ display: "grid", gap: 18 }}>
       <div className="hero-card dashboard-hero">
@@ -527,11 +590,19 @@ function DashboardPage() {
         </div>
       </div>
 
+      <div className="project-grid">
+        {[
+          ["New Projects", projects.filter((project) => project.status === "New").length],
+          ["Active Projects", activeProjects.length],
+          ["Completed Projects", projects.filter((project) => project.status === "Completed").length],
+          ["Pending Tasks", pendingTasks.length],
+        ].map(([label, count]) => <div className="project-card" key={label}><p className="eyebrow">{label}</p><h3>{count}</h3></div>)}
+      </div>
       <div className="panel" style={{ maxWidth: 480 }}>
         <div className="panel-head"><h3>Reminder</h3></div>
         <div className="panel-body" style={{ padding: "8px 20px 20px" }}>
           <p style={{ margin: 0, color: "var(--text-soft)", fontSize: "0.88rem" }}>
-            You're all caught up — nothing needs your attention right now.
+            {pendingTasks.length ? `${pendingTasks.length} tasks need your attention. Check Pending Tasks and Overdue Tasks to plan your day.` : "You are all caught up."}
           </p>
         </div>
       </div>
@@ -539,17 +610,119 @@ function DashboardPage() {
   );
 }
 
+function ProjectCard({ project, onView, onReview }) {
+  return (
+    <article className="project-card">
+      <div className="hero-card-top">
+        <div><p className="eyebrow">{project.client}</p><h4>{project.name}</h4></div>
+        <Badge status={project.status} />
+      </div>
+      <p>{project.description}</p>
+      <div className="project-meta"><span>Priority: {project.priority}</span><span>Due: {project.due}</span></div>
+      <div className="project-actions">
+        <button className="ghost-button" onClick={() => onView(project)}><Eye size={14} /> View</button>
+        {project.status === "New" && <button className="primary-button" onClick={() => onReview(project)}><FileSearch size={14} /> Review</button>}
+      </div>
+    </article>
+  );
+}
+
+function ProjectsPage({ title, subtitle, projects, onView, onReview }) {
+  return (
+    <div className="panel">
+      <div className="panel-head"><h3>{title}</h3><p className="panel-subtitle">{subtitle}</p></div>
+      {projects.length === 0 ? <p className="panel-empty">No projects in this workspace yet.</p> : <div className="project-grid">{projects.map((project) => <ProjectCard key={project.id} project={project} onView={onView} onReview={onReview} />)}</div>}
+    </div>
+  );
+}
+
+function ProjectDetailsPage({ project, onBack, onReview }) {
+  if (!project) return <p className="panel-empty">Project not found.</p>;
+  return (
+    <div className="panel">
+      <div className="panel-head" style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+        <div><p className="eyebrow">Project Details</p><h3>{project.name}</h3></div>
+        <button className="ghost-button" onClick={onBack}>Back</button>
+      </div>
+      <div className="detail-list">
+        {[['Project ID', project.projectId || project.id], ['Client', project.client], ['Service', project.service], ['Owner', project.owner || project.assignedEmployeeName], ['Priority', project.priority], ['Start date', project.startDate], ['Due date', project.expectedDelivery || project.due], ['Required features', project.requiredFeatures], ['Pages / modules', project.pagesModules], ['Technology', project.technologyRequirements], ['Design', project.designRequirements], ['Project structure', project.structure], ['Description', project.description], ['Special instructions', project.specialInstructions]].filter(([, value]) => value).map(([label, value]) => <div className="detail-row" key={label}><strong>{label}</strong><span>{value}</span></div>)}
+        {project.status === "New" && <div className="project-actions"><button className="primary-button" onClick={() => onReview(project)}><FileSearch size={14} /> Open Review</button></div>}
+      </div>
+    </div>
+  );
+}
+
+function ProjectReviewPage({ project, onBack, onAccept, onReject }) {
+  if (!project) return <p className="panel-empty">Project not found.</p>;
+  return (
+    <div className="panel">
+      <div className="panel-head" style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+        <div><p className="eyebrow">Project Review</p><h3>{project.name}</h3></div>
+        <button className="ghost-button" onClick={onBack}>Back</button>
+      </div>
+      <div className="detail-list">
+        <p style={{ margin: 0, color: "var(--text-soft)", lineHeight: 1.7 }}>Review the proposed project structure before accepting it into your active workspace.</p>
+        {[['Project ID', project.projectId || project.id], ['Client', project.client], ['Service', project.service], ['Project owner', project.owner || project.assignedEmployeeName], ['Priority', project.priority], ['Start date', project.startDate], ['Target date', project.expectedDelivery || project.due], ['Required features', project.requiredFeatures], ['Pages / modules', project.pagesModules], ['Technology', project.technologyRequirements], ['Design', project.designRequirements], ['Structure', project.structure], ['Scope', project.description], ['Special instructions', project.specialInstructions]].filter(([, value]) => value).map(([label, value]) => <div className="detail-row" key={label}><strong>{label}</strong><span>{value}</span></div>)}
+        <div className="project-actions"><button className="primary-button crm-upload-button" onClick={() => onAccept(project)}><CircleCheck size={15} /> Accept</button><button className="primary-button danger-button" onClick={() => onReject(project)}><X size={15} /> Reject</button></div>
+      </div>
+    </div>
+  );
+}
+
+function WorkQueuePage({ type, projects = [] }) {
+  const config = WORK_ITEMS[type];
+  const Icon = config.icon;
+  const projectItems = projects.flatMap((project) => {
+    const taskItems = Array.isArray(project.tasks) ? project.tasks : [];
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const values = type === "open-bugs"
+      ? project.bugs
+      : type === "clarification"
+        ? project.clarifications
+        : type === "pending-tasks" || type === "overdue-tasks"
+          ? taskItems.filter((task) => !["completed", "done"].includes(String(task.status || "pending").toLowerCase()) && (type !== "overdue-tasks" || (task.dueDate || task.due) && new Date(`${task.dueDate || task.due}T00:00:00`) < today))
+          : [];
+    return (Array.isArray(values) ? values : []).map((item, index) => ({
+      title: item.title || item.name || `${type === "open-bugs" ? "Bug" : "Question"} ${index + 1}`,
+      detail: item.detail || item.description || String(item),
+      meta: project.projectName || project.name,
+      status: type === "overdue-tasks" ? "Overdue" : item.status || (type === "open-bugs" ? "Open" : type === "pending-tasks" ? "Pending" : "Needs clarification"),
+    }));
+  });
+  const items = projectItems;
+  return (
+    <div className="panel">
+      <div className="panel-head"><h3><Icon size={17} style={{ verticalAlign: "-3px", marginRight: 7 }} />{config.title}</h3><p className="panel-subtitle">{config.subtitle}</p></div>
+      <div className="queue-list">{items.map((item, index) => <div className="queue-item" key={`${item.title}-${index}`}><div><h4>{item.title}</h4><p>{item.detail}</p><p style={{ marginTop: 7, color: "var(--text-faint)" }}>{item.meta}</p></div><Badge status={item.status} /></div>)}</div>
+      {!items.length && <p className="panel-empty">No items assigned to your active projects.</p>}
+    </div>
+  );
+}
+
+function ProjectTasksPage({ projects }) {
+  const tasks = projects.flatMap((project) => (Array.isArray(project.tasks) ? project.tasks : []).map((task) => ({ ...task, projectName: project.projectName || project.name })));
+  return <div className="panel"><div className="panel-head"><h3>My Tasks</h3><p className="panel-subtitle">Tasks belonging to your active projects.</p></div><div className="queue-list">{tasks.map((task, index) => <div className="queue-item" key={`${task.id || task.title}-${index}`}><div><h4>{task.title || task.name || "Project task"}</h4><p>{task.description || task.detail || "Assigned project work"}</p><p style={{ marginTop: 7, color: "var(--text-faint)" }}>{task.projectName} {task.dueDate || task.due ? `· Due ${task.dueDate || task.due}` : ""}</p></div><Badge status={task.status || "Pending"} /></div>)}{!tasks.length && <p className="panel-empty">No tasks assigned to your active projects.</p>}</div></div>;
+}
+
 /* ============================================================
    PAGE: MARK ATTENDANCE
    ============================================================ */
 
 function MarkAttendancePage({ notify }) {
-  const [status, setStatus] = useState("");
-  const [remark, setRemark] = useState("");
+  const [status, setStatus] = useState("Present");
+  const [remark, setRemark] = useState("Working on support tickets and course progress updates.");
+  const [checkedIn, setCheckedIn] = useState(false);
   const [checkedOut, setCheckedOut] = useState(false);
 
+  const handleCheckIn = () => {
+    if (!status) { notify("Please select a status before checking in."); return; }
+    setCheckedIn(true);
+    notify("Checked in successfully.");
+  };
+
   const handleCheckOut = () => {
-    if (!status) { notify("Please select a status before checking out."); return; }
+    if (!checkedIn) return;
     setCheckedOut(true);
     notify("Checked out successfully.");
   };
@@ -565,17 +738,20 @@ function MarkAttendancePage({ notify }) {
           <select value={status} onChange={(e) => setStatus(e.target.value)}>
             <option value="">Select Status</option>
             <option>Present</option>
-            <option>Half Day</option>
-            <option>Work From Home</option>
             <option>Absent</option>
+            <option>Leave</option>
           </select>
         </Field>
         <Field label="Remark">
           <input placeholder="Remark (optional)" value={remark} onChange={(e) => setRemark(e.target.value)} />
         </Field>
-        <Field label="Check Out">
-          <button onClick={handleCheckOut} disabled={checkedOut} className="primary-button full-width danger-button">
-            {checkedOut ? "Checked Out" : "Check Out"}
+        <Field label={checkedOut ? "Attendance Complete" : checkedIn ? "Check Out" : "Check In"}>
+          <button
+            onClick={checkedOut ? undefined : checkedIn ? handleCheckOut : handleCheckIn}
+            disabled={checkedOut}
+            className="primary-button full-width danger-button"
+          >
+            {checkedOut ? "Checked Out" : checkedIn ? "Check Out" : "Check In"}
           </button>
         </Field>
       </div>
@@ -637,7 +813,7 @@ function AttendanceReportPage({ notify }) {
 
       <div className="panel">
         <div className="table-wrap">
-          <table className="table">
+          <table className="table attendance-report-table">
             <thead>
               <tr>
                 {["S.N", "Emp ID", "Emp Name", "Department", "Branch", "Date", "Day", "Check-in", "Check-out", "Total Hours", "Remarks", "Status"].map((h) => <th key={h}>{h}</th>)}
@@ -1037,10 +1213,50 @@ function LeaveRequestPage({ notify }) {
    APP
    ============================================================ */
 
-export default function App({ onLogout }) {
+export default function App({ user, projects, onProjectsChange, onLogout }) {
   const [page, setPage] = useState("dashboard");
   const [mobileOpen, setMobileOpen] = useState(false);
   const [toast, setToast] = useState("");
+  const [localProjects, setLocalProjects] = useState(projects === undefined ? INITIAL_PROJECTS : projects);
+  const [selectedProjectId, setSelectedProjectId] = useState(null);
+
+  useEffect(() => {
+    if (projects !== undefined) setLocalProjects(Array.isArray(projects) ? projects : []);
+  }, [projects]);
+
+  const employeeIdentity = new Set([
+    user?.id,
+    user?._id,
+    user?.crmId,
+    user?.username,
+    user?.email,
+    user?.name,
+    EMPLOYEE.crmId,
+    EMPLOYEE.name,
+  ].filter(Boolean).map((value) => String(value).trim().toLowerCase()));
+  const employeeProjects = localProjects
+    .filter((project) => [
+      project.assignedEmployeeId,
+      project.assignedTo,
+      project.assignedEmployeeUsername,
+      project.assignedEmployeeEmail,
+      project.assignedEmployeeName,
+    ].filter(Boolean).some((value) => employeeIdentity.has(String(value).trim().toLowerCase())))
+    .map((project) => ({
+      ...project,
+      name: project.name || project.projectName || "Untitled project",
+      due: project.due || project.expectedDelivery || "No delivery date",
+    }));
+  const updateProjects = (updater) => {
+    setLocalProjects((current) => {
+      const next = typeof updater === "function" ? updater(current) : updater;
+      if (projects !== undefined) onProjectsChange?.(next);
+      if (projects !== undefined && !onProjectsChange) {
+        try { window.localStorage.setItem("crmst-projects-v1", JSON.stringify(next)); } catch {}
+      }
+      return next;
+    });
+  };
 
   const notify = (msg) => {
     setToast(msg);
@@ -1048,14 +1264,38 @@ export default function App({ onLogout }) {
     notify._t = window.setTimeout(() => setToast(""), 2600);
   };
 
+  const selectedProject = employeeProjects.find((project) => String(project.id) === String(selectedProjectId));
+  const openProject = (project, destination) => {
+    setSelectedProjectId(project.id);
+    setPage(destination);
+  };
+  const acceptProject = (project) => {
+    updateProjects((current) => current.map((item) => String(item.id) === String(project.id) ? { ...item, status: "Active" } : item));
+    setPage("active-projects");
+    notify(`${project.name || project.projectName} moved to Active Projects.`);
+  };
+  const rejectProject = (project) => {
+    updateProjects((current) => current.map((item) => String(item.id) === String(project.id) ? { ...item, status: "Rejected" } : item));
+    setPage("new-projects");
+    notify(`${project.name || project.projectName} was rejected.`);
+  };
+
   const renderPage = () => {
     switch (page) {
-      case "dashboard": return <DashboardPage />;
+      case "dashboard": return <DashboardPage projects={employeeProjects} />;
       case "mark-attendance": return <MarkAttendancePage notify={notify} />;
       case "attendance-report": return <AttendanceReportPage notify={notify} />;
+      case "new-projects": return <ProjectsPage title="New Projects" subtitle="Review proposed projects before they enter your active workspace." projects={employeeProjects.filter((project) => project.status === "New")} onView={(project) => openProject(project, "project-details")} onReview={(project) => openProject(project, "project-review")} />;
+      case "active-projects": return <ProjectsPage title="Active Projects" subtitle="Projects accepted and ready for execution." projects={employeeProjects.filter((project) => project.status === "Active")} onView={(project) => openProject(project, "project-details")} onReview={(project) => openProject(project, "project-review")} />;
+      case "project-details": return <ProjectDetailsPage project={selectedProject} onBack={() => setPage(selectedProject?.status === "Active" ? "active-projects" : "new-projects")} onReview={(project) => openProject(project, "project-review")} />;
+      case "project-review": return <ProjectReviewPage project={selectedProject} onBack={() => setPage("new-projects")} onAccept={acceptProject} onReject={rejectProject} />;
+      case "my-tasks": return <ProjectTasksPage projects={employeeProjects.filter((project) => project.status === "Active")} />;
+      case "pending-tasks": return <WorkQueuePage type={page} projects={employeeProjects.filter((project) => project.status === "Active")} />;
+      case "overdue-tasks": return <WorkQueuePage type={page} projects={employeeProjects.filter((project) => project.status === "Active")} />;
+      case "open-bugs": return <WorkQueuePage type={page} projects={employeeProjects.filter((project) => ["Active", "Completed"].includes(project.status))} />;
+      case "clarification": return <WorkQueuePage type={page} projects={employeeProjects.filter((project) => project.status !== "Rejected")} />;
+      case "completed-projects": return <ProjectsPage title="Completed Projects" subtitle="Projects marked completed by the project team." projects={employeeProjects.filter((project) => project.status === "Completed")} onView={(project) => openProject(project, "project-details")} onReview={() => {}} />;
       case "settings": return <SettingsPage notify={notify} />;
-      case "my-task": return <MyTaskPage notify={notify} />;
-      case "all-task": return <AllTaskPage notify={notify} />;
       case "leave-request": return <LeaveRequestPage notify={notify} />;
       default: return null;
     }
@@ -1076,7 +1316,10 @@ export default function App({ onLogout }) {
               <span className="eyebrow" style={{ margin: 0 }}>{EMPLOYEE.branch} · {EMPLOYEE.department}</span>
             </div>
           </div>
-          <div className="content">{renderPage()}</div>
+          <div className="content">
+            {projects === undefined && <p className="eyebrow" style={{ marginBottom: 16 }}>Demo workspace · Sample data only</p>}
+            {renderPage()}
+          </div>
         </div>
       </div>
       <Toast message={toast} onClose={() => setToast("")} />
