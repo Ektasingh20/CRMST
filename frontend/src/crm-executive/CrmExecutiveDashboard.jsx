@@ -474,13 +474,6 @@ const DEFAULT_PROFILE = {
   avatarUrl: "",
 };
 
-const DEFAULT_PREFERENCES = {
-  emailNotifications: true,
-  smsAlerts: false,
-  dailySummaryEmail: true,
-  followUpReminders: true,
-};
-
 /* ------------------------------ shared bits ------------------------------ */
 
 function Toast({ toast }) {
@@ -2118,20 +2111,13 @@ function LeaveRequestTab({ leaveRequests, setLeaveRequests, showToast }) {
 
 /* ================================ SETTINGS TAB ============================== */
 
-function SettingsTab({ profile, setProfile, preferences, setPreferences, showToast, currentUser, onProfileUpdated }) {
+function SettingsTab({ profile, setProfile, showToast, currentUser, onProfileUpdated }) {
   const [profileForm, setProfileForm] = useState(profile);
-  const [prefForm, setPrefForm] = useState(preferences);
   const [passwordForm, setPasswordForm] = useState({ current: "", next: "", confirm: "" });
   const [showPw, setShowPw] = useState({ current: false, next: false, confirm: false });
   const [message, setMessage] = useState(null);
   const [pwErrors, setPwErrors] = useState({});
-
-  const handleAvatarChange = (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const url = URL.createObjectURL(file);
-    setProfileForm((f) => ({ ...f, avatarUrl: url }));
-  };
+  const [passwordSaving, setPasswordSaving] = useState(false);
 
   const handleSaveProfile = async () => {
     try {
@@ -2145,16 +2131,6 @@ function SettingsTab({ profile, setProfile, preferences, setPreferences, showToa
     } catch (error) { setMessage({ type: "error", text: error.message || "Could not save profile" }); }
   };
 
-  const handleSavePreferences = async () => {
-    try {
-      const saved = await updateMyProfile({ notificationPreferences: prefForm });
-      setPreferences(prefForm);
-      setProfile((current) => ({ ...current, ...saved }));
-      onProfileUpdated?.(saved);
-      showToast("Preferences saved");
-    } catch (error) { showToast(error.message || "Could not save preferences"); }
-  };
-
   const handleChangePassword = async () => {
     const nextErrors = {};
     if (!passwordForm.current) nextErrors.current = "Enter your current password";
@@ -2162,11 +2138,16 @@ function SettingsTab({ profile, setProfile, preferences, setPreferences, showToa
     if (passwordForm.next !== passwordForm.confirm) nextErrors.confirm = "Passwords do not match";
     setPwErrors(nextErrors);
     if (Object.keys(nextErrors).length) return;
+    setPasswordSaving(true);
     try {
       await changePassword(currentUser?.id || currentUser?._id, passwordForm.current, passwordForm.next);
       setPasswordForm({ current: "", next: "", confirm: "" });
       showToast("Password updated");
-    } catch (error) { showToast(error.message || "Could not update password"); }
+    } catch (error) {
+      showToast(error.message || "Could not update password");
+    } finally {
+      setPasswordSaving(false);
+    }
   };
 
   return (
@@ -2174,33 +2155,6 @@ function SettingsTab({ profile, setProfile, preferences, setPreferences, showToa
       <div className="settings-section">
         <div className="settings-section-header">
           <h3>Profile</h3>
-        </div>
-        <div className="profile-id-card">
-          <div className="profile-id-card-top">
-            <div className="avatar-preview">
-            {profileForm.avatarUrl ? (
-              <img src={profileForm.avatarUrl} alt="avatar" />
-            ) : (
-              <div className="avatar large">{(profileForm.name || "?").charAt(0)}</div>
-            )}
-            </div>
-            <div className="profile-id-card-name">
-              <span>System Technologies</span>
-              <strong>{profileForm.name || "CRM Executive"}</strong>
-              <em>{profileForm.role || "CRM Executive"}</em>
-            </div>
-          </div>
-          <div className="profile-id-card-details">
-            <span><small>Employee ID</small><b>{currentUser?.id || currentUser?._id || "-"}</b></span>
-            <span><small>Email</small><b>{profileForm.email || "-"}</b></span>
-            <span><small>Phone</small><b>{profileForm.phone || "-"}</b></span>
-          </div>
-        </div>
-        <div className="avatar-upload">
-          <label className="avatar-upload-label">
-            Change photo
-            <input type="file" accept="image/*" style={{ display: "none" }} onChange={handleAvatarChange} />
-          </label>
         </div>
         <div className="form-grid" style={{ marginTop: 16 }}>
           <div className="field">
@@ -2231,35 +2185,6 @@ function SettingsTab({ profile, setProfile, preferences, setPreferences, showToa
       <div className="settings-layout">
         <div className="settings-section">
           <div className="settings-section-header">
-            <h3>Notification Preferences</h3>
-          </div>
-          {[
-            { key: "emailNotifications", label: "Email Notifications", hint: "Get emailed when a lead status changes" },
-            { key: "smsAlerts", label: "SMS Alerts", hint: "Receive SMS for urgent follow-ups" },
-            { key: "dailySummaryEmail", label: "Daily Summary Email", hint: "A daily digest of calls and tasks" },
-            { key: "followUpReminders", label: "Follow-up Reminders", hint: "Reminders for snoozed contacts" },
-          ].map((row) => (
-            <label className="check-row" key={row.key}>
-              <input
-                type="checkbox"
-                checked={!!prefForm[row.key]}
-                onChange={(e) => setPrefForm((f) => ({ ...f, [row.key]: e.target.checked }))}
-              />
-              <div className="check-row-copy">
-                <strong>{row.label}</strong>
-                <span>{row.hint}</span>
-              </div>
-            </label>
-          ))}
-          <div className="form-actions">
-            <button className="primary-button" onClick={handleSavePreferences}>
-              <IconCheck size={16} /> Save Preferences
-            </button>
-          </div>
-        </div>
-
-        <div className="settings-section">
-          <div className="settings-section-header">
             <h3>Change Password</h3>
           </div>
           <div className="settings-form">
@@ -2285,7 +2210,7 @@ function SettingsTab({ profile, setProfile, preferences, setPreferences, showToa
             ))}
           </div>
           <div className="form-actions">
-            <button className="primary-button" onClick={handleChangePassword}>
+            <button className="primary-button" onClick={handleChangePassword} disabled={passwordSaving}>
               <IconCheck size={16} /> Update Password
             </button>
           </div>
@@ -2529,8 +2454,6 @@ export default function CrmExecutiveDashboard({
     ...DEFAULT_PROFILE,
     ...(currentUser || {}),
   }));
-  const [preferences, setPreferences] = useState(() => currentUser?.notificationPreferences || DEFAULT_PREFERENCES);
-
   const qualifiedLeadsInitialized = useRef(false);
 
   useEffect(() => {
@@ -2729,8 +2652,6 @@ export default function CrmExecutiveDashboard({
               <SettingsTab
                 profile={profile}
                 setProfile={setProfile}
-                preferences={preferences}
-                setPreferences={setPreferences}
                 showToast={showToast}
                 currentUser={currentUser}
                 onProfileUpdated={onProfileUpdated}
