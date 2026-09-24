@@ -159,6 +159,7 @@ import ErrorBoundary from "./ErrorBoundary";
 import StudentDashboard from "./src/student-dashboard/StudentDashboard";
 import CrmExecutiveDashboard from "./src/crm-executive/CrmExecutiveDashboard";
 import ITDashboard from "./src/It- dashboard/ITDashboard";
+import CreateProjectForm from "./src/admin/CreateProjectForm";
 import {
   compressImageFile,
   createPreviewUrl,
@@ -378,6 +379,10 @@ function normalizeLeadForUi(lead) {
 }
 
 const sidebarSections = [
+  {
+    heading: "PROJECTS",
+    items: [{ id: "project-create", label: "Create Project", icon: CirclePlus }],
+  },
   {
     heading: "CRM",
     items: [
@@ -1207,6 +1212,7 @@ function App() {
   const [appView, setAppView] = useState("home");
   const [authMode, setAuthMode] = useState("login");
   const [activePage, setActivePage] = useState("dashboard");
+  const [adminPreviewProjects, setAdminPreviewProjects] = useState([]);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [globalQuery, setGlobalQuery] = useState("");
@@ -4242,6 +4248,9 @@ function App() {
         </header>
 
         <section className="content" ref={contentRef}>
+          {activePage === "project-create" && (
+            <CreateProjectForm users={users} projects={adminPreviewProjects} onCreate={(project) => setAdminPreviewProjects((current) => [project, ...current])} />
+          )}
           {activePage === "dashboard" && (
             <>
               <section className="hero-grid">
