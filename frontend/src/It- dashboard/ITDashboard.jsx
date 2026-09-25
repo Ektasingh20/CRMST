@@ -482,9 +482,11 @@ const NAV_ITEMS = [
   { key: "my-work", label: "My Work", icon: ClipboardList, group: "Work" },
   { key: "open-bugs", label: "Open Bugs", icon: Bug, group: "Support" },
   { key: "clarification", label: "Clarification", icon: MessageSquare, group: "Support" },
+  { key: "settings", label: "Settings", icon: SettingsIcon, group: "Account" },
+  { key: "leave-request", label: "Leave Request", icon: UserCircle2, group: "Account" },
 ];
 
-const NAV_GROUPS = ["Overview", "Projects", "Work", "Support"];
+const NAV_GROUPS = ["Overview", "Projects", "Work", "Support", "Account"];
 const TITLES = {
   dashboard: "Dashboard",
   "mark-attendance": "Mark Attendance",
