@@ -2790,6 +2790,48 @@ img {
   box-shadow: 0 24px 48px rgba(62, 43, 28, 0.08);
 }
 
+.project-create-panel {
+  overflow: visible;
+}
+
+.project-create-panel .panel-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 22px 24px 18px;
+  border-bottom: 1px solid rgba(178, 147, 118, 0.12);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.project-create-panel .panel-heading h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: 1.22rem;
+}
+
+.project-create-panel .panel-heading > span {
+  color: var(--text-soft);
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.project-create-panel > p {
+  margin: 0;
+  padding: 16px 24px 4px !important;
+}
+
+.project-create-panel .form-grid {
+  padding: 10px 24px 26px;
+  gap: 16px;
+}
+
+.project-create-panel .form-section-title {
+  margin-top: 14px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(178, 147, 118, 0.16);
+}
+
 .panel-head {
   padding: 18px 20px;
   border-bottom: 1px solid rgba(178, 147, 118, 0.12);
@@ -3582,6 +3624,184 @@ img {
 .field input:focus,
 .field select:focus,
 .field textarea:focus {
+  border-color: rgba(207, 98, 57, 0.55);
+  box-shadow: 0 0 0 4px rgba(207, 98, 57, 0.12);
+}
+
+.scope-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 2px 0 8px;
+}
+
+.scope-field-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.scope-field-heading > label:first-child {
+  color: var(--text-soft);
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.scope-field textarea {
+  min-height: 58px;
+  width: 100%;
+  padding: 14px 16px;
+  resize: none;
+  cursor: text;
+  background: rgba(255, 252, 249, 0.76);
+  border-color: rgba(178, 147, 118, 0.22);
+  border-radius: 12px;
+  line-height: 1.5;
+  transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
+}
+
+.scope-input-wrap {
+  position: relative;
+}
+
+.scope-input-wrap textarea {
+  padding-right: 64px;
+}
+
+.scope-field textarea:hover {
+  background: rgba(255, 255, 255, 0.94);
+  border-color: rgba(178, 147, 118, 0.4);
+}
+
+.scope-upload-button {
+  position: absolute;
+  top: 11px;
+  right: 11px;
+  width: 38px;
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-soft);
+  border: 1px solid rgba(178, 147, 118, 0.34);
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.78);
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease, color 160ms ease;
+}
+
+.scope-upload-button:hover {
+  color: var(--brand-deep);
+  border-color: rgba(178, 147, 118, 0.64);
+  background: rgba(248, 243, 238, 0.96);
+}
+
+.scope-upload-button input {
+  display: none;
+}
+
+.scope-file-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-soft);
+  font-size: 0.75rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(207, 98, 57, 0.08);
+}
+
+.project-documents-field {
+  gap: 8px;
+}
+
+.project-file-picker {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: fit-content;
+  max-width: 100%;
+  padding: 0 13px;
+  border: 1px solid rgba(178, 147, 118, 0.34);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.78);
+  color: var(--text-soft);
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease, color 160ms ease;
+}
+
+.project-file-picker:hover {
+  color: var(--brand-deep);
+  border-color: rgba(178, 147, 118, 0.64);
+  background: rgba(248, 243, 238, 0.96);
+}
+
+.project-file-picker > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.82rem;
+}
+
+.project-file-picker-icon {
+  margin-left: auto;
+  color: var(--brand-deep);
+}
+
+.project-file-picker input {
+  display: none;
+}
+
+@media (max-width: 760px) {
+  .project-create-panel .form-grid {
+    padding-inline: 16px;
+  }
+
+  .scope-field:not(.span-full) {
+    grid-column: 1 / -1;
+  }
+}
+
+.project-scope-modal {
+  width: min(980px, 100%);
+  padding: 26px;
+}
+
+.project-scope-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 20px;
+}
+
+.project-scope-modal-header h2 {
+  margin: 0;
+}
+
+.project-scope-modal > textarea {
+  width: 100%;
+  min-height: min(52vh, 480px);
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 16px;
+  background: white;
+  color: var(--text);
+  outline: none;
+  font: inherit;
+  line-height: 1.6;
+}
+
+.project-scope-modal > textarea:focus {
   border-color: rgba(207, 98, 57, 0.55);
   box-shadow: 0 0 0 4px rgba(207, 98, 57, 0.12);
 }
@@ -5022,3 +5242,9 @@ img {
     padding: 0 8px 10px;
   }
 }
+
+.project-selected-files { list-style: none; margin: 8px 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; }
+.project-selected-files li { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-muted); min-width: 0; }
+.project-selected-files li > span { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: .82rem; }
+.project-selected-files small { display: block; color: var(--text-soft); font-size: .7rem; margin-top: 4px; }
+.project-documents-field > small { color: var(--text-soft); line-height: 1.6; font-size: .78rem; }

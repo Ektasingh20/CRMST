@@ -380,10 +380,6 @@ function normalizeLeadForUi(lead) {
 
 const sidebarSections = [
   {
-    heading: "PROJECTS",
-    items: [{ id: "project-create", label: "Create Project", icon: CirclePlus }],
-  },
-  {
     heading: "CRM",
     items: [
       { id: "dashboard", label: "CRM Dashboard", icon: LayoutDashboard },
@@ -1009,6 +1005,15 @@ function safeStorageSet(key, value) {
   }
 }
 
+function readLocalProjects() {
+  try {
+    const projects = JSON.parse(window.localStorage.getItem("crmst-projects-v1") || "[]");
+    return Array.isArray(projects) ? projects : [];
+  } catch {
+    return [];
+  }
+}
+
 function safeStorageRemove(key) {
   try {
     window.localStorage.removeItem(key);
@@ -1212,7 +1217,7 @@ function App() {
   const [appView, setAppView] = useState("home");
   const [authMode, setAuthMode] = useState("login");
   const [activePage, setActivePage] = useState("dashboard");
-  const [adminPreviewProjects, setAdminPreviewProjects] = useState([]);
+  const [adminPreviewProjects, setAdminPreviewProjects] = useState(readLocalProjects);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [globalQuery, setGlobalQuery] = useState("");
@@ -1918,7 +1923,8 @@ function App() {
   const pageTitle =
     sidebarSections
       .flatMap((section) => section.items)
-      .find((item) => item.id === activePage)?.label || "Dashboard";
+      .find((item) => item.id === activePage)?.label
+    || (activePage === "project-create" ? "Create Project" : "Dashboard");
 
   const pendingEnrollmentRequestCount = allEnrollmentRequests.filter((request) => request.status === "pending").length;
   const filteredEnrollmentRequests = allEnrollmentRequests.filter((request) => {
@@ -4240,6 +4246,10 @@ function App() {
               <DoorOpen size={16} />
               Logout
             </button>
+            <button className="primary-button" onClick={() => setActivePage("project-create")}>
+              <CirclePlus size={16} />
+              Create Project
+            </button>
             <button className="primary-button" onClick={() => setActivePage("sales-add")}>
               <CirclePlus size={16} />
               Add Lead
@@ -4249,7 +4259,16 @@ function App() {
 
         <section className="content" ref={contentRef}>
           {activePage === "project-create" && (
-            <CreateProjectForm users={users} projects={adminPreviewProjects} onCreate={(project) => setAdminPreviewProjects((current) => [project, ...current])} />
+            <CreateProjectForm
+              users={users}
+              projects={adminPreviewProjects}
+              serviceOptions={serviceCatalog}
+              onCreate={(project) => setAdminPreviewProjects((current) => {
+                const next = [project, ...current];
+                try { window.localStorage.setItem("crmst-projects-v1", JSON.stringify(next)); } catch {}
+                return next;
+              })}
+            />
           )}
           {activePage === "dashboard" && (
             <>

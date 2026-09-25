@@ -1,5 +1,14 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
+import { createPortal } from "react-dom";
+import { withDemoProjectPresentation } from "./demoProjectPresentation";
 import { demoProjects } from "./demoProjects";
+import OpenBugsPage from "./OpenBugsPage";
+import DailyOverview from "./DailyOverview.jsx";
+import MyWorkPage from "./MyWorkPage.jsx";
+import ClarificationPage from "./ClarificationPage";
+import ProjectStatusSection from "./ProjectStatusSection";
+import { applyProjectStatus, projectStatusSummary } from "./projectStatus";
+import { getUploadedProjectFiles, requirementSections } from "./projectFiles";
 import {
   LayoutDashboard,
   CalendarCheck,
@@ -370,6 +379,90 @@ img { display: block; max-width: 100%; }
 .detail-row { display: grid; grid-template-columns: 140px minmax(0, 1fr); gap: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--line-soft); }
 .detail-row strong { color: var(--text-soft); font-size: 0.8rem; }
 .detail-row span { color: var(--text); line-height: 1.55; }
+/* Requirement rows with inline documents and native modal previews. */
+.brief-requirements { overflow: hidden; }
+.brief-sample-badge { padding: 7px 11px; border-radius: 20px; background: var(--brand-soft); color: var(--brand-deep) !important; font-weight: 700; }
+.brief-sections { margin-top: 24px; }
+.brief-section { display: grid; grid-template-columns: minmax(180px, .7fr) minmax(0, 1.6fr); gap: 28px; padding: 24px 0; border-top: 1px solid var(--line); }
+.brief-section-title { display: grid; grid-template-columns: 28px 1fr; align-content: start; gap: 8px; padding-top: 4px; }
+.brief-section-title > span { font-size: .72rem; color: var(--brand); font-weight: 800; padding-top: 3px; }
+.brief-section-title h4 { margin: 0; font-size: .91rem; }
+.brief-section-title small { grid-column: 2; font-size: .6rem; letter-spacing: .1em; color: var(--text-faint); }
+.brief-section-content { display: grid; gap: 12px; min-width: 0; }
+.brief-section-content > p { margin: 0; font-size: .86rem; color: var(--text-soft); line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; }
+.brief-file-button { width: 100%; display: flex; align-items: center; gap: 14px; text-align: left; padding: 15px 17px; border: 1px solid var(--line); border-radius: 12px; color: var(--text); background: var(--surface-strong); text-decoration: none; cursor: pointer; font-family: inherit; transition: border-color .2s, background .2s, box-shadow .2s; }
+.brief-file-button:hover { background: var(--surface-muted); border-color: var(--brand); box-shadow: 0 4px 14px #643e230b; }
+.brief-file-button:focus-visible { outline: 3px solid var(--brand); outline-offset: 3px; }
+.brief-file-button > svg { color: var(--brand); flex-shrink: 0; }
+.brief-pdf-icon { display: grid; place-items: center; width: 43px; height: 49px; border-radius: 9px; background: #fff0ed; color: #b24c3c; flex-shrink: 0; }
+.brief-file-label { display: grid; gap: 5px; flex: 1; min-width: 0; }
+.brief-file-label strong { font-size: .84rem; overflow-wrap: anywhere; }
+.brief-file-label small { color: var(--text-soft); font-size: .71rem; }
+.brief-file-unavailable { opacity: .7; cursor: default; }
+.brief-shared-files { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; margin-top: 16px; }
+.brief-file-modal { width: min(1120px, 94vw); max-width: 94vw; height: 90vh; max-height: 90vh; padding: 0; border: 1px solid var(--line); border-radius: 20px; background: var(--surface-strong, white); color: var(--text, #27221e); box-shadow: 0 30px 100px #0005; }
+.brief-file-modal::backdrop { background: #15110dcc; backdrop-filter: blur(5px); }
+.brief-modal-inner { height: 100%; display: flex; flex-direction: column; }
+.brief-modal-inner header { display: flex; align-items: center; gap: 14px; padding: 18px 22px; border-bottom: 1px solid var(--line); }
+.brief-modal-inner header > div { flex: 1; min-width: 0; }
+.brief-modal-inner header p { font-size: .65rem; letter-spacing: .12em; color: var(--text-soft); margin: 0 0 5px; }
+.brief-modal-inner header h3 { margin: 0; font-size: 1rem; overflow-wrap: anywhere; }
+.brief-modal-inner header a { text-decoration: none; }
+.brief-modal-inner object { width: 100%; flex: 1; min-height: 0; border: none; background: #e6e2dc; }
+.brief-modal-image { width: 100%; flex: 1; min-height: 0; object-fit: contain; background: #e6e2dc; }
+.brief-modal-inner footer { display: flex; justify-content: space-between; padding: 12px 22px; font-size: .7rem; color: var(--text-soft); gap: 12px; }
+.brief-preview-fallback { text-align: center; padding: 60px 20px; }
+@media (max-width: 650px) { .brief-section { grid-template-columns: 1fr; gap: 14px; } .brief-modal-inner header { flex-wrap: wrap; padding: 12px; } .brief-modal-inner header .brief-pdf-icon { display: none; } .brief-modal-inner footer { padding: 10px; } }
+/* Project brief and document library */
+.project-workspace { display: grid; gap: 22px; }
+.project-overview { padding: 26px; border-top: 4px solid var(--brand); }
+.project-overview-top, .project-overview-bottom, .project-overview-badges, .project-section-heading, .project-file-top, .project-file-actions, .project-requirement-heading { display: flex; align-items: center; gap: 12px; }
+.project-overview-top { align-items: flex-start; flex-wrap: wrap; }
+.project-overview-icon, .project-file-symbol { display: grid; place-items: center; background: var(--brand-soft); color: var(--brand-deep); border-radius: 14px; width: 52px; height: 52px; flex-shrink: 0; }
+.project-overview-title { flex: 1; min-width: 180px; }
+.project-overview-title h2 { font-size: clamp(1.35rem, 2.5vw, 2rem); margin: 6px 0; overflow-wrap: anywhere; }
+.project-overview-title > p:last-child, .project-section-help { color: var(--text-soft); font-size: .85rem; margin: 8px 0 0; }
+.project-overview-bottom { justify-content: space-between; flex-wrap: wrap; border-top: 1px solid var(--line); margin-top: 22px; padding-top: 18px; }
+.project-overview-badges { flex-wrap: wrap; }
+.project-overview-badges > span { display: inline-flex; align-items: center; gap: 7px; font-size: .8rem; }
+.project-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 18px; overflow: hidden; }
+.project-facts > div { padding: 19px 22px; background: var(--surface-strong); display: grid; gap: 8px; }
+.project-facts span { font-size: .73rem; color: var(--text-soft); }
+.project-facts strong { font-size: .9rem; overflow-wrap: anywhere; }
+.project-library-panel, .project-requirements { padding: 24px; }
+.project-section-heading { justify-content: space-between; flex-wrap: wrap; }
+.project-section-heading h3, .project-section-heading h4 { margin: 4px 0; overflow-wrap: anywhere; }
+.project-section-heading > span { color: var(--text-soft); font-size: .8rem; }
+.project-count { display: inline-block; padding: 3px 9px; border-radius: 8px; background: var(--brand-soft); color: var(--brand-deep); font-size: .8rem; vertical-align: middle; margin-left: 6px; }
+.project-file-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-top: 20px; }
+.project-file-card { min-width: 0; border: 1px solid var(--line); border-radius: 16px; padding: 18px; background: var(--surface-strong); display: flex; flex-direction: column; transition: box-shadow .2s, border-color .2s; }
+.project-file-card:hover { border-color: var(--brand); box-shadow: 0 6px 20px rgba(100,62,35,.08); }
+.project-file-top { justify-content: space-between; }
+.project-file-symbol { width: 42px; height: 46px; border-radius: 10px; }
+.project-file-type { font-size: .65rem; letter-spacing: .08em; font-weight: 800; color: var(--brand-deep); }
+.project-file-card h4 { font-size: .88rem; margin: 16px 0 6px; overflow-wrap: anywhere; }
+.project-file-card p, .project-file-card small { color: var(--text-soft); font-size: .75rem; margin: 0 0 8px; }
+.project-file-actions { margin-top: auto; padding-top: 12px; flex-wrap: wrap; }
+.project-file-actions .ghost-button { padding: 8px 10px; font-size: .73rem; text-decoration: none; }
+.project-file-missing { font-size: .72rem; color: var(--text-soft); }
+.project-preview { margin-top: 20px; border: 1px solid var(--line); padding: 16px; border-radius: 14px; }
+.project-preview object { display: block; width: 100%; height: 65vh; margin-top: 16px; border: 0; }
+.project-preview img { display: block; max-width: 100%; max-height: 65vh; margin: 16px auto 0; object-fit: contain; }
+.project-requirement-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 20px; }
+.project-requirement { padding: 20px; background: var(--surface-muted); border: 1px solid var(--line); border-radius: 14px; min-width: 0; }
+.project-requirement-wide { grid-column: 1 / -1; }
+.project-requirement-heading span { font-size: .7rem; color: var(--brand); font-weight: 800; }
+.project-requirement-heading h4 { margin: 0; font-size: .86rem; }
+.project-requirement p { margin: 12px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.75; color: var(--text-soft); font-size: .86rem; }
+.project-requirement small { display: flex; align-items: center; gap: 6px; margin-top: 14px; color: var(--brand-deep); font-size: .72rem; }
+@media (max-width: 1100px) { .project-file-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 650px) { .project-file-grid, .project-requirement-grid, .project-facts { grid-template-columns: 1fr; } .project-overview, .project-library-panel, .project-requirements { padding: 18px; } .project-overview-icon { display: none; } }
+.uploaded-project-files { display: grid; gap: 10px; padding: 14px 0 2px; border-top: 1px solid var(--line-soft); }
+.uploaded-project-files > strong { display: inline-flex; align-items: center; gap: 8px; color: var(--text-soft); font-size: 0.8rem; }
+.uploaded-project-files > div { display: flex; flex-wrap: wrap; gap: 8px; }
+.uploaded-project-files > div span { display: inline-flex; align-items: center; gap: 7px; padding: 8px 11px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-muted); color: var(--text); font-size: 0.82rem; }
+.uploaded-project-file img { width: 28px; height: 28px; object-fit: cover; border-radius: 5px; }
+.uploaded-project-file a { color: var(--brand-deep); text-decoration: underline; text-underline-offset: 2px; }
 .queue-list { display: grid; gap: 10px; padding: 16px 20px 20px; }
 .queue-item { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; padding: 15px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface-strong); }
 .queue-item h4 { margin: 0 0 5px; font-size: 0.92rem; }
@@ -383,31 +476,25 @@ img { display: block; max-width: 100%; }
 
 const NAV_ITEMS = [
   { key: "dashboard", label: "Dashboard", icon: LayoutDashboard, group: "Overview" },
-  { key: "mark-attendance", label: "Mark Attendance", icon: CalendarCheck, group: "Attendance" },
-  { key: "attendance-report", label: "Attendance Reports", icon: ClipboardList, group: "Attendance" },
   { key: "new-projects", label: "New Projects", icon: FolderKanban, group: "Projects" },
   { key: "active-projects", label: "Active Projects", icon: ClipboardCheck, group: "Projects" },
   { key: "completed-projects", label: "Completed Projects", icon: CircleCheck, group: "Projects" },
-  { key: "my-tasks", label: "My Tasks", icon: CheckSquare, group: "Tasks" },
-  { key: "pending-tasks", label: "Pending Tasks", icon: ListChecks, group: "Tasks" },
-  { key: "overdue-tasks", label: "Overdue Tasks", icon: AlertCircle, group: "Tasks" },
+  { key: "my-work", label: "My Work", icon: ClipboardList, group: "Work" },
   { key: "open-bugs", label: "Open Bugs", icon: Bug, group: "Support" },
   { key: "clarification", label: "Clarification", icon: MessageSquare, group: "Support" },
-  { key: "settings", label: "Settings", icon: SettingsIcon, group: "Account" },
-  { key: "leave-request", label: "Leave Request", icon: UserCircle2, group: "Account" },
 ];
 
-const NAV_GROUPS = ["Overview", "Attendance", "Projects", "Tasks", "Support", "Account"];
-
+const NAV_GROUPS = ["Overview", "Projects", "Work", "Support"];
 const TITLES = {
   dashboard: "Dashboard",
   "mark-attendance": "Mark Attendance",
   "attendance-report": "Attendance Reports",
   "new-projects": "New Projects",
   "active-projects": "Active Projects",
-  "my-tasks": "My Tasks",
-  "pending-tasks": "Pending Tasks",
-  "overdue-tasks": "Overdue Tasks",
+  "my-work": "My Work",
+  "my-tasks": "My Work",
+  "pending-tasks": "My Work",
+  "overdue-tasks": "My Work",
   "open-bugs": "Open Bugs",
   clarification: "Clarification",
   "completed-projects": "Completed Projects",
@@ -421,10 +508,25 @@ const EMPLOYEE = { name: "Ekta Singh", crmId: 60, branch: "Ajmer", designation: 
 
 const INITIAL_PROJECTS = [
   ...demoProjects,
+  { id: "local-project-1753873866000", projectId: "PRJ-2026-750666", name: "monu crane service", projectName: "monu crane service", client: "System Technologies", service: "Web Application Development", priority: "Medium", due: "30 Oct 2026", owner: "IT Team", description: "Frontend project created from the Admin dashboard.", requiredFeatures: "Project requirements from the Admin create-project form.", pagesModules: "Project pages and modules", technologyRequirements: "React, responsive CSS", designRequirements: "Professional responsive dashboard", referenceWebsites: "", specialInstructions: "Review the project brief before starting development.", documents: ["Ekta Singh final_Resume.pdf"], assignedEmployeeName: "Ekta Singh", assignedEmployeeId: "60", status: "New" },
+  { id: "demo-project-8", projectId: "PRJ-2026-008", name: "System Technologies Client Portal", projectName: "System Technologies Client Portal", client: "System Technologies", service: "Web Application Development", priority: "High", due: "30 Oct 2026", owner: "IT Team", description: "Build a secure client portal for project updates, documents, and delivery communication.", requiredFeatures: "Project timeline, document sharing, progress updates, and notifications", pagesModules: "Dashboard, project details, documents, messages", technologyRequirements: "React, Node.js, responsive CSS", designRequirements: "Clean professional dashboard with accessible forms", structure: "Requirements > UI Design > Development > QA", specialInstructions: "Demo project for the IT dashboard frontend workspace.", assignedEmployeeId: "60", status: "New" },
   { id: 1, name: "CRM Lead Workflow", projectName: "CRM Lead Workflow", client: "System Technologies", priority: "High", due: "30 Sep 2026", owner: "Operation Team", description: "Improve lead assignment, follow-up visibility, and conversion reporting.", structure: "Discovery > UI review > API integration > QA", assignedEmployeeId: "60", status: "New" },
   { id: 2, name: "Employee Self Service", projectName: "Employee Self Service", client: "Internal Platform", priority: "Medium", due: "12 Oct 2026", owner: "HR Team", description: "Create a self-service workspace for attendance, leave, and employee documents.", structure: "Requirements > Prototype > Development > UAT", assignedEmployeeId: "60", status: "New" },
   { id: 3, name: "Student Progress Portal", projectName: "Student Progress Portal", client: "Learning Program", priority: "Medium", due: "18 Oct 2026", owner: "Education Team", description: "Add progress tracking, task submissions, and certificate readiness views.", structure: "Planning > Frontend > Testing > Release", assignedEmployeeId: "60", status: "New" },
 ];
+
+const PROJECTS_STORAGE_KEY = "crmst-projects-v1";
+
+function getStoredProjects() {
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(PROJECTS_STORAGE_KEY) || "[]");
+    if (!Array.isArray(stored)) return INITIAL_PROJECTS;
+    const storedIds = new Set(stored.map((project) => String(project.id)));
+    return [...stored, ...INITIAL_PROJECTS.filter((project) => !storedIds.has(String(project.id)))];
+  } catch {
+    return INITIAL_PROJECTS;
+  }
+}
 
 const WORK_ITEMS = {
   "pending-tasks": { title: "Pending Tasks", subtitle: "Tasks waiting for your next action.", icon: ListChecks, items: [{ title: "Review CRM lead form fields", detail: "Confirm validation and mobile layout before the next release.", meta: "Due 24 Sep 2026", status: "Pending" }, { title: "Prepare product demo", detail: "Collect the latest workflow screenshots for stakeholders.", meta: "Due 26 Sep 2026", status: "Pending" }] },
@@ -568,9 +670,7 @@ function Sidebar({ page, setPage, mobileOpen, setMobileOpen, onLogout }) {
    PAGE: DASHBOARD
    ============================================================ */
 
-function DashboardPage({ projects }) {
-  const activeProjects = projects.filter((project) => project.status === "Active");
-  const pendingTasks = activeProjects.flatMap((project) => project.tasks || []).filter((task) => !["completed", "done"].includes(String(task.status || "Pending").toLowerCase()));
+function DashboardPage({ projects, person, onNavigate, onProject }) {
   return (
     <div style={{ display: "grid", gap: 18 }}>
       <div className="hero-card dashboard-hero">
@@ -590,27 +690,13 @@ function DashboardPage({ projects }) {
         </div>
       </div>
 
-      <div className="project-grid">
-        {[
-          ["New Projects", projects.filter((project) => project.status === "New").length],
-          ["Active Projects", activeProjects.length],
-          ["Completed Projects", projects.filter((project) => project.status === "Completed").length],
-          ["Pending Tasks", pendingTasks.length],
-        ].map(([label, count]) => <div className="project-card" key={label}><p className="eyebrow">{label}</p><h3>{count}</h3></div>)}
-      </div>
-      <div className="panel" style={{ maxWidth: 480 }}>
-        <div className="panel-head"><h3>Reminder</h3></div>
-        <div className="panel-body" style={{ padding: "8px 20px 20px" }}>
-          <p style={{ margin: 0, color: "var(--text-soft)", fontSize: "0.88rem" }}>
-            {pendingTasks.length ? `${pendingTasks.length} tasks need your attention. Check Pending Tasks and Overdue Tasks to plan your day.` : "You are all caught up."}
-          </p>
-        </div>
-      </div>
+      <DailyOverview projects={projects} person={person} onNavigate={onNavigate} onProject={onProject} />
     </div>
   );
 }
 
 function ProjectCard({ project, onView, onReview }) {
+  const progress = projectStatusSummary(project);
   return (
     <article className="project-card">
       <div className="hero-card-top">
@@ -618,6 +704,7 @@ function ProjectCard({ project, onView, onReview }) {
         <Badge status={project.status} />
       </div>
       <p>{project.description}</p>
+      {project.status === "Active" && <div className="project-card-progress"><div><span>{progress.status}</span><strong>{progress.progress}%</strong></div><progress max="100" value={progress.progress} aria-label={`${project.name} progress`} /></div>}
       <div className="project-meta"><span>Priority: {project.priority}</span><span>Due: {project.due}</span></div>
       <div className="project-actions">
         <button className="ghost-button" onClick={() => onView(project)}><Eye size={14} /> View</button>
@@ -636,23 +723,67 @@ function ProjectsPage({ title, subtitle, projects, onView, onReview }) {
   );
 }
 
-function ProjectDetailsPage({ project, onBack, onReview }) {
+function ProjectFileModal({ file, onClose }) {
+  const dialogRef = useRef(null);
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    const previousFocus = document.activeElement;
+    dialog.showModal();
+    return () => { dialog.close(); previousFocus?.focus(); };
+  }, []);
+  return createPortal(<dialog ref={dialogRef} className="brief-file-modal" onCancel={onClose} onClick={(event) => { if (event.target === event.currentTarget) onClose(); }} aria-labelledby="brief-preview-title">
+    <div className="brief-modal-inner">
+      <header><span className="brief-pdf-icon"><FileText size={24} /></span><div><p>{file.sample ? "SAMPLE DOCUMENT" : "PROJECT DOCUMENT"}</p><h3 id="brief-preview-title">{file.name}</h3></div><a className="ghost-button" href={file.dataUrl} download={file.name}><Download size={16} /> Download</a><button autoFocus type="button" className="icon-button" aria-label="Close document preview" onClick={onClose}><X size={22} /></button></header>
+      {file.type?.startsWith("image/") ? <img className="brief-modal-image" src={file.dataUrl} alt={file.name} /> : <object data={file.dataUrl} type="application/pdf" aria-label={`Preview of ${file.name}`}><div className="brief-preview-fallback"><FileText size={40} /><p>Your browser cannot display this PDF here.</p><a className="primary-button" href={file.dataUrl} download={file.name}>Download PDF</a></div></object>}
+      <footer><span>{file.category}{file.sample ? " / Demonstration only" : ""}</span><span>Press Esc to close</span></footer>
+    </div>
+  </dialog>, document.body);
+}
+
+function ProjectFileButton({ file }) {
+  const [open, setOpen] = useState(false);
+  const canPreview = file.dataUrl && (file.type === "application/pdf" || /\.pdf$/i.test(file.name) || /^image\/(png|jpeg|gif|webp)$/.test(file.type || ""));
+  const content = <><span className="brief-pdf-icon"><FileText size={23} /></span><span className="brief-file-label"><strong>{file.name}</strong><small>{file.sample ? "Sample PDF" : file.type === "application/pdf" || /\.pdf$/i.test(file.name) ? "PDF document" : "Attachment"}{file.dataUrl ? " / Click to open" : " / File unavailable"}</small></span>{canPreview ? <Eye size={18} /> : <Download size={18} />}</>;
+  return <>{canPreview ? <button type="button" className="brief-file-button" onClick={() => setOpen(true)}>{content}</button> : file.dataUrl ? <a className="brief-file-button" href={file.dataUrl} download={file.name}>{content}</a> : <div className="brief-file-button brief-file-unavailable">{content}</div>}{open && <ProjectFileModal file={file} onClose={() => setOpen(false)} />}</>;
+}
+
+function UploadedProjectFiles({ project }) {
+  const files = getUploadedProjectFiles(project);
+  if (!files.length) return null;
+  return <section className="project-library" aria-label="Project documents"><div className="project-section-heading"><div><p className="eyebrow">SHARED FILES</p><h3>Project documents <span className="project-count">{files.length}</span></h3></div></div><div className="brief-shared-files">{files.map((file) => <ProjectFileButton key={file.id} file={file} />)}</div></section>;
+}
+
+function ProjectDetailsPage({ project: sourceProject, onBack, onReview, onAccept, onReject, onStatusUpdate }) {
+  const project = sourceProject ? withDemoProjectPresentation(sourceProject) : null;
   if (!project) return <p className="panel-empty">Project not found.</p>;
+  const statusSection = <ProjectStatusSection key={sourceProject.id} project={sourceProject} onUpdate={onStatusUpdate} />;
+  if (project.demoReview) return <ProjectReviewPage project={sourceProject} onBack={onBack} onReview={onReview} onAccept={onAccept} onReject={onReject} statusSection={statusSection} />;
+  const files = getUploadedProjectFiles(project);
+  const metadata = [['Client / company', project.client], ['Service', project.service], ['Assigned to', project.assignedEmployeeName || project.assignedTo], ['Priority', project.priority], ['Start date', project.startDate], ['Expected delivery', project.expectedDelivery || project.due]];
   return (
-    <div className="panel">
-      <div className="panel-head" style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
-        <div><p className="eyebrow">Project Details</p><h3>{project.name}</h3></div>
-        <button className="ghost-button" onClick={onBack}>Back</button>
-      </div>
-      <div className="detail-list">
-        {[['Project ID', project.projectId || project.id], ['Client', project.client], ['Service', project.service], ['Owner', project.owner || project.assignedEmployeeName], ['Priority', project.priority], ['Start date', project.startDate], ['Due date', project.expectedDelivery || project.due], ['Required features', project.requiredFeatures], ['Pages / modules', project.pagesModules], ['Technology', project.technologyRequirements], ['Design', project.designRequirements], ['Project structure', project.structure], ['Description', project.description], ['Special instructions', project.specialInstructions]].filter(([, value]) => value).map(([label, value]) => <div className="detail-row" key={label}><strong>{label}</strong><span>{value}</span></div>)}
-        {project.status === "New" && <div className="project-actions"><button className="primary-button" onClick={() => onReview(project)}><FileSearch size={14} /> Open Review</button></div>}
-      </div>
+    <div className="project-workspace">
+      <section className="panel project-overview">
+        <div className="project-overview-top"><span className="project-overview-icon"><FolderKanban size={26} /></span><div className="project-overview-title"><p className="eyebrow">PROJECT WORKSPACE / {project.projectId || project.id}</p><h2>{project.name || project.projectName}</h2><p>Project brief, requirements and shared documents</p></div><button className="ghost-button" onClick={onBack}>Back to projects</button></div>
+        <div className="project-overview-bottom"><div className="project-overview-badges"><Badge status={project.status} /><span><FileText size={15} /> {files.length} attachments</span></div>{project.status === "New" && <button className="primary-button" onClick={() => onReview(project)}><FileSearch size={16} /> Review project</button>}</div>
+      </section>
+      {statusSection}
+      <section className="project-facts">{metadata.map(([label, value]) => <div key={label}><span>{label}</span><strong>{value || "Not provided"}</strong></div>)}</section>
+      <section className="panel project-requirements brief-requirements"><div className="project-section-heading"><div><p className="eyebrow">PROJECT DETAILS</p><h3>Scope & requirements</h3><p className="project-section-help">Everything you need to get started. Open a document to read the full brief.</p></div>{project.sampleDocuments && <span className="brief-sample-badge">6 sample PDFs</span>}</div>
+        <div className="brief-sections">{requirementSections.map(([key, label], index) => {
+          const attached = files.filter((file) => file.section === key);
+          const content = project[key];
+          if (!content && !attached.length) return null;
+          return <article className="brief-section" key={key}><div className="brief-section-title"><span>{String(index + 1).padStart(2, "0")}</span><h4>{label}</h4><small>{attached.length ? `${attached.length} DOCUMENT${attached.length === 1 ? "" : "S"}` : "TEXT"}</small></div><div className="brief-section-content">{content && <p>{content}</p>}{attached.map((file) => <ProjectFileButton key={file.id} file={file} />)}</div></article>;
+        })}</div>
+      </section>
+      {files.some((file) => file.section === "documents") && <div className="panel project-library-panel"><UploadedProjectFiles project={{ documents: project.documents }} /></div>}
+
     </div>
   );
 }
 
-function ProjectReviewPage({ project, onBack, onAccept, onReject }) {
+function ProjectReviewPage({ project: sourceProject, onBack, onAccept, onReject, onReview, statusSection }) {
+  const project = sourceProject ? withDemoProjectPresentation(sourceProject) : null;
   if (!project) return <p className="panel-empty">Project not found.</p>;
   return (
     <div className="panel">
@@ -661,9 +792,11 @@ function ProjectReviewPage({ project, onBack, onAccept, onReject }) {
         <button className="ghost-button" onClick={onBack}>Back</button>
       </div>
       <div className="detail-list">
+        {statusSection}
         <p style={{ margin: 0, color: "var(--text-soft)", lineHeight: 1.7 }}>Review the proposed project structure before accepting it into your active workspace.</p>
-        {[['Project ID', project.projectId || project.id], ['Client', project.client], ['Service', project.service], ['Project owner', project.owner || project.assignedEmployeeName], ['Priority', project.priority], ['Start date', project.startDate], ['Target date', project.expectedDelivery || project.due], ['Required features', project.requiredFeatures], ['Pages / modules', project.pagesModules], ['Technology', project.technologyRequirements], ['Design', project.designRequirements], ['Structure', project.structure], ['Scope', project.description], ['Special instructions', project.specialInstructions]].filter(([, value]) => value).map(([label, value]) => <div className="detail-row" key={label}><strong>{label}</strong><span>{value}</span></div>)}
-        <div className="project-actions"><button className="primary-button crm-upload-button" onClick={() => onAccept(project)}><CircleCheck size={15} /> Accept</button><button className="primary-button danger-button" onClick={() => onReject(project)}><X size={15} /> Reject</button></div>
+        {[['Project ID', project.projectId || project.id], ['Client', project.client], ['Service', project.service], ['Assigned To', project.assignedEmployeeName || project.assignedTo], ['Priority', project.priority], ['Start date', project.startDate], ['Target date', project.expectedDelivery || project.due], ['Required features', project.requiredFeatures], ['Pages / modules', project.pagesModules], ['Technology', project.technologyRequirements], ['Design', project.designRequirements], ['Client budget', project.clientBudget], ['Reference websites', project.referenceWebsites], ['Scope', project.description], ['Special instructions', project.specialInstructions]].filter(([label, value]) => value && (!project.demoReview || !["Start date", "Required features", "Pages / modules", "Technology", "Design", "Client budget", "Reference websites"].includes(label))).map(([label, value]) => <div className="detail-row" key={label}><strong>{label}</strong><span>{value}</span></div>)}
+        <UploadedProjectFiles project={project} />
+        {project.status === "New" && <div className="project-actions">{onAccept ? <><button className="primary-button crm-upload-button" onClick={() => onAccept(sourceProject)}><CircleCheck size={15} /> Accept</button><button className="primary-button danger-button" onClick={() => onReject(sourceProject)}><X size={15} /> Reject</button></> : <button className="primary-button" onClick={() => onReview(sourceProject)}><FileSearch size={15} /> Review project</button>}</div>}
       </div>
     </div>
   );
@@ -1217,12 +1350,21 @@ export default function App({ user, projects, onProjectsChange, onLogout }) {
   const [page, setPage] = useState("dashboard");
   const [mobileOpen, setMobileOpen] = useState(false);
   const [toast, setToast] = useState("");
-  const [localProjects, setLocalProjects] = useState(projects === undefined ? INITIAL_PROJECTS : projects);
+  const [localProjects, setLocalProjects] = useState(projects === undefined ? getStoredProjects() : projects);
   const [selectedProjectId, setSelectedProjectId] = useState(null);
 
   useEffect(() => {
     if (projects !== undefined) setLocalProjects(Array.isArray(projects) ? projects : []);
   }, [projects]);
+
+  useEffect(() => {
+    const handleStoredProjects = (event) => {
+      if (event.key !== PROJECTS_STORAGE_KEY) return;
+      setLocalProjects(getStoredProjects());
+    };
+    window.addEventListener("storage", handleStoredProjects);
+    return () => window.removeEventListener("storage", handleStoredProjects);
+  }, []);
 
   const employeeIdentity = new Set([
     user?.id,
@@ -1280,20 +1422,25 @@ export default function App({ user, projects, onProjectsChange, onLogout }) {
     notify(`${project.name || project.projectName} was rejected.`);
   };
 
+  const updateProjectStatus = (update) => {
+    setLocalProjects((current) => current.map((project) => String(project.id) === String(selectedProjectId) ? applyProjectStatus(project, update) : project));
+  };
+
   const renderPage = () => {
     switch (page) {
-      case "dashboard": return <DashboardPage projects={employeeProjects} />;
+      case "dashboard": return <DashboardPage projects={employeeProjects} person={user?.name || EMPLOYEE.name} onNavigate={setPage} onProject={(project) => openProject(project, "project-details")} />;
       case "mark-attendance": return <MarkAttendancePage notify={notify} />;
       case "attendance-report": return <AttendanceReportPage notify={notify} />;
       case "new-projects": return <ProjectsPage title="New Projects" subtitle="Review proposed projects before they enter your active workspace." projects={employeeProjects.filter((project) => project.status === "New")} onView={(project) => openProject(project, "project-details")} onReview={(project) => openProject(project, "project-review")} />;
       case "active-projects": return <ProjectsPage title="Active Projects" subtitle="Projects accepted and ready for execution." projects={employeeProjects.filter((project) => project.status === "Active")} onView={(project) => openProject(project, "project-details")} onReview={(project) => openProject(project, "project-review")} />;
-      case "project-details": return <ProjectDetailsPage project={selectedProject} onBack={() => setPage(selectedProject?.status === "Active" ? "active-projects" : "new-projects")} onReview={(project) => openProject(project, "project-review")} />;
+      case "project-details": return <ProjectDetailsPage project={selectedProject} onStatusUpdate={updateProjectStatus} onAccept={acceptProject} onReject={rejectProject} onBack={() => setPage(selectedProject?.status === "Completed" ? "completed-projects" : selectedProject?.status === "Active" ? "active-projects" : "new-projects")} onReview={(project) => openProject(project, "project-review")} />;
       case "project-review": return <ProjectReviewPage project={selectedProject} onBack={() => setPage("new-projects")} onAccept={acceptProject} onReject={rejectProject} />;
-      case "my-tasks": return <ProjectTasksPage projects={employeeProjects.filter((project) => project.status === "Active")} />;
-      case "pending-tasks": return <WorkQueuePage type={page} projects={employeeProjects.filter((project) => project.status === "Active")} />;
-      case "overdue-tasks": return <WorkQueuePage type={page} projects={employeeProjects.filter((project) => project.status === "Active")} />;
-      case "open-bugs": return <WorkQueuePage type={page} projects={employeeProjects.filter((project) => ["Active", "Completed"].includes(project.status))} />;
-      case "clarification": return <WorkQueuePage type={page} projects={employeeProjects.filter((project) => project.status !== "Rejected")} />;
+      case "my-tasks":
+      case "pending-tasks":
+      case "overdue-tasks":
+      case "my-work": return <MyWorkPage projects={employeeProjects} person={user?.name || EMPLOYEE.name} onNavigate={setPage} onProject={(project) => openProject(project, "project-details")} />;
+      case "open-bugs": return <OpenBugsPage key={user?.name || EMPLOYEE.name} projects={employeeProjects} person={user?.name || EMPLOYEE.name} />;
+      case "clarification": return <ClarificationPage key={user?.name || EMPLOYEE.name} person={user?.name || EMPLOYEE.name} projects={employeeProjects.filter((project) => project.status !== "Rejected")} />;
       case "completed-projects": return <ProjectsPage title="Completed Projects" subtitle="Projects marked completed by the project team." projects={employeeProjects.filter((project) => project.status === "Completed")} onView={(project) => openProject(project, "project-details")} onReview={() => {}} />;
       case "settings": return <SettingsPage notify={notify} />;
       case "leave-request": return <LeaveRequestPage notify={notify} />;
