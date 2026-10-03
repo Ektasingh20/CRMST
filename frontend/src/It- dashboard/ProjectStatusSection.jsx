@@ -1,3 +1,4 @@
+import { uploadProjectPdf } from "../../backendApi.js";
 import React, { useState } from 'react';
 import { CircleCheck, Clock3, FileText, History, X } from 'lucide-react';
 import { PROJECT_STATUSES, projectStatusSummary } from './projectStatus.js';
@@ -36,8 +37,8 @@ export default function ProjectStatusSection({project,onUpdate}) {
     if(completing && (files.length>5 || files.some(file=>file.size>5*1024*1024))) {setError('Choose up to 5 final files, each no larger than 5 MB.');return;}
     setBusy(true);
     try {
-      const attachments=completing?await readFiles(files):[];
-      onUpdate({status,progress:completing?100:Number(progress),remarks,completionDate,allTasksCompleted:confirmed,files:attachments,id:crypto.randomUUID()});
+      const attachments=completing ? await (project.employeeKey ? Promise.all(files.map(uploadProjectPdf)) : readFiles(files)) : [];
+      await onUpdate({status,progress:completing?100:Number(progress),remarks,completionDate,allTasksCompleted:confirmed,files:attachments,id:crypto.randomUUID()});
       setEditing(false);setMessage(completing?'Project marked as completed and moved to Completed Projects.':summary.status==='Completed'?'Project reopened and moved to Active Projects.':'Project status updated.');
     } catch(err) {setError(err.message);} finally {setBusy(false);}
   }
@@ -52,12 +53,12 @@ export default function ProjectStatusSection({project,onUpdate}) {
       <label className="field"><span>Progress (%)</span><input type="number" min="0" max="100" step="1" required value={completing?100:progress} disabled={completing} onChange={e=>setProgress(e.target.value)}/></label>
       {completing&&<label className="field"><span>Completion date *</span><input type="date" required max={today()} value={completionDate} onChange={e=>setCompletionDate(e.target.value)}/></label>}
       <label className="field project-status-full"><span>{completing?'Completion remarks *':'Remarks'}</span><textarea rows={3} maxLength={5000} required={completing} value={remarks} onChange={e=>setRemarks(e.target.value)} placeholder={completing?'Summarize delivery, verification and handover.':'Add a progress update or explain the status change.'}/></label>
-      {completing&&<><label className="field project-status-full"><span>Upload final files / screenshots</span><input type="file" multiple onChange={e=>setFiles([...e.target.files])}/><small>Up to 5 files, 5 MB each. Existing project documents remain available.</small></label><label className="project-status-confirm project-status-full"><input type="checkbox" required checked={confirmed} onChange={e=>setConfirmed(e.target.checked)}/><span>All assigned tasks completed<small>Confirming marks all {summary.totalTasks} assigned tasks as completed.</small></span></label></>}
+      {completing&&<><label className="field project-status-full"><span>Upload final files / screenshots</span><input type="file" multiple accept={project.employeeKey ? ".pdf,application/pdf" : undefined} onChange={e=>setFiles([...e.target.files])}/><small>{project.employeeKey ? "Up to 5 PDFs, 3 MB each." : "Up to 5 files, 5 MB each."} Existing project documents remain available.</small></label><label className="project-status-confirm project-status-full"><input type="checkbox" required checked={confirmed} onChange={e=>setConfirmed(e.target.checked)}/><span>All assigned tasks completed<small>Confirming marks all {summary.totalTasks} assigned tasks as completed.</small></span></label></>}
       </div></fieldset>
       {error&&<p className="project-status-error" role="alert">{error}</p>}
-      <div className="project-status-actions"><button type="button" className="ghost-button" disabled={busy} onClick={()=>setEditing(false)}>Cancel</button><button type="submit" className="primary-button" disabled={busy}>{busy?'Saving…':completing?'Mark Project as Completed':'Save Status'}</button></div>
+      <div className="project-status-actions"><button type="button" className="ghost-button" disabled={busy} onClick={()=>setEditing(false)}>Cancel</button><button type="submit" className="primary-button" disabled={busy}>{busy?'Savingâ€¦':completing?'Mark Project as Completed':'Save Status'}</button></div>
     </form>}
-    {!!project.finalFiles?.length&&<div className="project-final-files"><h4><FileText size={17}/> Final files & screenshots</h4><div>{project.finalFiles.map((file,index)=><a key={`${file.name}-${index}`} className="ghost-button" href={file.dataUrl} download={file.name}><FileText size={16}/>{file.name}</a>)}</div></div>}
-    {!!project.statusHistory?.length&&<details className="project-status-history"><summary><History size={17}/> Status history ({project.statusHistory.length})</summary><ol>{[...project.statusHistory].reverse().map(entry=><li key={entry.id}><div><strong>{entry.from} ? {entry.status}</strong><span>{entry.progress}% · {displayDate(entry.at)} · {new Date(entry.at).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'})}</span></div>{entry.remarks&&<p>{entry.remarks}</p>}{entry.completionDate&&<p>Completion date: {displayDate(entry.completionDate)}</p>}{entry.files?.map((file,index)=><a key={index} href={file.dataUrl} download={file.name}>{file.name}</a>)}</li>)}</ol></details>}
+    {!!project.finalFiles?.length&&<div className="project-final-files"><h4><FileText size={17}/> Final files & screenshots</h4><div>{project.finalFiles.map((file,index)=><a key={`${file.name}-${index}`} className="ghost-button" href={file.url || file.dataUrl} download={file.name}><FileText size={16}/>{file.name}</a>)}</div></div>}
+    {!!project.statusHistory?.length&&<details className="project-status-history"><summary><History size={17}/> Status history ({project.statusHistory.length})</summary><ol>{[...project.statusHistory].reverse().map(entry=><li key={entry.id}><div><strong>{entry.from} ? {entry.status}</strong><span>{entry.progress}% Â· {displayDate(entry.at)} Â· {new Date(entry.at).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'})}</span></div>{entry.remarks&&<p>{entry.remarks}</p>}{entry.completionDate&&<p>Completion date: {displayDate(entry.completionDate)}</p>}{entry.files?.map((file,index)=><a key={index} href={file.url || file.dataUrl} download={file.name}>{file.name}</a>)}</li>)}</ol></details>}
   </section>;
 }

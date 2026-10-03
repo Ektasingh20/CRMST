@@ -44,3 +44,10 @@ test('sample documents never replace real uploads or affect other projects', () 
   const other = { name: 'Other project' };
   assert.equal(withMonuSampleDocuments(other), other);
 });
+
+
+test('ImageKit URLs are used by the existing PDF preview', () => {
+  const files = getUploadedProjectFiles({ documents: [{ name: 'brief.pdf', type: 'application/pdf', url: 'https://ik.imagekit.io/test/brief.pdf', fileId: 'pdf-1' }] });
+  assert.equal(files[0].dataUrl, 'https://ik.imagekit.io/test/brief.pdf');
+  assert.equal(files[0].fileId, 'pdf-1');
+});

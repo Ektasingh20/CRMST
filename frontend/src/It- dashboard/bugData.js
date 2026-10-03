@@ -1,7 +1,8 @@
+import { members } from './team/teamMembers.js';
 const day = (offset) => { const d = new Date(); d.setDate(d.getDate() - offset); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; };
 export const STATUSES = ['Open', 'In Progress', 'Resolved'];
 export const PRIORITIES = ['Critical', 'High', 'Medium', 'Low'];
-export const PEOPLE = ['Unassigned', 'Ekta Singh', 'Rahul Sharma', 'Priya Mehta', 'Aman Verma'];
+export const PEOPLE = ['Unassigned', ...members.map(member => member.name)];
 const cases = [
   ['Session expires while submitting a ticket','Customer Support Workspace','Critical','Open','Ekta Singh','Priya Mehta','Submit a support ticket after leaving the form open for 30 minutes.','The ticket is saved or the user can sign in without losing the draft.','The session expires and the draft is cleared.'],
   ['Priority filter resets after refresh','Customer Support Workspace','High','In Progress','Rahul Sharma','Ekta Singh','Select High priority in the ticket list, then refresh the page.','The selected filter remains applied.','All priorities are displayed after refresh.'],
@@ -18,7 +19,7 @@ const cases = [
 ];
 export function createSampleBugs() {
   return cases.map(([title,project,priority,status,assignedTo,reportedBy,steps,expected,actual],i) => ({
-    id: `BUG-${String(1042-i).padStart(4,'0')}`, title, project, priority, status, assignedTo, reportedBy,
+    id: `BUG-${String(1042-i).padStart(4,'0')}`, title, project: canonicalDemoProject(project), priority, status, assignedTo, reportedBy,
     date: day(Math.floor(i/2)), description: `${title}. This affects the ${project.toLowerCase()} workflow and needs verification before the next release.`,
     steps, expected, actual,
     attachments: i === 0 ? [{name:'session-reproduction.txt', url:`data:text/plain;charset=utf-8,${encodeURIComponent('Sample QA notes\nBrowser: Chrome, desktop\nSteps: '+steps+'\nObserved: '+actual)}`}]: [],
@@ -31,4 +32,8 @@ export function filterBugs(bugs, filters) {
   return bugs.filter(b => (!query || [b.id,b.title,b.project,b.assignedTo,b.reportedBy].some(v => v.toLowerCase().includes(query))) &&
     (!filters.status || b.status === filters.status) && (!filters.priority || b.priority === filters.priority) &&
     (!filters.project || b.project === filters.project) && (!filters.assignedTo || b.assignedTo === filters.assignedTo) && (!filters.date || b.date === filters.date));
+}
+
+export function canonicalDemoProject(name) {
+  return ({ 'System Technologies Client Portal': 'Employee Self Service Portal', 'Attendance Reporting Refresh': 'Client Onboarding Website', 'Employee Profile Documents': 'Reporting API Upgrade', 'monu crane service': 'Customer Import Tools' })[name] || name;
 }

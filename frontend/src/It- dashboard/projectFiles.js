@@ -11,6 +11,6 @@ export function getUploadedProjectFiles(project) {
     ...Object.entries(project.scopeFiles || {}).map(([key, files]) => [key, requirementSections.find(([name]) => name === key)?.[1] || key, files])];
   return groups.flatMap(([section, category, files]) => asArray(files).filter(Boolean).map((value, index) => {
     const file = typeof value === 'string' ? { name: value } : value;
-    return { ...file, id: `${section}-${index}`, section, category };
+    return { ...file, dataUrl: file.url || file.dataUrl, id: `${section}-${index}`, section, category };
   })).filter((file) => file.name);
 }

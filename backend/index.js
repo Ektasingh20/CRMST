@@ -7,6 +7,7 @@ import { connectDatabase } from "./config/db.js";
 import { seedDefaultAdmin } from "./utils/seedAdmin.js";
 import authRoutes from "./routes/auth.js";
 import usersRoutes from "./routes/users.js";
+import projectsRoutes from "./routes/projects.js";
 import leadsRoutes from "./routes/leads.js";
 import callingRoutes from "./routes/calling.js";
 import servicesRoutes from "./routes/services.js";
@@ -19,6 +20,7 @@ import leavesRoutes from "./routes/leaves.js";
 import attendanceRoutes from "./routes/attendance.js";
 import employeesRoutes from "./routes/employees.js";
 import enrollmentRequestRoutes from "./routes/enrollmentRequests.js";
+import itDashboardRoutes from "./routes/itDashboard.js";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -34,6 +36,7 @@ app.use(express.json({ limit: "5mb" }));
 
 app.use("/api/auth", authRoutes);
 app.use("/api/users", usersRoutes);
+app.use("/api/projects", projectsRoutes);
 app.use("/api/leads", leadsRoutes);
 app.use("/api/calling", callingRoutes);
 app.use("/api/services", servicesRoutes);
@@ -46,6 +49,7 @@ app.use("/api/leaves", leavesRoutes);
 app.use("/api/attendance", attendanceRoutes);
 app.use("/api/employees", employeesRoutes);
 app.use("/api/enrollment-requests", enrollmentRequestRoutes);
+app.use("/api/it", itDashboardRoutes);
 
 app.get("/", (req, res) => {
   res.json({ message: "CRM backend is running" });

@@ -1,0 +1,57 @@
+{
+  "collection": "Project",
+  "documents": [
+    {
+      "employeeKey": "Ekta Singh--it_04",
+      "documentPath": "Project/Ekta Singh--it_04",
+      "fields": {
+        "assignedEmployeeId": "string",
+        "assignedEmployeeName": "string"
+      },
+      "subcollections": [
+        {
+          "projectId": "PRJ-2026-39a51eaf-ecb3-4bb3-88c4-2af886b61a5f",
+          "collectionPath": "Project/Ekta Singh--it_04/PRJ-2026-39a51eaf-ecb3-4bb3-88c4-2af886b61a5f",
+          "projectDataPath": "Project/Ekta Singh--it_04/PRJ-2026-39a51eaf-ecb3-4bb3-88c4-2af886b61a5f/Project Data",
+          "projectDataFields": {
+            "projectName": "string",
+            "client": "string",
+            "service": "string",
+            "priority": "string",
+            "startDate": "string",
+            "expectedDelivery": "string",
+            "description": "string",
+            "documents": "array",
+            "scopeFiles": "object",
+            "status": "string",
+            "createdAt": "string",
+            "updatedAt": "string",
+            "statusRemarks": "string",
+            "completionDate": "string",
+            "finalFiles": "array",
+            "statusHistory": "array"
+          }
+        },
+        {
+          "projectId": "PRJ-2026-9954c1e6-39d2-460f-8225-d13b95ae4c0e",
+          "collectionPath": "Project/Ekta Singh--it_04/PRJ-2026-9954c1e6-39d2-460f-8225-d13b95ae4c0e",
+          "projectDataPath": "Project/Ekta Singh--it_04/PRJ-2026-9954c1e6-39d2-460f-8225-d13b95ae4c0e/Project Data",
+          "projectDataFields": {
+            "projectName": "string",
+            "client": "string",
+            "service": "string",
+            "priority": "string",
+            "startDate": "string",
+            "expectedDelivery": "string",
+            "pagesModules": "string",
+            "documents": "array",
+            "scopeFiles": "object",
+            "status": "string",
+            "createdAt": "string",
+            "updatedAt": "string"
+          }
+        }
+      ]
+    }
+  ]
+}

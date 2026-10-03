@@ -1,5 +1,5 @@
 import { useCallback, useSyncExternalStore } from 'react';
-import { createSampleBugs } from './bugData.js';
+import { createSampleBugs, canonicalDemoProject } from './bugData.js';
 import { createClarifications } from './clarificationData.js';
 
 const stores = new Map();
@@ -11,7 +11,7 @@ function getStore(kind, person) {
       const saved = JSON.parse(localStorage.getItem(key));
       if (Array.isArray(saved) && saved.every(item => item.id && item.project && item.assignedTo && item.status && Array.isArray(item.activity) && Array.isArray(item.attachments) && (kind === 'bugs' ? item.title && item.date && item.reportedBy && Array.isArray(item.comments) : item.subject && item.at && item.askedBy && Array.isArray(item.replies)))) records = saved;
     } catch {}
-    stores.set(key, { key, snapshot: { records: records || (kind === 'bugs' ? createSampleBugs() : createClarifications()), error: '' }, listeners: new Set() });
+    stores.set(key, { key, snapshot: { records: (records || (kind === 'bugs' ? createSampleBugs() : createClarifications())).map(record => ({ ...record, project: canonicalDemoProject(record.project) })), error: '' }, listeners: new Set() });
   }
   return stores.get(key);
 }

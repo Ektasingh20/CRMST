@@ -1,3 +1,11 @@
+import { TEAM_DEMO_MODE, dashboardProjects } from "./team/teamData.js";
+import { useTeamState, saveDemoProject } from "./team/teamStore.js";
+import { ProjectTeamProvider, ProjectTeamButton, ProjectTeamAvatars, AssignedTeamCard } from "./team/ProjectTeam.jsx";
+import { canManageTeam, teamNavigation, teamTitles } from "./team/teamRegistration.js";
+import TeamOverview from "./team/TeamOverview.jsx";
+import AssignProjects from "./team/AssignProjects.jsx";
+import TeamProgress from "./team/TeamProgress.jsx";
+import { fetchProjects, updateProject } from "../../backendApi.js";
 import React, { useEffect, useState, useRef } from "react";
 import { createPortal } from "react-dom";
 import { withDemoProjectPresentation } from "./demoProjectPresentation";
@@ -196,6 +204,11 @@ img { display: block; max-width: 100%; }
 }
 .nav-item.active { box-shadow: inset 3px 0 0 #d55c41; }
 .nav-item-left, .user-chip { display: flex; align-items: center; gap: 10px; }
+.sidebar .nav { min-height: 0; }
+.sidebar .nav-item-left { min-width: 0; text-align: left; }
+.sidebar .nav-item-left svg { flex-shrink: 0; }
+.sidebar .nav-item-left > span { white-space: normal; overflow-wrap: anywhere; }
+.sidebar > .brand, .sidebar > .sidebar-profile, .sidebar > .sidebar-search, .sidebar > .sidebar-footer { flex-shrink: 0; }
 .nav-pill {
   min-width: 26px; height: 26px; border-radius: 999px; background: linear-gradient(135deg, #d26147, #9a3828);
   color: white; display: grid; place-items: center; font-size: 0.76rem; font-weight: 800; padding: 0 6px;
@@ -479,6 +492,7 @@ const NAV_ITEMS = [
   { key: "new-projects", label: "New Projects", icon: FolderKanban, group: "Projects" },
   { key: "active-projects", label: "Active Projects", icon: ClipboardCheck, group: "Projects" },
   { key: "completed-projects", label: "Completed Projects", icon: CircleCheck, group: "Projects" },
+  ...teamNavigation,
   { key: "my-work", label: "My Work", icon: ClipboardList, group: "Work" },
   { key: "open-bugs", label: "Open Bugs", icon: Bug, group: "Support" },
   { key: "clarification", label: "Clarification", icon: MessageSquare, group: "Support" },
@@ -486,8 +500,9 @@ const NAV_ITEMS = [
   { key: "leave-request", label: "Leave Request", icon: UserCircle2, group: "Account" },
 ];
 
-const NAV_GROUPS = ["Overview", "Projects", "Work", "Support", "Account"];
+const NAV_GROUPS = ["Overview", "Projects", ...(canManageTeam ? ["Team"] : []), "Work", "Support", "Account"];
 const TITLES = {
+  ...teamTitles,
   dashboard: "Dashboard",
   "mark-attendance": "Mark Attendance",
   "attendance-report": "Attendance Reports",
@@ -672,32 +687,11 @@ function Sidebar({ page, setPage, mobileOpen, setMobileOpen, onLogout }) {
    PAGE: DASHBOARD
    ============================================================ */
 
-function DashboardPage({ projects, person, onNavigate, onProject }) {
-  return (
-    <div style={{ display: "grid", gap: 18 }}>
-      <div className="hero-card dashboard-hero">
-        <div className="hero-card-top">
-          <div>
-            <p className="eyebrow">IT Department</p>
-            <h2>Welcome, {EMPLOYEE.name}</h2>
-          </div>
-          <span className="hero-tag"><UserCircle2 size={16} /> CRM ID {EMPLOYEE.crmId}</span>
-        </div>
-        <p className="hero-copy">Here's a quick snapshot of your workspace today.</p>
-        <div className="info-strip">
-          <div className="info-chip"><span>CRM ID</span><strong>{EMPLOYEE.crmId}</strong></div>
-          <div className="info-chip"><span>Branch</span><strong>{EMPLOYEE.branch}</strong></div>
-          <div className="info-chip"><span>Designation</span><strong>{EMPLOYEE.designation}</strong></div>
-          <div className="info-chip"><span>Department</span><strong>{EMPLOYEE.department}</strong></div>
-        </div>
-      </div>
-
-      <DailyOverview projects={projects} person={person} onNavigate={onNavigate} onProject={onProject} />
-    </div>
-  );
+function DashboardPage({ projects, person, identity = EMPLOYEE, onNavigate, onProject }) {
+  return <DailyOverview projects={projects} person={person} identity={identity} onNavigate={onNavigate} onProject={onProject} />;
 }
 
-function ProjectCard({ project, onView, onReview }) {
+function ProjectCard({ project, onView, onReview, showTeam = false }) {
   const progress = projectStatusSummary(project);
   return (
     <article className="project-card">
@@ -708,19 +702,21 @@ function ProjectCard({ project, onView, onReview }) {
       <p>{project.description}</p>
       {project.status === "Active" && <div className="project-card-progress"><div><span>{progress.status}</span><strong>{progress.progress}%</strong></div><progress max="100" value={progress.progress} aria-label={`${project.name} progress`} /></div>}
       <div className="project-meta"><span>Priority: {project.priority}</span><span>Due: {project.due}</span></div>
+      {showTeam && <ProjectTeamAvatars project={project} />}
       <div className="project-actions">
         <button className="ghost-button" onClick={() => onView(project)}><Eye size={14} /> View</button>
+        {showTeam && <ProjectTeamButton project={project} />}
         {project.status === "New" && <button className="primary-button" onClick={() => onReview(project)}><FileSearch size={14} /> Review</button>}
       </div>
     </article>
   );
 }
 
-function ProjectsPage({ title, subtitle, projects, onView, onReview }) {
+function ProjectsPage({ title, subtitle, projects, onView, onReview, showTeam = false }) {
   return (
     <div className="panel">
       <div className="panel-head"><h3>{title}</h3><p className="panel-subtitle">{subtitle}</p></div>
-      {projects.length === 0 ? <p className="panel-empty">No projects in this workspace yet.</p> : <div className="project-grid">{projects.map((project) => <ProjectCard key={project.id} project={project} onView={onView} onReview={onReview} />)}</div>}
+      {projects.length === 0 ? <p className="panel-empty">No projects in this workspace yet.</p> : <div className="project-grid">{projects.map((project) => <ProjectCard key={project.id} project={project} onView={onView} onReview={onReview} showTeam={showTeam} />)}</div>}
     </div>
   );
 }
@@ -758,7 +754,7 @@ function UploadedProjectFiles({ project }) {
 function ProjectDetailsPage({ project: sourceProject, onBack, onReview, onAccept, onReject, onStatusUpdate }) {
   const project = sourceProject ? withDemoProjectPresentation(sourceProject) : null;
   if (!project) return <p className="panel-empty">Project not found.</p>;
-  const statusSection = <ProjectStatusSection key={sourceProject.id} project={sourceProject} onUpdate={onStatusUpdate} />;
+  const statusSection = <><ProjectStatusSection key={sourceProject.id} project={sourceProject} onUpdate={onStatusUpdate} /><AssignedTeamCard project={sourceProject} /></>;
   if (project.demoReview) return <ProjectReviewPage project={sourceProject} onBack={onBack} onReview={onReview} onAccept={onAccept} onReject={onReject} statusSection={statusSection} />;
   const files = getUploadedProjectFiles(project);
   const metadata = [['Client / company', project.client], ['Service', project.service], ['Assigned to', project.assignedEmployeeName || project.assignedTo], ['Priority', project.priority], ['Start date', project.startDate], ['Expected delivery', project.expectedDelivery || project.due]];
@@ -1348,11 +1344,15 @@ function LeaveRequestPage({ notify }) {
    APP
    ============================================================ */
 
-export default function App({ user, projects, onProjectsChange, onLogout }) {
+export default function App(props) {
+  return <ProjectTeamProvider authenticated={Boolean(props.user)} key={props.user?.id || props.user?._id || 'demo'} person={props.user?.name || EMPLOYEE.name}><ITWorkspace {...props}/></ProjectTeamProvider>;
+}
+function ITWorkspace({ user, projects, onProjectsChange, onLogout }) {
+  const teamState = useTeamState();
   const [page, setPage] = useState("dashboard");
   const [mobileOpen, setMobileOpen] = useState(false);
   const [toast, setToast] = useState("");
-  const [localProjects, setLocalProjects] = useState(projects === undefined ? getStoredProjects() : projects);
+  const [localProjects, setLocalProjects] = useState(user ? [] : projects === undefined ? getStoredProjects() : projects);
   const [selectedProjectId, setSelectedProjectId] = useState(null);
 
   useEffect(() => {
@@ -1360,13 +1360,32 @@ export default function App({ user, projects, onProjectsChange, onLogout }) {
   }, [projects]);
 
   useEffect(() => {
+    if (user || projects !== undefined) return;
     const handleStoredProjects = (event) => {
       if (event.key !== PROJECTS_STORAGE_KEY) return;
       setLocalProjects(getStoredProjects());
     };
     window.addEventListener("storage", handleStoredProjects);
     return () => window.removeEventListener("storage", handleStoredProjects);
-  }, []);
+  }, [user, projects]);
+
+  useEffect(() => {
+    if (TEAM_DEMO_MODE || !user) return;
+    let active = true;
+    let pending = false;
+    const refresh = async () => {
+      if (pending || document.visibilityState === 'hidden') return;
+      pending = true;
+      try { const rows = await fetchProjects(); if (active) setLocalProjects(rows); }
+      catch (error) { if (active) setToast(error.message); }
+      finally { pending = false; }
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 15000);
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', refresh);
+    return () => { active = false; window.clearInterval(timer); window.removeEventListener('focus', refresh); document.removeEventListener('visibilitychange', refresh); };
+  }, [user]);
 
   const employeeIdentity = new Set([
     user?.id,
@@ -1375,11 +1394,10 @@ export default function App({ user, projects, onProjectsChange, onLogout }) {
     user?.username,
     user?.email,
     user?.name,
-    EMPLOYEE.crmId,
-    EMPLOYEE.name,
+    ...(!user ? [EMPLOYEE.crmId, EMPLOYEE.name] : []),
   ].filter(Boolean).map((value) => String(value).trim().toLowerCase()));
-  const employeeProjects = localProjects
-    .filter((project) => [
+  const employeeProjects = TEAM_DEMO_MODE ? dashboardProjects(teamState) : localProjects
+    .filter((project) => user ? String(project.assignedEmployeeId) === String(user.id || user._id) : [
       project.assignedEmployeeId,
       project.assignedTo,
       project.assignedEmployeeUsername,
@@ -1413,28 +1431,34 @@ export default function App({ user, projects, onProjectsChange, onLogout }) {
     setSelectedProjectId(project.id);
     setPage(destination);
   };
-  const acceptProject = (project) => {
-    updateProjects((current) => current.map((item) => String(item.id) === String(project.id) ? { ...item, status: "Active" } : item));
-    setPage("active-projects");
-    notify(`${project.name || project.projectName} moved to Active Projects.`);
+  const reviewProject = async (project, action) => {
+    try {
+      const saved = user && !TEAM_DEMO_MODE ? await updateProject(project, { action }) : { ...project, status: action === 'accept' ? 'Active' : 'Rejected' };
+      if (TEAM_DEMO_MODE) saveDemoProject(saved);
+      else updateProjects(current => current.map(item => item.id === saved.id ? saved : item));
+      setPage(action === 'accept' ? 'active-projects' : 'new-projects');
+      notify(action === 'accept' ? `${project.name} moved to Active Projects.` : `${project.name} was rejected.`);
+    } catch (error) { notify(error.message); }
   };
-  const rejectProject = (project) => {
-    updateProjects((current) => current.map((item) => String(item.id) === String(project.id) ? { ...item, status: "Rejected" } : item));
-    setPage("new-projects");
-    notify(`${project.name || project.projectName} was rejected.`);
-  };
+  const acceptProject = project => reviewProject(project, 'accept');
+  const rejectProject = project => reviewProject(project, 'reject');
 
-  const updateProjectStatus = (update) => {
-    setLocalProjects((current) => current.map((project) => String(project.id) === String(selectedProjectId) ? applyProjectStatus(project, update) : project));
+  const updateProjectStatus = async (update) => {
+    const saved = user && !TEAM_DEMO_MODE ? await updateProject(selectedProject, { update }) : applyProjectStatus(selectedProject, update);
+    if (TEAM_DEMO_MODE) saveDemoProject(saved);
+    else setLocalProjects(current => current.map(project => project.id === saved.id ? saved : project));
   };
 
   const renderPage = () => {
     switch (page) {
-      case "dashboard": return <DashboardPage projects={employeeProjects} person={user?.name || EMPLOYEE.name} onNavigate={setPage} onProject={(project) => openProject(project, "project-details")} />;
+      case "team-overview": return canManageTeam ? <TeamOverview /> : null;
+      case "team-assign": return canManageTeam ? <AssignProjects /> : null;
+      case "team-progress": return canManageTeam ? <TeamProgress /> : null;
+      case "dashboard": return <DashboardPage projects={employeeProjects} person={user?.name || EMPLOYEE.name} identity={user || EMPLOYEE} onNavigate={setPage} onProject={(project) => openProject(project, "project-details")} />;
       case "mark-attendance": return <MarkAttendancePage notify={notify} />;
       case "attendance-report": return <AttendanceReportPage notify={notify} />;
       case "new-projects": return <ProjectsPage title="New Projects" subtitle="Review proposed projects before they enter your active workspace." projects={employeeProjects.filter((project) => project.status === "New")} onView={(project) => openProject(project, "project-details")} onReview={(project) => openProject(project, "project-review")} />;
-      case "active-projects": return <ProjectsPage title="Active Projects" subtitle="Projects accepted and ready for execution." projects={employeeProjects.filter((project) => project.status === "Active")} onView={(project) => openProject(project, "project-details")} onReview={(project) => openProject(project, "project-review")} />;
+      case "active-projects": return <ProjectsPage showTeam title="Active Projects" subtitle="Projects accepted and ready for execution." projects={employeeProjects.filter((project) => project.status === "Active")} onView={(project) => openProject(project, "project-details")} onReview={(project) => openProject(project, "project-review")} />;
       case "project-details": return <ProjectDetailsPage project={selectedProject} onStatusUpdate={updateProjectStatus} onAccept={acceptProject} onReject={rejectProject} onBack={() => setPage(selectedProject?.status === "Completed" ? "completed-projects" : selectedProject?.status === "Active" ? "active-projects" : "new-projects")} onReview={(project) => openProject(project, "project-review")} />;
       case "project-review": return <ProjectReviewPage project={selectedProject} onBack={() => setPage("new-projects")} onAccept={acceptProject} onReject={rejectProject} />;
       case "my-tasks":
@@ -1466,7 +1490,7 @@ export default function App({ user, projects, onProjectsChange, onLogout }) {
             </div>
           </div>
           <div className="content">
-            {projects === undefined && <p className="eyebrow" style={{ marginBottom: 16 }}>Demo workspace · Sample data only</p>}
+            {!user && projects === undefined && <p className="eyebrow" style={{ marginBottom: 16 }}>Demo workspace · Sample data only</p>}
             {renderPage()}
           </div>
         </div>

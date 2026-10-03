@@ -1,27 +1,23 @@
-import { useState } from "react";
+import { canReceiveProject } from "../itUserRoles.js";
+import { uploadProjectPdf } from "../../backendApi.js";
+import { useRef, useState } from "react";
 import { CirclePlus, FileUp, Upload, X } from "lucide-react";
 
 const emptyForm = {
-  projectName: "", client: "", service: "", assignedEmployeeName: "",
+  projectName: "", client: "", service: "", assignedEmployeeId: "",
   priority: "Medium", startDate: "", expectedDelivery: "", description: "",
   requiredFeatures: "", pagesModules: "", technologyRequirements: "",
   designRequirements: "", clientBudget: "", referenceWebsites: "", specialInstructions: "",
 };
 
-function createProjectId() {
-  return `PRJ-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`;
-}
-
-function readFileAsDataUrl(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve({ name: file.name, type: file.type, size: file.size, dataUrl: reader.result });
-    reader.onerror = () => reject(reader.error || new Error(`Could not read ${file.name}`));
-    reader.readAsDataURL(file);
-  });
-}
-
 export default function CreateProjectForm({ users = [], projects = [], onCreate, serviceOptions = [] }) {
+  const uploadedFiles = useRef(new WeakMap());
+  const uploadPdf = async file => {
+    if (uploadedFiles.current.has(file)) return uploadedFiles.current.get(file);
+    const uploaded = await uploadProjectPdf(file);
+    uploadedFiles.current.set(file, uploaded);
+    return uploaded;
+  };
   const [form, setForm] = useState({ ...emptyForm });
   const [documents, setDocuments] = useState([]);
   const [scopeFiles, setScopeFiles] = useState({});
@@ -30,11 +26,7 @@ export default function CreateProjectForm({ users = [], projects = [], onCreate,
   const [error, setError] = useState("");
   const [created, setCreated] = useState(null);
   const itEmployees = users.filter((user) => [user.dept, user.department, user.role].some((value) => String(value || "").trim().toLowerCase() === "it"));
-  const assignableEmployees = itEmployees.length > 0 ? itEmployees : [
-    { id: "demo-it-0", name: "Ekta Singh", email: "ekta.singh@example.com" },
-    { id: "demo-it-1", name: "Aarav Sharma", email: "aarav.sharma@example.com" },
-    { id: "demo-it-2", name: "Priya Mehta", email: "priya.mehta@example.com" },
-  ];
+  const assignableEmployees = itEmployees.filter(canReceiveProject);
 
   const change = (event) => {
     const { name, value } = event.target;
@@ -47,8 +39,12 @@ export default function CreateProjectForm({ users = [], projects = [], onCreate,
     event.preventDefault();
     if (saving) return;
     const values = Object.fromEntries(Object.entries(form).map(([key, value]) => [key, value.trim()]));
+    if (!assignableEmployees.some(user => String(user.id || user._id) === values.assignedEmployeeId)) {
+      setError("Choose an IT employee eligible for direct project assignment.");
+      return;
+    }
     const requiredScope = ["description", "requiredFeatures", "pagesModules", "technologyRequirements", "designRequirements", "referenceWebsites", "specialInstructions"];
-    if (![values.projectName, values.client, values.assignedEmployeeName, values.startDate, values.expectedDelivery].every(Boolean)
+    if (![values.projectName, values.client, values.assignedEmployeeId, values.startDate, values.expectedDelivery].every(Boolean)
       || requiredScope.some((key) => !values[key] && !scopeFiles[key]?.length)) {
       setError("Complete the project information and add text or an attachment to each required section.");
       return;
@@ -61,34 +57,37 @@ export default function CreateProjectForm({ users = [], projects = [], onCreate,
       setError("Expected delivery must be on or after the start date.");
       return;
     }
+    const allFiles = [...documents, ...Object.values(scopeFiles).flat()];
+    if (allFiles.some(file => !/\.pdf$/i.test(file.name) || (file.type && file.type !== 'application/pdf') || file.size > 3 * 1024 * 1024)) {
+      setError('Choose PDFs no larger than 3 MB each.');
+      return;
+    }
     setSaving(true);
     let storedDocuments;
     let storedScopeFiles;
     try {
-      storedDocuments = await Promise.all(documents.map(readFileAsDataUrl));
-      storedScopeFiles = Object.fromEntries(await Promise.all(Object.entries(scopeFiles).map(async ([name, files]) => [name, await Promise.all(files.map(readFileAsDataUrl))])));
-    } catch {
+      storedDocuments = await Promise.all(documents.map(uploadPdf));
+      storedScopeFiles = Object.fromEntries(await Promise.all(Object.entries(scopeFiles).map(async ([name, files]) => [name, await Promise.all(files.map(uploadPdf))])));
+    } catch (error) {
       setSaving(false);
-      setError("One of the selected files could not be read.");
+      setError(error.message || "One of the PDFs could not be uploaded.");
       return;
     }
     const project = {
       ...values,
       scopeFiles: storedScopeFiles,
       documents: storedDocuments,
-      projectId: createProjectId(),
-      id: `local-project-${Date.now()}`,
       status: "New",
     };
     try {
-      await onCreate(project);
-    } catch {
+      const saved = await onCreate(project);
+      setCreated(saved);
+    } catch (error) {
       setSaving(false);
-      setError("Project could not be saved. Your entries and files are still here; please try again.");
+      setError(error.message || "Project could not be saved. Your entries and files are still here; please try again.");
       return;
     }
     setSaving(false);
-    setCreated(project);
     setForm({ ...emptyForm });
     setDocuments([]);
     setScopeFiles({});
@@ -117,12 +116,12 @@ export default function CreateProjectForm({ users = [], projects = [], onCreate,
           required={required && !scopeFiles[name]?.length}
           placeholder={`Add ${label.toLowerCase()}...`}
         />
-        <label className="scope-upload-button" aria-label={`Upload PDF or file for ${label}`} title={`Upload PDF or file for ${label}`}>
+        <label className="scope-upload-button" aria-label={`Upload PDF for ${label}`} title={`Upload PDF for ${label}`}>
           <Upload size={17} />
           <input
             type="file"
             multiple
-            accept=".pdf,.doc,.docx,.txt,.png,.jpg,.jpeg"
+            accept=".pdf,application/pdf"
             onChange={(event) => { const selected = Array.from(event.target.files || []); setScopeFiles((current) => ({ ...current, [name]: addFiles(current[name] || [], selected) })); event.target.value = ""; }}
           />
         </label>
@@ -138,8 +137,8 @@ export default function CreateProjectForm({ users = [], projects = [], onCreate,
 
   return (
     <section className="panel project-create-panel">
-      <div className="panel-heading"><div><p className="eyebrow">PROJECT WORKSPACE</p><h2>Create Project</h2></div><span>Frontend preview</span></div>
-      <p style={{ padding: "0 24px", color: "var(--text-soft)" }}>Projects created here stay in this session and reset when you refresh.</p>
+      <div className="panel-heading"><div><p className="eyebrow">PROJECT WORKSPACE</p><h2>Create Project</h2></div><span>Project assignment</span></div>
+      <p style={{ padding: "0 24px", color: "var(--text-soft)" }}>Created projects appear in the assigned IT employee's New Projects.</p>
       <form className="form-grid" onSubmit={submit}>
         <p className="form-section-title">Project Information</p>
         {input("projectName", "Project Name", { required: true, placeholder: "e.g. Customer Support Workspace" })}
@@ -153,9 +152,9 @@ export default function CreateProjectForm({ users = [], projects = [], onCreate,
         </label>
         <label className="field">
           <span>Assigned To *</span>
-          <select name="assignedEmployeeName" value={form.assignedEmployeeName} onChange={change} required>
+          <select name="assignedEmployeeId" value={form.assignedEmployeeId} onChange={change} required>
             <option value="">Select IT employee</option>
-            {assignableEmployees.map((user, index) => <option key={user.id || user._id || index} value={user.name || user.username}>{user.name || user.username}</option>)}
+            {assignableEmployees.map((user, index) => <option key={user.id || user._id || index} value={user.id || user._id}>{user.name || user.username}</option>)}
           </select>
         </label>
         <label className="field"><span>Priority</span><select name="priority" value={form.priority} onChange={change}><option>Low</option><option>Medium</option><option>High</option><option>Urgent</option></select></label>
@@ -174,22 +173,22 @@ export default function CreateProjectForm({ users = [], projects = [], onCreate,
           <span>Additional documents / files</span>
           <label className="project-file-picker">
             <FileUp size={16} />
-            <span>{documents.length ? `${documents.length} file${documents.length === 1 ? "" : "s"} selected` : "Upload PDF / File"}</span>
+            <span>{documents.length ? `${documents.length} file${documents.length === 1 ? "" : "s"} selected` : "Upload PDF"}</span>
             <Upload size={16} className="project-file-picker-icon" />
-            <input type="file" multiple onChange={(event) => { const selected = Array.from(event.target.files || []); setDocuments((current) => addFiles(current, selected)); event.target.value = ""; setError(""); setCreated(null); }} />
+            <input type="file" multiple accept=".pdf,application/pdf" onChange={(event) => { const selected = Array.from(event.target.files || []); setDocuments((current) => addFiles(current, selected)); event.target.value = ""; setError(""); setCreated(null); }} />
           </label>
-          <small>Select all six PDFs together, or add files one at a time. Every attachment will appear in the IT project workspace.</small>
+          <small>Select all six PDFs together, or add files one at a time. PDFs must be no larger than 3 MB each. Every attachment will appear in the IT project workspace.</small>
           {fileList(documents, (index) => setDocuments((current) => current.filter((_, i) => i !== index)))}
         </div>
         {scopeField("specialInstructions", "Special Instructions", true)}
         {error && <p className="span-full" role="alert" style={{ color: "var(--danger)" }}>{error}</p>}
-        {created && <p className="span-full" role="status"><strong>{created.projectName}</strong> ({created.projectId}) created locally with status New, assigned to {created.assignedEmployeeName}.</p>}
+        {created && <p className="span-full" role="status"><strong>{created.projectName}</strong> ({created.projectId}) created with status New, assigned to {created.assignedEmployeeName}.</p>}
         <div className="form-actions span-full">
           <button type="button" className="ghost-button" onClick={() => { setForm({ ...emptyForm }); setDocuments([]); setScopeFiles({}); setScopeEditor(null); setError(""); setCreated(null); }}>Reset</button>
           <button type="submit" disabled={saving} className="primary-button"><CirclePlus size={16} /> {saving ? "Creating project..." : "Create Project"}</button>
         </div>
       </form>
-      {projects.length > 0 && <div style={{ padding: "0 24px 24px" }}><h3>Created in this session</h3><div className="table-wrap"><table className="table"><thead><tr><th>Project ID</th><th>Project</th><th>Client</th><th>Assigned To</th><th>Delivery</th><th>Status</th></tr></thead><tbody>{projects.map((project) => <tr key={project.id}><td>{project.projectId || project.id}</td><td>{project.projectName}</td><td>{project.client}</td><td>{project.assignedEmployeeName}</td><td>{project.expectedDelivery}</td><td>{project.status}</td></tr>)}</tbody></table></div></div>}
+      {projects.length > 0 && <div style={{ padding: "0 24px 24px" }}><h3>Created projects</h3><div className="table-wrap"><table className="table"><thead><tr><th>Project ID</th><th>Project</th><th>Client</th><th>Assigned To</th><th>Delivery</th><th>Status</th></tr></thead><tbody>{projects.map((project) => <tr key={project.id}><td>{project.projectId || project.id}</td><td>{project.projectName}</td><td>{project.client}</td><td>{project.assignedEmployeeName}</td><td>{project.expectedDelivery}</td><td>{project.status}</td></tr>)}</tbody></table></div></div>}
       {scopeEditor && (
         <div className="modal-surface" role="dialog" aria-modal="true" aria-labelledby="scope-editor-title" onMouseDown={closeScopeEditor}>
           <div className="modal-shell project-scope-modal" onMouseDown={(event) => event.stopPropagation()}>

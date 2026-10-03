@@ -1,0 +1,24 @@
+{
+  "name": "crm-it-dashboard",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "discover": "node scripts/discover.js",
+    "import": "node scripts/import.js",
+    "seed": "node scripts/seed.js",
+    "test": "node scripts/test-emulators.js",
+    "test:integration": "node --test --test-concurrency=1 test/*.test.js"
+  },
+  "dependencies": {
+    "express-rate-limit": "^8.1.0",
+    "helmet": "^8.1.0",
+    "multer": "^2.0.2",
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "firebase-tools": "^15.0.0"
+  }
+}
