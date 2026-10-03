@@ -5,6 +5,8 @@ import { changePassword } from "../controllers/authController.js";
 import { isAdmin } from "../utils/roles.js";
 import User from "../models/User.js";
 
+import { isITDepartment, isTeamOnlyITUser } from "../../frontend/src/itUserRoles.js";
+
 const router = express.Router();
 
 router.use(authenticate);
@@ -28,6 +30,15 @@ router.put("/me/profile", async (req, res) => {
 
 router.post("/:id/change-password", changePassword);
 router.get("/assignees", listAssignableUsers);
+router.get("/it-team", async (req, res) => {
+  if (!isAdmin(req.user) && !isITDepartment(req.user)) return res.status(403).json({ error: "Admin or IT access required." });
+  try {
+    const users = await User.find();
+    res.json(users.filter(req.query.teamOnly === 'true' ? isTeamOnlyITUser : isITDepartment).filter(user => !["inactive", "disabled"].includes(String(user.status || "").toLowerCase())).map(user => ({
+      id: user.id || String(user._id), name: user.name || user.username, role: user.role, dept: user.dept || user.department, canAssignProjects: user.canAssignProjects === true,
+    })));
+  } catch { res.status(500).json({ error: "Unable to load IT team members." }); }
+});
 router.use((req, res, next) => isAdmin(req.user) ? next() : res.status(403).json({ error: "Admin access required." }));
 
 router.get("/", (req, res) => listUsers(req, res));

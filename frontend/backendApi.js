@@ -601,3 +601,19 @@ export function logout() {
   clearToken();
   clearUserSession();
 }
+
+export const fetchProjects = () => request('/projects');
+export const createProject = project => request('/projects', { method: 'POST', body: JSON.stringify(project) });
+export const updateProject = (project, update) => request(`/projects/${encodeURIComponent(project.employeeKey)}/${encodeURIComponent(project.id)}`, { method: 'PATCH', body: JSON.stringify(update) });
+export async function uploadProjectPdf(file) {
+  if (!/\.pdf$/i.test(file.name) || (file.type && file.type !== 'application/pdf') || file.size > 3 * 1024 * 1024) throw new Error('Choose a PDF no larger than 3 MB.');
+  const dataUrl = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error('Unable to read PDF.'));
+    reader.readAsDataURL(file);
+  });
+  return request('/projects/pdf', { method: 'POST', body: JSON.stringify({ name: file.name, dataUrl: dataUrl.replace(/^data:[^;]*;/, 'data:application/pdf;') }) });
+}
+
+export const fetchITTeamMembers = () => request("/users/it-team?teamOnly=true");

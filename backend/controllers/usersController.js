@@ -1,7 +1,7 @@
 import bcrypt from "bcryptjs";
 import User from "../models/User.js";
 import { isMongoConnected } from "../config/db.js";
-import { isAllowedRole } from "../utils/roles.js";
+import { normalizeEmployment } from "../utils/itUserRoles.js";
 
 function mongoUnavailable(res) {
   return res.status(503).json({ error: "Database is unavailable. Please try again later." });
@@ -25,9 +25,7 @@ export async function createUser(req, res) {
   try {
     const { name, email, phone, emergencyContact, maritalStatus, education, username, password, dept, position, role, joined, state, branch, branchCode, address, imageUrl = "", imagePublicId = "" } = req.body;
 
-    if (!isAllowedRole(role)) {
-      return res.status(400).json({ error: "Choose a valid employee role." });
-    }
+    const employment = normalizeEmployment(req.body);
 
     if (String(role).trim().toLowerCase() === "admin" || String(dept).trim().toLowerCase() === "admin") {
       const existingAdmin = await User.findOne({ role: { $in: ["Admin", "Administrator", "Super Admin"] } });
@@ -78,7 +76,7 @@ export async function createUser(req, res) {
       password: hash,
       dept: String(dept).trim(),
       position: String(position).trim(),
-      role: String(role).trim(),
+      ...employment,
       joined: String(joined).trim(),
       state: String(state).trim(),
       branch: String(branch).trim(),
@@ -114,6 +112,7 @@ export async function updateUser(req, res) {
       return res.status(404).json({ error: "User not found" });
     }
     const targetId = String(existing._id);
+    Object.assign(payload, normalizeEmployment({ ...existing.toObject(), ...payload }));
     if (payload.password && !String(payload.password).startsWith("$2a$") && !String(payload.password).startsWith("$2b$")) {
       payload.password = await bcrypt.hash(payload.password, 10);
     }

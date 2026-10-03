@@ -7,3 +7,6 @@ dist/
 
 
 
+
+# Local backups before project cleanup
+/backups/projects/

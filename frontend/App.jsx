@@ -1,7 +1,8 @@
+import { IT_ROLES, defaultProjectEligibility, canReceiveProject } from "./src/itUserRoles.js";
 import CallLeadsPanel from "./CallLeadsPanel.jsx";
 import RemarkField from "./RemarkField.jsx";
 import { callLeadForm, isCallLead } from "./callLeads.js";
-import { subscribeCallListChanges } from "./backendApi.js";
+import { fetchProjects, createProject, subscribeCallListChanges } from "./backendApi.js";
 import { mergeCallListRows } from "./callListConfig.js";
 import { TRAINING_CALL_LIST_PROGRAMS, SERVICE_CALL_LIST_SERVICES, CALL_STATUS_OPTIONS, CALL_LIST_INTEREST_STATUS_OPTIONS, normalizeCallStatus, normalizeInterestStatus, normalizeCallProgram, callListPrograms, matchesCallListFilters } from "./callListConfig.js";
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
@@ -382,13 +383,10 @@ function normalizeLeadForUi(lead) {
 
 const sidebarSections = [
   {
-    heading: "PROJECTS",
-    items: [{ id: "project-create", label: "Create Project", icon: CirclePlus }],
-  },
-  {
     heading: "CRM",
     items: [
       { id: "dashboard", label: "CRM Dashboard", icon: LayoutDashboard },
+      { id: "project-create", label: "Create Project", icon: CirclePlus },
       { id: "crm", label: "All Leads", icon: PhoneCall },
       { id: "crm-approved", label: "Approved Leads", icon: CheckCheck },
       { id: "co-approved", label: "Assigned Leads", icon: CheckCheck },
@@ -1929,6 +1927,13 @@ function App() {
     };
   }, [currentUser, activePage]);
 
+  useEffect(() => {
+    if (String(currentUser?.role || '').toLowerCase() !== 'admin') { setAdminPreviewProjects([]); return; }
+    let active = true;
+    fetchProjects().then(rows => { if (active) setAdminPreviewProjects(rows); }).catch(error => { if (active) setToast(error.message); });
+    return () => { active = false; };
+  }, [currentUser, activePage]);
+
   const navResults = useMemo(() => {
     if (!deferredQuery.trim()) return sidebarSections;
     return sidebarSections
@@ -1944,7 +1949,8 @@ function App() {
   const pageTitle =
     sidebarSections
       .flatMap((section) => section.items)
-      .find((item) => item.id === activePage)?.label || "Dashboard";
+      .find((item) => item.id === activePage)?.label
+    || (activePage === "project-create" ? "Create Project" : "Dashboard");
 
   const pendingEnrollmentRequestCount = allEnrollmentRequests.filter((request) => request.status === "pending").length;
   const filteredEnrollmentRequests = allEnrollmentRequests.filter((request) => {
@@ -3454,7 +3460,7 @@ function App() {
   const password = createUserForm.password.trim();
   const dept = createUserForm.dept.trim();
   const position = createUserForm.position.trim();
-  const role = departmentRoleMap[dept] || dept;
+  const role = dept === "IT" ? createUserForm.role.trim() : departmentRoleMap[dept] || dept;
   const joined = createUserForm.joined.trim();
   const state = createUserForm.state.trim();
   const branch = createUserForm.branch.trim();
@@ -3512,6 +3518,7 @@ function App() {
       dept,
       position,
       role,
+      canAssignProjects: dept === "IT" && (IT_ROLES.includes(role) ? defaultProjectEligibility(role) : createUserForm.canAssignProjects === true),
       joined,
       state,
       branch,
@@ -3778,6 +3785,8 @@ function App() {
       username: user.username || "",
       password: "",
       role: user.role || departmentRoleMap[user.dept] || "CRM Executive",
+      customItRole: !IT_ROLES.includes(user.role),
+      canAssignProjects: canReceiveProject(user),
       dept: user.dept || user.department || "CRM",
       position: user.position || "",
       joined: user.joined || "",
@@ -4110,7 +4119,7 @@ function App() {
   if (appView === "it-dashboard" || (currentUser && isItUser(currentUser))) {
     return (
       <ErrorBoundary>
-        <ITDashboard onLogout={logout} />
+        <ITDashboard user={currentUser} onLogout={logout} />
         {toast ? <div className="toast">{toast}</div> : null}
       </ErrorBoundary>
     );
@@ -4260,6 +4269,10 @@ function App() {
               <DoorOpen size={16} />
               Logout
             </button>
+            <button className="primary-button" onClick={() => setActivePage("project-create")}>
+              <CirclePlus size={16} />
+              Create Project
+            </button>
             <button className="primary-button" onClick={() => setActivePage("sales-add")}>
               <CirclePlus size={16} />
               Add Lead
@@ -4269,7 +4282,16 @@ function App() {
 
         <section className="content" ref={contentRef}>
           {activePage === "project-create" && (
-            <CreateProjectForm users={users} projects={adminPreviewProjects} onCreate={(project) => setAdminPreviewProjects((current) => [project, ...current])} />
+            <CreateProjectForm
+              users={users}
+              projects={adminPreviewProjects}
+              serviceOptions={serviceCatalog}
+              onCreate={async (project) => {
+                const saved = await createProject(project);
+                setAdminPreviewProjects(current => [saved, ...current]);
+                return saved;
+              }}
+            />
           )}
           {activePage === "dashboard" && (
             <>
@@ -4802,7 +4824,9 @@ function App() {
                       setCreateUserForm((current) => ({
                         ...current,
                         dept,
-                        role: departmentRoleMap[dept] || dept,
+                        role: dept === "IT" ? "Full Stack Developer" : departmentRoleMap[dept] || dept,
+                        customItRole: false,
+                        canAssignProjects: dept === "IT",
                         position: dept === "Student" ? "Student" : (current.position === "Student" ? "" : current.position),
                       }));
                     }}
@@ -4812,6 +4836,26 @@ function App() {
                     ))}
                   </select>
                 </Field>
+                {createUserForm.dept === "IT" && <>
+                  <Field label="IT Role *">
+                    <select value={createUserForm.customItRole ? "__custom__" : createUserForm.role} onChange={(event) => {
+                      const custom = event.target.value === "__custom__";
+                      const role = custom ? "" : event.target.value;
+                      setCreateUserForm(current => ({ ...current, role, customItRole: custom, canAssignProjects: defaultProjectEligibility(role) }));
+                    }}>
+                      {IT_ROLES.map(role => <option key={role} value={role}>{role}</option>)}
+                      <option value="__custom__">Add new role</option>
+                    </select>
+                  </Field>
+                  {createUserForm.customItRole && <Field label="New IT role *">
+                    <input required maxLength={80} placeholder="Enter job role" value={createUserForm.role} onChange={event => setCreateUserForm(current => ({ ...current, role: event.target.value }))}/>
+                  </Field>}
+                  <label style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <input type="checkbox" style={{ width: "auto" }} checked={IT_ROLES.includes(createUserForm.role) ? defaultProjectEligibility(createUserForm.role) : createUserForm.canAssignProjects === true} disabled={IT_ROLES.includes(createUserForm.role)} onChange={event => setCreateUserForm(current => ({ ...current, canAssignProjects: event.target.checked }))}/>
+                    <span>Allow direct project assignment</span>
+                  </label>
+                  <p className="span-full">Full Stack Developer and Software Developer can receive projects. Junior Developer and Intern can join project teams. For a new role, tick the checkbox to allow direct assignment.</p>
+                </>}
                 <Field label="Position *">
                   <input
                     value={createUserForm.position}
