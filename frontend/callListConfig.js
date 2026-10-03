@@ -43,10 +43,10 @@ export const SERVICE_CALL_LIST_SERVICES = [
   "Public Relations (PR)",
   "Bulk Marketing (Highlighted Service)",
 ];
-export const CALL_STATUS_OPTIONS = ["Select Status", "Pending", "Follow Up", "Completed"];
-export const CALL_LIST_INTEREST_STATUS_OPTIONS = ["Select Status", "Interested", "Not Interested"];
-export const normalizeCallStatus = (value) => CALL_STATUS_OPTIONS.includes(value) ? value : "Select Status";
-export const normalizeInterestStatus = (value) => CALL_LIST_INTEREST_STATUS_OPTIONS.includes(value) ? value : "Select Status";
+export const CALL_STATUS_OPTIONS = ["Pending", "Follow Up", "Completed"];
+export const CALL_LIST_INTEREST_STATUS_OPTIONS = ["Not Interested", "Interested"];
+export const normalizeCallStatus = (value) => CALL_STATUS_OPTIONS.includes(value) ? value : "Pending";
+export const normalizeInterestStatus = (value) => CALL_LIST_INTEREST_STATUS_OPTIONS.includes(value) ? value : "Not Interested";
 export const normalizeCallProgram = (value) => /^(it services?|it training|-)$/i.test(String(value || "").trim()) ? "" : String(value || "").trim();
 export const callListPrograms = (type) => type === "training" ? TRAINING_CALL_LIST_PROGRAMS : type === "services" ? SERVICE_CALL_LIST_SERVICES : [...new Set([...SERVICE_CALL_LIST_SERVICES, ...TRAINING_CALL_LIST_PROGRAMS])];
 export function matchesCallListFilters(row, { search = "", program = "All", callStatus = "All", interest = "All", date = "", employee = "All", listType = "All" } = {}) {

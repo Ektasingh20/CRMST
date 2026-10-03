@@ -35,6 +35,18 @@ export function subscribeCallListChanges(onChange, onReady) {
   return () => { controller.abort(); window.clearTimeout(retry); };
 }
 
+export async function fetchMessageTemplates(type = "") {
+  return request(`/whatsapp/templates${type ? `?type=${encodeURIComponent(type)}` : ""}`);
+}
+
+export async function fetchWhatsAppConfig() {
+  return request("/whatsapp/config");
+}
+
+export async function fetchPaymentLink(templateId) {
+  return request(`/whatsapp/payment-links/${encodeURIComponent(templateId)}`);
+}
+
 function safeStorageGet(key) {
   try {
     return window.localStorage.getItem(key);
@@ -408,8 +420,16 @@ export async function importCallListData(payload) {
   return request("/calling/list-data/import", { method: "POST", body: JSON.stringify(payload) });
 }
 
+export async function createCallListData(type, contact) {
+  return request(`/calling/list-data/${encodeURIComponent(type)}`, { method: "POST", body: JSON.stringify(contact) });
+}
+
 export async function updateCallListData(type, id, patch, ownerAssignedTo = "") {
   return request(`/calling/list-data/${encodeURIComponent(type)}/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify({ ...patch, lookupAssignedTo: ownerAssignedTo }) });
+}
+
+export async function approveCallListLead(type, id, ownerAssignedTo = "") {
+  return request(`/calling/list-data/${encodeURIComponent(type)}/${encodeURIComponent(id)}/approve`, { method: "POST", body: JSON.stringify({ lookupAssignedTo: ownerAssignedTo }) });
 }
 
 export async function deleteCallListData(type, id, assignedTo = "") {

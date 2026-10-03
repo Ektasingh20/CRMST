@@ -3309,17 +3309,16 @@ img {
   white-space: normal;
 }
 .admin-all-leads-table .table th:nth-child(1) { width: 4%; }
-.admin-all-leads-table .table th:nth-child(2) { width: 8%; }
-.admin-all-leads-table .table th:nth-child(3) { width: 8%; }
-.admin-all-leads-table .table th:nth-child(4) { width: 8%; }
+.admin-all-leads-table .table th:nth-child(2) { width: 9%; }
+.admin-all-leads-table .table th:nth-child(3) { width: 9%; }
+.admin-all-leads-table .table th:nth-child(4) { width: 9%; }
 .admin-all-leads-table .table th:nth-child(5) { width: 7%; }
-.admin-all-leads-table .table th:nth-child(6) { width: 8%; }
-.admin-all-leads-table .table th:nth-child(7) { width: 11%; }
-.admin-all-leads-table .table th:nth-child(8) { width: 9%; }
-.admin-all-leads-table .table th:nth-child(9) { width: 11%; }
-.admin-all-leads-table .table th:nth-child(10) { width: 9%; }
-.admin-all-leads-table .table th:nth-child(11) { width: 10%; }
-.admin-all-leads-table .table th:nth-child(12) { width: 7%; }
+.admin-all-leads-table .table th:nth-child(6) { width: 9%; }
+.admin-all-leads-table .table th:nth-child(7) { width: 14%; }
+.admin-all-leads-table .table th:nth-child(8) { width: 10%; }
+.admin-all-leads-table .table th:nth-child(9) { width: 10%; }
+.admin-all-leads-table .table th:nth-child(10) { width: 11%; }
+.admin-all-leads-table .table th:nth-child(11) { width: 8%; }
 .admin-all-leads-table.ownership-hidden .table th:nth-child(1) { width: 5%; }
 .admin-all-leads-table.ownership-hidden .table th:nth-child(2) { width: 10%; }
 .admin-all-leads-table.ownership-hidden .table th:nth-child(3) { width: 10%; }

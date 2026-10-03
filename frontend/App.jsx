@@ -152,7 +152,9 @@ import {
   logoutUser,
   loadCallListData,
   uploadCallListData,
+  addCallListContact,
   saveCallListData,
+  approveCallLead,
   removeCallListData,
 } from "./backendClient";
 import ErrorBoundary from "./ErrorBoundary";
@@ -388,6 +390,7 @@ const sidebarSections = [
     items: [
       { id: "dashboard", label: "CRM Dashboard", icon: LayoutDashboard },
       { id: "crm", label: "All Leads", icon: PhoneCall },
+      { id: "crm-approved", label: "Approved Leads", icon: CheckCheck },
       { id: "co-approved", label: "Assigned Leads", icon: CheckCheck },
       { id: "sales-report", label: "CRM Reports", icon: Activity },
       { id: "crm-upload", label: "Upload CRM Data", icon: Upload },
@@ -1241,6 +1244,8 @@ function App() {
   const [openSectionIds, setOpenSectionIds] = useState([]);
   const [focusedLessonId, setFocusedLessonId] = useState("");
   const [crmUploadRows, setCrmUploadRows] = useState([]);
+  const [crmCallListsReadyFor, setCrmCallListsReadyFor] = useState("");
+  const [crmLeadsReadyFor, setCrmLeadsReadyFor] = useState("");
 
   const [settingsForm, setSettingsForm] = useState({ name: "", email: "", phone: "", emergencyContact: "", maritalStatus: "", education: "", dept: "", position: "", role: "", joined: "", state: "", branch: "", branchCode: "", address: "", username: "", imageUrl: "", imagePublicId: "" });
   const [passwordForm, setPasswordForm] = useState({ current: "", new: "", confirm: "" });
@@ -1361,18 +1366,30 @@ function App() {
   useEffect(() => {
     if (!currentUser || !(isLeadAssignmentUser(currentUser) || isCrmExecutive(currentUser.role))) return;
     let cancelled = false;
-    const refreshCallLists = () => loadCallListData().then((records) => {
+    const userKey = String(currentUser.id || currentUser._id || "");
+    if (crmCallListsReadyFor !== userKey) setCrmUploadRows([]);
+    const refreshCallLists = () => loadCallListData("", true).then((records) => {
       if (!cancelled && Array.isArray(records)) {
         setCrmUploadRows(mergeCallListRows(records));
 
       }
-    }).catch(() => { /* Preserve the last snapshot during a temporary connection failure. */ });
+    }).catch(() => { /* Keep the last snapshot if a later refresh fails. */ })
+      .finally(() => { if (!cancelled) setCrmCallListsReadyFor(userKey); });
     let streamConnected = false;
     const unsubscribe = subscribeCallListChanges(({ record, deleted }) => {
       if (cancelled) return;
+      if (!deleted && isAdminUser(currentUser) && record.callLeadStatus === "Approved") {
+        loadLeads(true).then((remoteLeads) => {
+          if (!cancelled && Array.isArray(remoteLeads)) setLeads(remoteLeads.map(normalizeLeadForUi));
+        }).catch(() => {});
+      }
       setCrmUploadRows((current) => {
-        const remaining = current.filter((row) => !(row.id === record.id && row.listType === record.listType));
-        return deleted ? mergeCallListRows(remaining) : mergeCallListRows([record], remaining);
+        const recordIndex = current.findIndex((row) => row.id === record.id && row.listType === record.listType);
+        if (deleted) return current.filter((row) => !(row.id === record.id && row.listType === record.listType));
+        // Live activity updates replace a row in place. They must not push a
+        // lead to the top or bottom of the CRM executive's working list.
+        if (recordIndex >= 0) return current.map((row, index) => index === recordIndex ? record : row);
+        return [...current, record];
       });
     }, () => {
       if (streamConnected) refreshCallLists();
@@ -1454,13 +1471,8 @@ function App() {
           return;
         }
         if (isCrmExecutive(session.role)) {
-          const [remoteLeads, remoteAssignees] = await Promise.all([loadLeads(), loadAssignableUsers()]);
+          const remoteAssignees = await loadAssignableUsers();
           if (Array.isArray(remoteAssignees)) setLeadAssignmentUsers(remoteAssignees);
-          if (Array.isArray(remoteLeads)) {
-            setLeads(remoteLeads.map(normalizeLeadForUi));
-            leadsCacheHydrated.current = true;
-            setLeadsLoadedFromBackend(true);
-          }
           return;
         }
         const [remoteUsers, remoteLeads, remoteServices, remoteCourses, remoteStip, remoteInterns, remoteTasks, remoteAttendance, remoteLeaves] = await Promise.all([
@@ -1766,9 +1778,23 @@ function App() {
 
   useEffect(() => {
     const userKey = getLeadCacheUserKey(currentUser);
-    if (!userKey || leadCacheUserKey.current === userKey) return;
+    const crmUser = isCrmExecutive(currentUser?.role);
+    const crmUserId = String(currentUser?.id || currentUser?._id || "");
+    if (!userKey || (crmUser ? crmLeadsReadyFor === crmUserId : leadCacheUserKey.current === userKey)) return;
 
     leadCacheUserKey.current = userKey;
+    if (crmUser) {
+      leadsCacheHydrated.current = false;
+      setLeads([]);
+      loadLeads().then((remoteLeads) => {
+        setLeads(Array.isArray(remoteLeads) ? remoteLeads.map(normalizeLeadForUi) : []);
+        if (Array.isArray(remoteLeads)) {
+          leadsCacheHydrated.current = true;
+          setLeadsLoadedFromBackend(true);
+        }
+      }).finally(() => setCrmLeadsReadyFor(crmUserId));
+      return;
+    }
     const cachedLeads = readLeadsFromStorage(currentUser);
     setLeads(cachedLeads.items.map(normalizeLeadForUi));
     leadsCacheHydrated.current = cachedLeads.hasCache;
@@ -1783,7 +1809,7 @@ function App() {
       leadsCacheHydrated.current = true;
       setLeadsLoadedFromBackend(true);
     });
-  }, [currentUser]);
+  }, [currentUser, crmLeadsReadyFor]);
 
   useEffect(() => {
     const sanitizedUsers = sanitizeImageCollection(users);
@@ -2015,6 +2041,8 @@ function App() {
   const assignedLeads = currentUserId
     ? leads.filter((lead) => String(lead.assignedTo || "") === currentUserId)
     : [];
+  const approvedCallLeads = leads.filter((lead) => lead.callLeadStatus === "Approved"
+    || crmUploadRows.some((contact) => contact.callLeadStatus === "Approved" && String(contact.createdLeadId || "") === String(lead.id)));
   const wonLeads = leads.filter((lead) => ["Interested", "Converted", "Approved"].includes(String(lead.status || "").trim().replace(/_/g, " ")));
   const followUps = leads.filter((lead) => lead.status === "Follow-up");
   const revenue = wonLeads.reduce((sum, lead) => sum + Number(lead.value || 0), 0);
@@ -2032,11 +2060,12 @@ function App() {
   }, [activePage, leadsLoadedFromBackend, wonLeads.length]);
 
   useEffect(() => {
-    if (activePage !== "crm" || !isAdminUser(currentUser)) return undefined;
+    if (!["crm", "crm-approved"].includes(activePage) || !isAdminUser(currentUser)) return undefined;
     const userKey = String(currentUser?.id || currentUser?._id || currentUser?.username || "");
-    if (!userKey || adminAllLeadsLoadedForUser.current === userKey) return undefined;
+    const pageKey = `${userKey}:${activePage}`;
+    if (!userKey || adminAllLeadsLoadedForUser.current === pageKey) return undefined;
 
-    adminAllLeadsLoadedForUser.current = userKey;
+    adminAllLeadsLoadedForUser.current = pageKey;
     let active = true;
     loadLeads(true).then((remoteLeads) => {
       if (!active || !Array.isArray(remoteLeads)) return;
@@ -3369,6 +3398,8 @@ function App() {
       console.warn("Logout failed", e);
     }
     setCurrentUser(null);
+    setCrmCallListsReadyFor("");
+    setCrmLeadsReadyFor("");
     setAppView("home");
     setActivePage("dashboard");
     localStorage.removeItem("crmst-student-session");
@@ -3600,6 +3631,8 @@ function App() {
       if (editingLeadId) {
         const savedLead = await updateLead(editingLeadId, leadPayload);
         setLeads((current) => current.map((item) => String(item.id) === String(editingLeadId) ? normalizeLeadForUi(savedLead) : item));
+      } else if (leadCreationSource) {
+        await saveCallContact(leadCreationSource, { leadDraft: leadPayload });
       } else {
         const savedLead = await createLeadApi({
           id: String(Date.now()),
@@ -3607,15 +3640,13 @@ function App() {
           createdAt: new Date().toISOString().slice(0, 10),
         });
         setLeads((current) => [normalizeLeadForUi(savedLead), ...current]);
-        if (leadCreationSource) {
-          await saveCallContact(leadCreationSource, { leadCreated: true, createdLeadId: savedLead.id, createdLeadDate: savedLead.createdAt, callLeadStatus: "Approved" });
-        }
       }
     } catch (err) {
       notify(err.message || (editingLeadId ? "Lead could not be updated." : "Lead could not be saved."));
       return;
     }
     const wasEditing = Boolean(editingLeadId);
+    const savedCallLeadDraft = Boolean(leadCreationSource);
     const returnPage = editingLeadReturnPage;
     setEditingLeadId(null);
     setLeadCreationSource(null);
@@ -3637,51 +3668,36 @@ function App() {
       assignedDate: new Date().toISOString().slice(0, 10),
       notes: "",
     });
-    notify(wasEditing ? "Lead updated in the backend." : "Lead saved to the pipeline.");
-    setActivePage(wasEditing ? returnPage : "crm");
+    notify(wasEditing ? "Lead updated in the backend." : savedCallLeadDraft ? "Lead form saved and locked. Approve it from Call Leads when ready." : "Lead saved to the pipeline.");
+    setActivePage(wasEditing || savedCallLeadDraft ? returnPage : "crm");
   }
 
   async function saveCallContact(contact, patch) {
-    let nextPatch = patch;
-    const nextContact = { ...contact, ...patch };
-    const approvalCancelled = ["Pending", "Rejected"].includes(patch.callLeadStatus);
-    const noLongerQualifies = !isCallLead(nextContact);
-    const qualifiesAgain = !isCallLead(contact) && isCallLead(nextContact);
-    const contactPhone = String(contact.contact || contact.phone || "").replace(/\D/g, "").slice(-10);
-    const linkedCreatedLeadIds = [...new Set([
-      contact.createdLeadId,
-      ...leads.filter((lead) => {
-        const leadPhone = String(lead.phone || lead.contact || "").replace(/\D/g, "").slice(-10);
-        const leadSource = String(lead.source || lead.leadSource || "").trim().toLowerCase();
-        return contactPhone && leadPhone === contactPhone && leadSource === "phone call";
-      }).map((lead) => lead.id),
-    ].filter(Boolean).map(String))];
-    const resetCreatedLead = (approvalCancelled || noLongerQualifies || qualifiesAgain)
-      && Boolean(contact.leadCreated || contact.createdLeadId || contact.callLeadStatus === "Approved" || linkedCreatedLeadIds.length);
-    if (resetCreatedLead) {
-      for (const leadId of linkedCreatedLeadIds) {
-        await deleteLead(leadId);
-      }
-      const removedLeadIds = new Set(linkedCreatedLeadIds);
-      setLeads((current) => current.filter((lead) => !removedLeadIds.has(String(lead.id))));
-      nextPatch = {
-        ...patch,
-        leadCreated: false,
-        createdLeadId: "",
-        createdLeadDate: "",
-        callLeadStatus: approvalCancelled ? patch.callLeadStatus : "Pending",
-      };
-    }
-    const saved = await saveCallListData(contact.listType, contact.id, nextPatch, contact.assignedTo);
+    const saved = await saveCallListData(contact.listType, contact.id, patch, contact.assignedTo);
     setCrmUploadRows((current) => current.map((row) => row.id === saved.id && row.listType === saved.listType ? saved : row));
     return saved;
+  }
+
+  async function createCallContact(type, contact) {
+    const saved = await addCallListContact(type, contact);
+    setCrmUploadRows((current) => current.some((row) => row.id === saved.id && row.listType === saved.listType)
+      ? current : [saved, ...current]);
+    return saved;
+  }
+
+  async function approveSavedCallLead(contact) {
+    const result = await approveCallLead(contact.listType, contact.id, contact.assignedTo);
+    setCrmUploadRows((current) => current.map((row) => row.id === result.record.id && row.listType === result.record.listType ? result.record : row));
+    setLeads((current) => current.some((lead) => String(lead.id) === String(result.lead.id))
+      ? current : [normalizeLeadForUi(result.lead), ...current]);
+    return result;
   }
 
   useEffect(() => {
     if (!isAdminUser(currentUser)) return;
     crmUploadRows.forEach((contact) => {
       const key = `${contact.listType || "list"}:${contact.id}`;
-      if (isCallLead(contact)) {
+      if (isCallLead(contact) || contact.leadCreated || contact.callLeadStatus === "Approved") {
         staleCallLeadCleanup.current.delete(key);
         return;
       }
@@ -3709,7 +3725,7 @@ function App() {
   }
 
   function addLeadFromCall(contact) {
-    setCreateLead({ ...callLeadForm(contact), assignedDate: new Date().toISOString().slice(0, 10) });
+    setCreateLead({ ...callLeadForm(contact), ...contact.leadDraft, assignedDate: contact.leadDraft?.assignedDate || new Date().toISOString().slice(0, 10) });
     setEditingLeadId(null);
     setLeadCreationSource(contact);
     setEditingLeadReturnPage(activePage);
@@ -4020,7 +4036,7 @@ function App() {
                     placeholder="Create password"
                   />
                   <button type="button" className="password-toggle" onClick={() => setShowSignupPassword((v) => !v)}>
-                    {showSignupPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                    {showSignupPassword ? <Eye size={16} /> : <EyeOff size={16} />}
                   </button>
                 </div>
               </Field>
@@ -4107,12 +4123,16 @@ function App() {
           user={currentUser}
           leads={leads}
           sourceContacts={crmUploadRows}
+          callsLoading={crmCallListsReadyFor !== String(currentUser?.id || currentUser?._id || "")}
+          leadsLoading={crmLeadsReadyFor !== String(currentUser?.id || currentUser?._id || "")}
           onUpdateLead={updateCrmLead}
           onCreateLead={createCrmLead}
+          onApproveCallLead={approveSavedCallLead}
           onLogout={logout}
           currentUser={currentUser}
           users={leadAssignmentUsers.length ? leadAssignmentUsers : activeUsers.filter(isLeadAssignmentUser)}
           onUpdateCallListContact={saveCallContact}
+          onCreateCallListContact={createCallContact}
           onDeleteCallContact={deleteCallContact}
           onProfileUpdated={(updatedProfile) => setCurrentUser((current) => ({ ...current, ...updatedProfile }))}
 
@@ -4708,9 +4728,13 @@ function App() {
             <AdminAllLeadsTable title={`All Leads (${leads.length})`} leads={leads} users={activeUsers} adminName={currentUser?.name || currentUser?.username || "Admin"} onEdit={editApprovedLead} onSave={updateCrmLead} onDelete={deleteFrontendLead} />
           )}
 
+          {activePage === "crm-approved" && (
+            <AdminAllLeadsTable title={`Approved Leads (${approvedCallLeads.length})`} leads={approvedCallLeads} users={activeUsers} adminName={currentUser?.name || currentUser?.username || "Admin"} onEdit={editApprovedLead} onSave={updateCrmLead} onDelete={deleteFrontendLead} />
+          )}
+
           {activePage === "crm-upload" && (
-            <CrmUploadDataPage rows={crmUploadRows} setRows={setCrmUploadRows} users={users} isAdmin={isAdminUser(currentUser)}
-              onCallLeadEdit={addLeadFromCall} onSaveCall={saveCallContact} onDeleteCall={deleteCallContact} />
+            <CrmUploadDataPage rows={crmUploadRows} setRows={setCrmUploadRows} users={users} currentUser={currentUser} isAdmin={isAdminUser(currentUser)}
+              onCallLeadEdit={addLeadFromCall} onSaveCall={saveCallContact} onApproveCall={approveSavedCallLead} onDeleteCall={deleteCallContact} />
           )}
 
           {activePage === "user-create" && (
@@ -5118,7 +5142,7 @@ function App() {
 
                 <div className="form-actions span-full">
                   <button className="primary-button" type="submit">
-                    {editingLeadId ? "Update lead" : "Save lead"}
+                    {editingLeadId ? "Update lead" : leadCreationSource ? "Save lead form" : "Save lead"}
                   </button>
                 </div>
               </form>
@@ -5128,7 +5152,7 @@ function App() {
           {activePage === "sales-approved" && (
             <>
               <AdminAllLeadsTable title={`Assigned Leads (${assignedLeads.length})`} leads={assignedLeads} users={activeUsers} adminName={currentUser?.name || currentUser?.username || "Admin"} onEdit={editApprovedLead} onSave={updateCrmLead} onDelete={deleteFrontendLead} hideOwnership />
-              <CallLeadsPanel rows={crmUploadRows} users={activeUsers} assignedTo={currentUserId} onSave={saveCallContact} onDelete={deleteCallContact} onAdd={addLeadFromCall} lockCreatedLead allowReturnToOwner title={`Assigned Call Leads (${crmUploadRows.filter((row) => isCallLead(row) && String(row.callLeadAssignedTo || "") === currentUserId).length})`} subtitle={`Qualifying call leads assigned to ${currentUser?.name || currentUser?.username || "you"}`} />
+              <CallLeadsPanel rows={crmUploadRows} users={activeUsers} currentUser={currentUser} assignedTo={currentUserId} onSave={saveCallContact} onApprove={approveSavedCallLead} onDelete={deleteCallContact} onAdd={addLeadFromCall} lockCreatedLead allowReturnToOwner title={`Assigned Call Leads (${crmUploadRows.filter((row) => isCallLead(row) && String(row.callLeadAssignedTo || "") === currentUserId).length})`} subtitle={`Qualifying call leads assigned to ${currentUser?.name || currentUser?.username || "you"}`} />
             </>
           )}
 
@@ -5224,7 +5248,7 @@ function App() {
           {activePage === "co-approved" && (
             <>
               <AdminAllLeadsTable title={`Assigned Leads (${assignedLeads.length})`} leads={assignedLeads} users={activeUsers} adminName={currentUser?.name || currentUser?.username || "Admin"} onEdit={editApprovedLead} onSave={updateCrmLead} onDelete={deleteFrontendLead} hideOwnership />
-              <CallLeadsPanel rows={crmUploadRows} users={activeUsers} assignedTo={currentUserId} onSave={saveCallContact} onDelete={deleteCallContact} onAdd={addLeadFromCall} lockCreatedLead allowReturnToOwner title={`Assigned Call Leads (${crmUploadRows.filter((row) => isCallLead(row) && String(row.callLeadAssignedTo || "") === currentUserId).length})`} subtitle={`Qualifying call leads assigned to ${currentUser?.name || currentUser?.username || "you"}`} />
+              <CallLeadsPanel rows={crmUploadRows} users={activeUsers} currentUser={currentUser} assignedTo={currentUserId} onSave={saveCallContact} onApprove={approveSavedCallLead} onDelete={deleteCallContact} onAdd={addLeadFromCall} lockCreatedLead allowReturnToOwner title={`Assigned Call Leads (${crmUploadRows.filter((row) => isCallLead(row) && String(row.callLeadAssignedTo || "") === currentUserId).length})`} subtitle={`Qualifying call leads assigned to ${currentUser?.name || currentUser?.username || "you"}`} />
             </>
           )}
 
@@ -6133,7 +6157,7 @@ function App() {
                         <div className="password-input-wrap">
                           <input type={showCurrentPassword ? "text" : "password"} value={passwordForm.current} onChange={(event) => setPasswordForm((current) => ({ ...current, current: event.target.value }))} />
                           <button type="button" className="password-toggle" onClick={() => setShowCurrentPassword((v) => !v)}>
-                            {showCurrentPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                            {showCurrentPassword ? <Eye size={16} /> : <EyeOff size={16} />}
                           </button>
                         </div>
                       </Field>
@@ -6141,7 +6165,7 @@ function App() {
                         <div className="password-input-wrap">
                           <input type={showNewPassword ? "text" : "password"} value={passwordForm.new} onChange={(event) => setPasswordForm((current) => ({ ...current, new: event.target.value }))} />
                           <button type="button" className="password-toggle" onClick={() => setShowNewPassword((v) => !v)}>
-                            {showNewPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                            {showNewPassword ? <Eye size={16} /> : <EyeOff size={16} />}
                           </button>
                         </div>
                       </Field>
@@ -6149,7 +6173,7 @@ function App() {
                         <div className="password-input-wrap">
                           <input type={showConfirmPassword ? "text" : "password"} value={passwordForm.confirm} onChange={(event) => setPasswordForm((current) => ({ ...current, confirm: event.target.value }))} />
                           <button type="button" className="password-toggle" onClick={() => setShowConfirmPassword((v) => !v)}>
-                            {showConfirmPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                            {showConfirmPassword ? <Eye size={16} /> : <EyeOff size={16} />}
                           </button>
                         </div>
                       </Field>
@@ -6812,7 +6836,7 @@ function Panel({ title, children }) {
   );
 }
 
-function CrmUploadDataPage({ rows, setRows, users, isAdmin, onCallLeadEdit, onSaveCall, onDeleteCall }) {
+function CrmUploadDataPage({ rows, setRows, users, currentUser, isAdmin, onCallLeadEdit, onSaveCall, onApproveCall, onDeleteCall }) {
   const [selectedFile, setSelectedFile] = useState(null);
   const [selectedEmployee, setSelectedEmployee] = useState("");
   const [listType, setListType] = useState("services");
@@ -7180,7 +7204,7 @@ function CrmUploadDataPage({ rows, setRows, users, isAdmin, onCallLeadEdit, onSa
           </div>
         </div>
       </section>
-      <CallLeadsPanel canDelete={isAdmin} rows={rows} users={users} onSave={onSaveCall} onDelete={onDeleteCall} onAdd={onCallLeadEdit} showSourceOwner={isAdmin} />
+      <CallLeadsPanel canDelete={isAdmin} rows={rows} users={users} currentUser={currentUser} onSave={onSaveCall} onApprove={onApproveCall} onDelete={onDeleteCall} onAdd={onCallLeadEdit} showSourceOwner={isAdmin} lockCreatedLead />
     </div>
   );
 }
@@ -7963,10 +7987,9 @@ function LeadsTable({ leads, users, onEdit, onSave, onDelete, wrapperClassName =
   );
 }
 
-function AdminAllLeadsTable({ title = "All Leads", leads, users, adminName = "Admin", onEdit, onSave, onDelete, hideOwnership = false }) {
+function AdminAllLeadsTable({ title = "All Leads", leads, adminName = "Admin", onEdit, onSave, onDelete, hideOwnership = false }) {
   const [remarkDrafts, setRemarkDrafts] = useState({});
-  const [filters, setFilters] = useState({ search: "", fromDate: "", toDate: "", type: "All", enteredBy: "All", assignedTo: "All", status: "All" });
-  const assignableUsers = users.filter(isLeadAssignmentUser);
+  const [filters, setFilters] = useState({ search: "", fromDate: "", toDate: "", type: "All", enteredBy: "All", status: "All" });
   const [page, setPage] = useState(1);
   const pageSize = 15;
   const leadTime = (lead) => {
@@ -7988,7 +8011,6 @@ function AdminAllLeadsTable({ title = "All Leads", leads, users, adminName = "Ad
   };
   const statusValue = (lead) => /follow[ -]?up/i.test(String(lead.status || "")) ? "Pending" : (lead.status || "Pending");
   const enteredByValue = (lead) => lead.enteredBy || lead.enteredByName || lead.crmExecutiveName || lead.createdByName || adminName;
-  const assignedName = (lead) => assignableUsers.find((user) => String(user.id || user._id) === String(lead.assignedTo))?.name || lead.assignedToName || "Unassigned";
   const uniqueOptions = (values) => [...new Map(values
     .map((value) => String(value || "").trim()).filter(Boolean)
     .map((value) => [value.toLowerCase(), value])).values()].sort((a, b) => a.localeCompare(b));
@@ -8001,26 +8023,25 @@ function AdminAllLeadsTable({ title = "All Leads", leads, users, adminName = "Ad
     const dateKey = /^\d{4}-\d{2}-\d{2}/.test(String(rawDate))
       ? String(rawDate).slice(0, 10)
       : Number.isNaN(parsedDate.getTime()) ? "" : parsedDate.toISOString().slice(0, 10);
-    const searchable = [lead.name, lead.phone, lead.contact, lead.city, lead.interest, lead.program, typeLabel(lead), enteredByValue(lead), assignedName(lead), lead.remark, lead.notes, statusValue(lead)]
+    const searchable = [lead.name, lead.phone, lead.contact, lead.city, lead.interest, lead.program, typeLabel(lead), enteredByValue(lead), lead.remark, lead.notes, statusValue(lead)]
       .map((value) => String(value || "").toLowerCase()).join(" ");
     return (!search || searchable.includes(search))
       && (!filters.fromDate || dateKey >= filters.fromDate)
       && (!filters.toDate || dateKey <= filters.toDate)
       && (filters.type === "All" || typeLabel(lead) === filters.type)
       && (filters.enteredBy === "All" || String(enteredByValue(lead)).toLowerCase() === filters.enteredBy.toLowerCase())
-      && (filters.assignedTo === "All" || (filters.assignedTo === "Unassigned" ? !lead.assignedTo : String(lead.assignedTo) === filters.assignedTo))
       && (filters.status === "All" || statusValue(lead) === filters.status);
   });
   const totalPages = Math.max(1, Math.ceil(filteredLeads.length / pageSize));
   const visibleLeads = filteredLeads.slice((page - 1) * pageSize, page * pageSize);
   useEffect(() => {
     setPage(1);
-  }, [filters.search, filters.fromDate, filters.toDate, filters.type, filters.enteredBy, filters.assignedTo, filters.status]);
+  }, [filters.search, filters.fromDate, filters.toDate, filters.type, filters.enteredBy, filters.status]);
   useEffect(() => {
     setPage((current) => Math.min(current, totalPages));
   }, [totalPages]);
   const updateFilter = (name, value) => setFilters((current) => ({ ...current, [name]: value }));
-  const resetFilters = () => setFilters({ search: "", fromDate: "", toDate: "", type: "All", enteredBy: "All", assignedTo: "All", status: "All" });
+  const resetFilters = () => setFilters({ search: "", fromDate: "", toDate: "", type: "All", enteredBy: "All", status: "All" });
   const exportFilteredPdf = () => {
     const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
     pdf.setFontSize(16);
@@ -8032,7 +8053,7 @@ function AdminAllLeadsTable({ title = "All Leads", leads, users, adminName = "Ad
       startY: 25,
       head: [hideOwnership
         ? ["S. No.", "Date", "Name", "Phone", "City", "Lead Type", "Interest", "Remark", "Status"]
-        : ["S. No.", "Date", "Name", "Phone", "City", "Lead Type", "Interest", "Entered By", "Assigned To", "Remark", "Status"]],
+        : ["S. No.", "Date", "Name", "Phone", "City", "Lead Type", "Interest", "Entered By", "Remark", "Status"]],
       body: filteredLeads.map((lead, index) => hideOwnership ? [
         index + 1,
         formatAdminDate(lead.createdAt || lead.createdDate || lead.assignedDate || lead.date),
@@ -8042,12 +8063,12 @@ function AdminAllLeadsTable({ title = "All Leads", leads, users, adminName = "Ad
         index + 1,
         formatAdminDate(lead.createdAt || lead.createdDate || lead.assignedDate || lead.date),
         lead.name || "-", lead.phone || lead.contact || "-", lead.city || "-", typeLabel(lead),
-        lead.interest || lead.program || "-", enteredByValue(lead), assignedName(lead),
+        lead.interest || lead.program || "-", enteredByValue(lead),
         lead.remark || lead.notes || "-", statusValue(lead),
       ]),
       styles: { fontSize: 7, cellPadding: 1.8, overflow: "linebreak" },
       headStyles: { fillColor: [127, 78, 43] },
-      columnStyles: { 0: { cellWidth: 10 }, 1: { cellWidth: 18 }, 3: { cellWidth: 22 }, 9: { cellWidth: 30 } },
+      columnStyles: { 0: { cellWidth: 10 }, 1: { cellWidth: 18 }, 3: { cellWidth: 22 }, [hideOwnership ? 7 : 8]: { cellWidth: 30 } },
     });
     pdf.save(`all-leads-${new Date().toISOString().slice(0, 10)}.pdf`);
   };
@@ -8070,7 +8091,6 @@ function AdminAllLeadsTable({ title = "All Leads", leads, users, adminName = "Ad
       <div className="admin-leads-search"><Search size={17} /><input value={filters.search} onChange={(event) => updateFilter("search", event.target.value)} placeholder="Search name, phone, city, interest..." /></div>
       <select aria-label="Filter by lead type" value={filters.type} onChange={(event) => updateFilter("type", event.target.value)}><option value="All">All Lead Types</option>{["Service", "Training", "Internship"].map((type) => <option key={type}>{type}</option>)}</select>
       {!hideOwnership && <select aria-label="Filter by entered by" value={filters.enteredBy} onChange={(event) => updateFilter("enteredBy", event.target.value)}><option value="All">All Entered By</option>{enteredByOptions.map((name) => <option key={name} value={name}>{name}</option>)}</select>}
-      {!hideOwnership && <select aria-label="Filter by assigned user" value={filters.assignedTo} onChange={(event) => updateFilter("assignedTo", event.target.value)}><option value="All">All Assigned Users</option><option value="Unassigned">Unassigned</option>{assignableUsers.map((user) => <option key={user.id || user._id} value={user.id || user._id}>{user.name || user.username}</option>)}</select>}
       <select aria-label="Filter by status" value={filters.status} onChange={(event) => updateFilter("status", event.target.value)}><option value="All">All Statuses</option>{["Pending", "Interested", "Not Interested", "Converted", "Lost"].map((status) => <option key={status}>{status}</option>)}</select>
       </div>
       <div className="admin-leads-date-row">
@@ -8082,12 +8102,11 @@ function AdminAllLeadsTable({ title = "All Leads", leads, users, adminName = "Ad
         </div>
         <div className={`table-wrap admin-all-leads-table ${hideOwnership ? "ownership-hidden" : ""}`}>
     <table className="table">
-      <thead><tr><th>S. No.</th><th>Lead Create Date</th><th>Name</th><th>Phone</th><th>City</th><th>Lead Type</th><th>Interest</th>{!hideOwnership && <th>Entered By</th>}{!hideOwnership && <th>Assigned To</th>}<th>Remark</th><th>Status</th><th>Action</th></tr></thead>
+      <thead><tr><th>S. No.</th><th>Lead Create Date</th><th>Name</th><th>Phone</th><th>City</th><th>Lead Type</th><th>Interest</th>{!hideOwnership && <th>Entered By</th>}<th>Remark</th><th>Status</th><th>Action</th></tr></thead>
       <tbody>
-        {!filteredLeads.length && <tr><td className="panel-empty" colSpan={hideOwnership ? 10 : 12}>{leads.length ? "No leads match the selected filters." : "No leads have been created yet."}</td></tr>}
+        {!filteredLeads.length && <tr><td className="panel-empty" colSpan={hideOwnership ? 10 : 11}>{leads.length ? "No leads match the selected filters." : "No leads have been created yet."}</td></tr>}
         {visibleLeads.map((lead, index) => <tr key={`${lead.id || lead._id || lead.name || "lead"}:${lead.listType || "list"}:${lead.phone || lead.contact || "contact"}:${index}`}>
           <td>{(page - 1) * pageSize + index + 1}</td><td>{formatAdminDate(lead.createdAt || lead.createdDate || lead.assignedDate || lead.date)}</td><td><strong>{lead.name || "-"}</strong></td><td>{lead.phone || lead.contact || "-"}</td><td>{lead.city || "-"}</td><td><span className="lead-type-label">{typeLabel(lead)}</span></td><td title={lead.interest}>{lead.interest || lead.program || "-"}</td>{!hideOwnership && <td>{lead.enteredBy || lead.enteredByName || lead.crmExecutiveName || lead.createdByName || adminName}</td>}
-          {!hideOwnership && <td><select className="inline-select" aria-label={`Assign ${lead.name}`} value={lead.assignedTo || ""} onChange={(event) => onSave?.({ ...lead, assignedTo: event.target.value, assignedToName: assignableUsers.find((user) => String(user.id || user._id) === event.target.value)?.name || "" })}><option value="">Unassigned</option>{lead.assignedTo && !assignableUsers.some((user) => String(user.id || user._id) === String(lead.assignedTo)) && <option value={lead.assignedTo}>{lead.assignedToName || lead.assignedTo}</option>}{assignableUsers.map((user) => <option key={user.id || user._id} value={user.id || user._id}>{user.name || user.username}</option>)}</select></td>}
           <td><RemarkField value={remarkDrafts[lead.id] ?? lead.remark ?? lead.notes ?? ""} onChange={(value) => setRemarkDrafts((current) => ({ ...current, [lead.id]: value }))} onCommit={(value) => onSave?.({ ...lead, remark: value, notes: value })} label={`Remark for ${lead.name || "lead"}`} /></td>
           <td><select className={`inline-select lead-status-select ${statusValue(lead).toLowerCase().replace(/\s+/g, "-")}`} aria-label={`Status for ${lead.name}`} value={statusValue(lead)} onChange={(event) => onSave?.({ ...lead, status: event.target.value })}>{["Pending", "Interested", "Not Interested", "Converted", "Lost"].map((status) => <option key={status}>{status}</option>)}</select></td>
           <td><div className="row-actions"><button type="button" className="row-icon-btn edit" title="Edit" onClick={() => onEdit?.(lead)}><Edit3 size={14} /></button><button type="button" className="row-icon-btn delete" title="Delete" onClick={() => onDelete?.(lead)}><Trash2 size={14} /></button></div></td>

@@ -6,7 +6,7 @@
 }
 .shared-call-leads .call-leads-toolbar > input { flex: 1; min-width: 200px; }
 .shared-call-leads .call-leads-toolbar > select { min-width: 140px; }
-.shared-call-leads .crm-call-leads-table-wrap { overflow: auto; }
+.panel.shared-call-leads .crm-call-leads-table-wrap { overflow-x: auto; max-height: none; }
 .shared-call-leads .crm-call-leads-table-wrap .crm-call-leads-table {
   min-width: 1080px;
   width: 100%;
@@ -17,12 +17,12 @@
 .shared-call-leads .crm-call-leads-table-wrap .crm-call-leads-table th:nth-child(3) { width: 13%; }
 .shared-call-leads .crm-call-leads-table-wrap .crm-call-leads-table th:nth-child(4) { width: 7%; }
 .shared-call-leads .crm-call-leads-table-wrap .crm-call-leads-table th:nth-child(5) { width: 11%; }
-.shared-call-leads .crm-call-leads-table-wrap .crm-call-leads-table th:nth-child(6) { width: 8%; }
-.shared-call-leads .crm-call-leads-table-wrap .crm-call-leads-table th:nth-child(7) { width: 12%; }
+.shared-call-leads .crm-call-leads-table-wrap .crm-call-leads-table th:nth-child(6) { width: 9%; }
+.shared-call-leads .crm-call-leads-table-wrap .crm-call-leads-table th:nth-child(7) { width: 11%; }
 .shared-call-leads .crm-call-leads-table-wrap .crm-call-leads-table th:nth-child(8) { width: 10%; }
-.shared-call-leads .crm-call-leads-table-wrap .crm-call-leads-table th:nth-child(9) { width: 7%; }
-.shared-call-leads .crm-call-leads-table-wrap .crm-call-leads-table th:nth-child(10) { width: 13%; }
-.shared-call-leads .crm-call-leads-table-wrap .crm-call-leads-table th:nth-child(11) { width: 6%; }
+.shared-call-leads .crm-call-leads-table-wrap .crm-call-leads-table th:nth-child(9) { width: 8%; }
+.shared-call-leads .crm-call-leads-table-wrap .crm-call-leads-table th:nth-child(10) { width: 7%; }
+.shared-call-leads .crm-call-leads-table-wrap .crm-call-leads-table th:nth-child(11) { width: 11%; }
 .shared-call-leads .crm-call-leads-table td input,
 .shared-call-leads .crm-call-leads-table td select { width: 100%; min-width: 0; }
 .shared-call-leads .lead-status-select.approved { background: #d9eee6; color: #12624b; border-color: #12624b; }
@@ -31,7 +31,38 @@
 
 .panel.shared-call-leads .panel-head { padding: 20px 18px 16px; }
 .panel.shared-call-leads .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.panel.shared-call-leads .call-leads-head-actions { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 10px; }
 .panel.shared-call-leads .panel-head h3 { margin: 0; font-size: 16px; font-weight: 650; }
+.panel.shared-call-leads .call-leads-type-tabs {
+  display: inline-flex;
+  margin: 14px 16px 0;
+  border: 1px solid #e5d8cb;
+  border-radius: 11px;
+  overflow: hidden;
+  background: #fff;
+}
+.panel.shared-call-leads .call-leads-type-tabs button {
+  min-height: 38px;
+  padding: 0 18px;
+  border: 0;
+  background: transparent;
+  color: #756a60;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.panel.shared-call-leads .call-leads-type-tabs button + button { border-left: 1px solid #eee6dc; }
+.panel.shared-call-leads .call-leads-type-tabs button.active { background: #7f4e2b; color: #fff; }
+.panel.shared-call-leads,
+.panel.shared-call-leads .panel-head h3,
+.panel.shared-call-leads .panel-subtitle,
+.panel.shared-call-leads .call-leads-toolbar select,
+.panel.shared-call-leads .call-leads-search input,
+.panel.shared-call-leads .table-date-filter,
+.panel.shared-call-leads .call-leads-pagination {
+  color: #1f1a16;
+}
 .panel.shared-call-leads .panel-subtitle { margin: 6px 0 0; font-size: 13px; line-height: 1.5; }
 .panel.shared-call-leads .call-leads-error {
   position: fixed;
@@ -178,6 +209,65 @@
   color: #403832;
   box-sizing: border-box;
 }
+
+/* Use the same high-contrast text treatment as the service and training tables. */
+.panel.shared-call-leads .crm-call-leads-table td,
+.panel.shared-call-leads .crm-call-leads-table td strong,
+.panel.shared-call-leads .crm-call-leads-table td input,
+.panel.shared-call-leads .crm-call-leads-table td select {
+  color: #1f1a16;
+  font-weight: 500;
+}
+
+.panel.shared-call-leads .crm-call-leads-table th {
+  color: #4a4038;
+  font-weight: 800;
+}
+
+.panel.shared-call-leads .crm-call-leads-table th.sortable-call-leads-header {
+  cursor: pointer;
+  user-select: none;
+}
+
+.panel.shared-call-leads .crm-call-leads-table th.sortable-call-leads-header:hover {
+  color: #714a2b;
+}
+
+.panel.shared-call-leads .crm-call-leads-table td input::placeholder {
+  color: #4f453d;
+  opacity: 1;
+}
+
+.panel.shared-call-leads .crm-call-leads-table tbody tr.call-lead-locked {
+  background: transparent;
+  opacity: 1;
+}
+
+.panel.shared-call-leads .crm-call-leads-table tbody tr.call-lead-locked:hover {
+  background: #f8f3ed;
+}
+
+.panel.shared-call-leads .crm-call-leads-table tbody tr.call-lead-locked td,
+.panel.shared-call-leads .crm-call-leads-table tbody tr.call-lead-locked input:disabled,
+.panel.shared-call-leads .crm-call-leads-table tbody tr.call-lead-locked select:disabled,
+.panel.shared-call-leads .crm-call-leads-table tbody tr.call-lead-locked button:disabled {
+  color: #1f1a16 !important;
+  opacity: 1 !important;
+}
+
+/* A completed/locked contact cannot be clicked, but its Call and WhatsApp
+   controls retain their normal visual identity instead of turning grey. */
+.panel.shared-call-leads .crm-call-leads-table tbody tr.call-lead-locked .row-icon-btn.call:disabled {
+  color: var(--success) !important;
+  border-color: rgba(31, 111, 88, 0.24) !important;
+  background: #fff !important;
+}
+
+.panel.shared-call-leads .crm-call-leads-table tbody tr.call-lead-locked .row-icon-btn.whatsapp:disabled {
+  color: #218254 !important;
+  border-color: rgba(33, 130, 84, 0.24) !important;
+  background: #fff !important;
+}
 .panel.shared-call-leads .call-leads-name { display: flex; align-items: center; gap: 7px; min-width: 0; }
 .panel.shared-call-leads .call-leads-name strong { overflow: hidden; text-overflow: ellipsis; }
 .panel.shared-call-leads .call-leads-avatar {
@@ -207,6 +297,34 @@
 .panel.shared-call-leads .row-icon-btn .call-lead-form-icon { width: 18px; height: 18px; }
 .panel.shared-call-leads .crm-call-leads-table td .lead-status-select.approved { background: #d9eee6; color: #12624b; border-color: #a2cdbd; }
 .panel.shared-call-leads .crm-call-leads-table td .lead-status-select.rejected { background: #fbe6e3; color: #a73324; }
+.panel.shared-call-leads .crm-call-leads-table tbody tr.call-lead-locked select.call-lead-program-select:disabled {
+  background: #fff;
+  border-color: #eee5dc;
+  color: #1f1a16 !important;
+}
+.panel.shared-call-leads .crm-call-leads-table td .lead-status-select.approved:disabled {
+  background: #d9eee6 !important;
+  color: #12624b !important;
+  border-color: #a2cdbd !important;
+  opacity: 1 !important;
+}
+.panel.shared-call-leads .crm-call-leads-table td .lead-status-select.pending:disabled {
+  background: #fff !important;
+  color: #1f1a16 !important;
+  border-color: #eee5dc !important;
+  opacity: 1 !important;
+}
+.panel.shared-call-leads .crm-call-leads-table .row-icon-btn.call-lead-add-button:disabled {
+  background: #fff !important;
+  color: #366aa4 !important;
+  border-color: #c9d9ed !important;
+  opacity: 1 !important;
+  cursor: not-allowed;
+}
+.panel.shared-call-leads .crm-call-leads-table .row-icon-btn.call-lead-add-button:disabled:hover {
+  transform: none;
+  box-shadow: none;
+}
 @media (max-width: 1000px) {
   .panel.shared-call-leads .call-leads-toolbar { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 70px; }
   .panel.shared-call-leads .call-leads-search { grid-column: 1 / -1; }

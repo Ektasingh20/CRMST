@@ -41,7 +41,9 @@ import {
   fetchCourseUploadAuth,
   fetchCallListData,
   importCallListData,
+  createCallListData,
   updateCallListData,
+  approveCallListLead,
   deleteCallListData,
   fetchStipPrograms,
   createStipProgram,
@@ -607,8 +609,18 @@ export async function uploadCallListData(payload) {
   removeCallListCache();
   return result;
 }
+export async function addCallListContact(type, contact) {
+  const result = await createCallListData(type, contact);
+  removeCallListCache();
+  return result;
+}
 export async function saveCallListData(type, id, patch, assignedTo = "") {
   const result = await updateCallListData(type, id, patch, assignedTo);
+  removeCallListCache();
+  return result;
+}
+export async function approveCallLead(type, id, assignedTo = "") {
+  const result = await approveCallListLead(type, id, assignedTo);
   removeCallListCache();
   return result;
 }

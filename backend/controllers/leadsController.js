@@ -42,8 +42,16 @@ export async function listLeads(req, res) {
   }
   if (!isMongoConnected) return mongoUnavailable(res);
   try {
+    // CRM executives need to see leads they created, even after the lead has
+    // been handed to Admin or Operations. Assignment is not the creator.
+    const creatorIds = userLeadIds(req.user);
     const filter = isCrmExecutive(req.user)
-      ? { assignedTo: { $in: userLeadIds(req.user) } }
+      ? { $or: [
+        { enteredBy: { $in: creatorIds } },
+        { enteredByName: { $in: creatorIds } },
+        { createdBy: { $in: creatorIds } },
+        { createdByName: { $in: creatorIds } },
+      ] }
       : {};
     const items = await Lead.find(filter).sort({ updatedAt: -1 });
     return res.json(items.map((doc) => ({ id: doc.id || String(doc._id), ...doc.toObject() })));

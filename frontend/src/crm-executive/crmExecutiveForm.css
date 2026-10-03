@@ -32,6 +32,75 @@
   resize: vertical;
 }
 
+.india-phone-input {
+  display: flex;
+  align-items: center;
+  min-height: 48px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 3px 4px;
+  background: rgba(255, 255, 255, 0.88);
+}
+
+.india-phone-input:focus-within {
+  border-color: rgba(207, 98, 57, 0.55);
+  box-shadow: 0 0 0 4px rgba(207, 98, 57, 0.12);
+}
+
+.india-phone-prefix {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 38px;
+  padding: 0 11px;
+  border-radius: 10px;
+  background: rgba(141, 94, 56, 0.10);
+  color: var(--text);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.india-phone-input input {
+  min-width: 0;
+  min-height: 38px;
+  padding: 8px 12px;
+  border: 0 !important;
+  border-radius: 10px;
+  background: transparent;
+  box-shadow: none !important;
+}
+
+.india-phone-input input:focus {
+  box-shadow: none;
+}
+
+.india-phone-input input[readonly] {
+  color: var(--text-soft);
+  cursor: not-allowed;
+}
+
+.india-flag {
+  position: relative;
+  width: 19px;
+  height: 13px;
+  border-radius: 2px;
+  background: linear-gradient(to bottom, #ff9933 0 33.33%, #fff 33.33% 66.66%, #138808 66.66%);
+  box-shadow: 0 0 0 1px rgba(48, 50, 63, 0.12);
+}
+
+.india-flag::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 4px;
+  height: 4px;
+  transform: translate(-50%, -50%);
+  border: 1px solid #000080;
+  border-radius: 50%;
+}
+
 .field input:focus,
 .field select:focus,
 .field textarea:focus {

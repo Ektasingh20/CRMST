@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { callListPrograms, matchesCallListFilters, normalizeCallProgram, mergeCallListRows } from "./callListConfig.js";
+import { callListPrograms, matchesCallListFilters, normalizeCallProgram, normalizeCallStatus, normalizeInterestStatus, mergeCallListRows } from "./callListConfig.js";
 
 test("upload responses and live events keep each contact once in either arrival order", () => {
   const first = { id: "contact-1", listType: "services", name: "First" };
@@ -43,11 +43,17 @@ test("formatted phone searches and missing fields are safe", () => {
   assert.equal(matchesCallListFilters({}, { search: "Ekta" }), false);
 });
 
-test("legacy values match the unselected values displayed in both lists", () => {
+test("legacy statuses display as Pending and Not Interested in both lists", () => {
+  for (const value of [undefined, "", "Select Status", "Not Called"]) {
+    assert.equal(normalizeCallStatus(value), "Pending");
+  }
+  for (const value of [undefined, "", "Select Status", "Cold"]) {
+    assert.equal(normalizeInterestStatus(value), "Not Interested");
+  }
   for (const program of ["IT Services", "IT Service", "IT Training", "-"]) {
     assert.equal(normalizeCallProgram(program), "");
     assert.equal(matchesCallListFilters({ program, callStatus: "Not Called", interestStatus: "Cold" },
-      { program: "", callStatus: "Select Status", interest: "Select Status" }), true);
+      { program: "", callStatus: "Pending", interest: "Not Interested" }), true);
   }
 });
 

@@ -5,7 +5,7 @@ import User from "../models/User.js";
 import { isMongoConnected } from "../config/db.js";
 
 import { buildAutoMapping, detectDuplicateCandidates, normalizeImportPayload } from "../utils/callingImport.js";
-import { deleteCallRecord, importCallRecords, listCallRecords, normalizeListType, updateCallRecord } from "../config/firestoreCallListModel.js";
+import { approveCallRecord, createCallRecord, deleteCallRecord, importCallRecords, listCallRecords, normalizeListType, updateCallRecord } from "../config/firestoreCallListModel.js";
 import { notifyUser } from "../services/appNotifications.js";
 
 const router = express.Router();
@@ -66,6 +66,17 @@ router.post("/list-data/import", async (req, res) => {
   } catch (error) { res.status(400).json({ error: error.message }); }
 });
 
+router.post("/list-data/:type", async (req, res) => {
+  if (!isAdmin(req.user) && !isCrmExecutive(req.user)) {
+    return res.status(403).json({ error: "CRM Executive or Admin access required." });
+  }
+  try {
+    const saved = await createCallRecord(req.params.type, req.body || {}, req.user);
+    publishCallChange(saved);
+    res.status(201).json(saved);
+  } catch (error) { res.status(error.status || 400).json({ error: error.message }); }
+});
+
 router.put("/list-data/:type/:id", async (req, res) => {
   try {
     const type = normalizeListType(req.params.type);
@@ -74,6 +85,15 @@ router.put("/list-data/:type/:id", async (req, res) => {
     const assignedTo = admin ? String(req.body.lookupAssignedTo || req.body.assignedTo || "") : actorId;
     const patch = { ...(req.body || {}) };
     delete patch.lookupAssignedTo;
+    delete patch.leadDraftSavedBy;
+    delete patch.leadDraftSavedByName;
+    if (patch.leadDraft) {
+      patch.leadDraftSavedBy = actorId;
+      patch.leadDraftSavedByName = String(req.user.name || req.user.username || "");
+    }
+    if (patch.callLeadStatus === "Approved" || patch.leadCreated === true || patch.createdLeadId) {
+      return res.status(400).json({ error: "Save the lead form, then use the Approve action." });
+    }
     if (patch.callLeadAssignedTo) {
       const leadAssignee = await User.findOne({ $or: [{ id: String(patch.callLeadAssignedTo) }, { _id: String(patch.callLeadAssignedTo) }] });
       const role = String(leadAssignee?.role || "").trim().toLowerCase();
@@ -106,6 +126,15 @@ router.put("/list-data/:type/:id", async (req, res) => {
     publishCallChange(saved);
     res.json(saved);
   } catch (error) { res.status(error.status || (error.message === "Call record not found." ? 404 : 400)).json({ error: error.message }); }
+});
+
+router.post("/list-data/:type/:id/approve", async (req, res) => {
+  try {
+    const type = normalizeListType(req.params.type);
+    const result = await approveCallRecord(type, req.params.id, req.user, String(req.body?.lookupAssignedTo || ""), isAdmin(req.user));
+    publishCallChange(result.record);
+    res.json(result);
+  } catch (error) { res.status(error.status || 400).json({ error: error.message }); }
 });
 
 router.delete("/list-data/:type/:id", async (req, res) => {

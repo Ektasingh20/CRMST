@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Demo Payment Preview · System Technologies</title>
+  <style>
+    :root { font-family: Arial, sans-serif; color: #332923; background: #f7f2ed; }
+    * { box-sizing: border-box; }
+    body { min-height: 100vh; margin: 0; padding: 28px 16px; display: grid; place-items: center; }
+    main { width: min(440px, 100%); padding: 30px; border: 1px solid #eadbcf; border-radius: 22px; background: #fff; box-shadow: 0 22px 60px #65472c1c; text-align: center; }
+    .brand { font-size: 13px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: #7f4e2b; }
+    .demo { display: inline-block; margin: 24px 0 12px; padding: 7px 11px; border-radius: 100px; background: #fff1db; color: #8c551d; font-size: 12px; font-weight: 800; }
+    h1 { margin: 0 0 9px; font-size: 24px; }
+    .title { margin: 0; color: #6d635a; line-height: 1.5; }
+    .amount { margin: 20px 0; color: #6c3f25; font-size: 36px; font-weight: 800; }
+    .qr { width: 230px; height: 230px; margin: 0 auto; padding: 12px; display: grid; grid-template-columns: repeat(29, 1fr); grid-template-rows: repeat(29, 1fr); background: #fff; border: 1px solid #e6d8cb; border-radius: 8px; }
+    .qr span.dark { background: #3d2b20; }
+    .notice { margin: 18px 0 0; padding: 13px; border-radius: 10px; background: #fbf4eb; color: #6d5845; font-size: 13px; line-height: 1.5; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="brand">System Technologies</div>
+    <div class="demo">DEMO PAYMENT PREVIEW</div>
+    <h1>Payment link preview</h1>
+    <p class="title" id="item-title"></p>
+    <div class="amount" id="amount"></div>
+    <div class="qr" id="qr" aria-label="Decorative demo QR image, not scannable"></div>
+    <p class="notice">This is a visual demo only. The QR image is not scannable and no payment can be made or collected here.</p>
+  </main>
+  <script>
+    const params = new URLSearchParams(location.search);
+    const title = params.get("title") || "Training or service";
+    const amount = Number(params.get("amount"));
+    document.getElementById("item-title").textContent = title;
+    document.getElementById("amount").textContent = Number.isFinite(amount) && amount > 0
+      ? new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(amount)
+      : "Demo amount unavailable";
+    const qr = document.getElementById("qr");
+    let seed = [...(params.get("templateId") || title)].reduce((value, character) => (value * 31 + character.charCodeAt(0)) >>> 0, 2166136261);
+    const finder = (x, y, originX, originY) => {
+      const dx = x - originX;
+      const dy = y - originY;
+      if (dx < 0 || dy < 0 || dx > 6 || dy > 6) return null;
+      return dx === 0 || dy === 0 || dx === 6 || dy === 6 || (dx >= 2 && dx <= 4 && dy >= 2 && dy <= 4);
+    };
+    for (let y = 0; y < 29; y += 1) {
+      for (let x = 0; x < 29; x += 1) {
+        const cell = document.createElement("span");
+        const corner = finder(x, y, 0, 0) ?? finder(x, y, 22, 0) ?? finder(x, y, 0, 22);
+        seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+        if (corner ?? ((seed & 7) < 3)) cell.className = "dark";
+        qr.appendChild(cell);
+      }
+    }
+  </script>
+</body>
+</html>

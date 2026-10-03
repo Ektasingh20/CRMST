@@ -75,5 +75,10 @@ service cloud.firestore {
       allow read: if signedIn() && (isAdminUser() || resource.data.recipientId == request.auth.uid);
       allow create, update, delete: if false;
     }
+
+    match /whatsappMessages/{templateId} {
+      allow read: if signedIn();
+      allow create, update, delete: if isAdminUser();
+    }
   }
 }

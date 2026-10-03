@@ -98,7 +98,7 @@ function dateId(date = new Date()) {
   return `${day}-${month}-${date.getFullYear()}`;
 }
 
-function normalizeLeadData(data = {}) {
+export function normalizeLeadData(data = {}) {
   const normalized = { ...data };
   normalized.listType = typeSlug(normalized.listType || normalized.type);
   normalized.phone = normalized.phone || normalized.contact || "";
@@ -115,6 +115,10 @@ function normalizeLeadData(data = {}) {
   delete normalized.createdDate;
   delete normalized.type;
   return normalized;
+}
+
+export function leadCollection(type, interest) {
+  return getFirestore().collection("leads").doc(typeSlug(type)).collection(interestId(interest));
 }
 
 export function createLeadModel() {
@@ -151,10 +155,7 @@ export function createLeadModel() {
       const type = typeSlug(data.type);
       const payload = normalizeLeadData({ ...data, listType: type });
       const interest = interestId(payload.interest);
-      const parent = getFirestore()
-        .collection("leads")
-        .doc(type)
-        .collection(interest);
+      const parent = leadCollection(type, interest);
       const baseId = `lead_${dateId()}`;
       let createdDocument;
 
