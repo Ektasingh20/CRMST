@@ -1,7 +1,7 @@
 import express from "express";
 import { authenticate } from "../middleware/auth.js";
 import { listUsers, listAssignableUsers, createUser, updateUser, deleteUser } from "../controllers/usersController.js";
-import { changePassword } from "../controllers/authController.js";
+import { changePassword, requestPasswordResetEmail } from "../controllers/authController.js";
 import { isAdmin } from "../utils/roles.js";
 import User from "../models/User.js";
 
@@ -29,6 +29,7 @@ router.put("/me/profile", async (req, res) => {
 });
 
 router.post("/:id/change-password", changePassword);
+router.post("/:id/password-reset", requestPasswordResetEmail);
 router.get("/assignees", listAssignableUsers);
 router.get("/it-team", async (req, res) => {
   if (!isAdmin(req.user) && !isITDepartment(req.user)) return res.status(403).json({ error: "Admin or IT access required." });

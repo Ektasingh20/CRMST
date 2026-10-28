@@ -2,7 +2,21 @@ import { IT_ROLES, defaultProjectEligibility, canReceiveProject } from "./src/it
 import CallLeadsPanel from "./CallLeadsPanel.jsx";
 import RemarkField from "./RemarkField.jsx";
 import { callLeadForm, isCallLead } from "./callLeads.js";
-import { fetchProjects, createProject, subscribeCallListChanges } from "./backendApi.js";
+import {
+  fetchProjects,
+  fetchUsers as fetchUsersForMonitor,
+  fetchLeads as fetchLeadsForMonitor,
+  fetchTasks as fetchTasksForMonitor,
+  fetchAttendance as fetchAttendanceForMonitor,
+  fetchLeaves as fetchLeavesForMonitor,
+  fetchEmployees as fetchEmployeesForMonitor,
+  fetchCallListData as fetchCallListDataForMonitor,
+  fetchPendingEnrollmentRequests as fetchEnrollmentRequestsForMonitor,
+  fetchStudentTaskSubmissions as fetchTaskSubmissionsForMonitor,
+  fetchCourses as fetchCoursesForMonitor,
+  createProject,
+  subscribeCallListChanges,
+} from "./backendApi.js";
 import { mergeCallListRows } from "./callListConfig.js";
 import { TRAINING_CALL_LIST_PROGRAMS, SERVICE_CALL_LIST_SERVICES, CALL_STATUS_OPTIONS, CALL_LIST_INTEREST_STATUS_OPTIONS, normalizeCallStatus, normalizeInterestStatus, normalizeCallProgram, callListPrograms, matchesCallListFilters } from "./callListConfig.js";
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
@@ -125,7 +139,6 @@ import {
   saveEmployeesToBackend,
   createUser,
   updateUser,
-  changePassword,
   deleteUser,
   createLead as createLeadApi,
   updateLead,
@@ -159,10 +172,13 @@ import {
   removeCallListData,
 } from "./backendClient";
 import ErrorBoundary from "./ErrorBoundary";
+import PasswordResetLink from "./src/PasswordResetLink.jsx";
 import StudentDashboard from "./src/student-dashboard/StudentDashboard";
 import CrmExecutiveDashboard from "./src/crm-executive/CrmExecutiveDashboard";
 import ITDashboard from "./src/It- dashboard/ITDashboard";
+import HrDashboard from "./src/final_hr_dashboard/HrDashboard";
 import CreateProjectForm from "./src/admin/CreateProjectForm";
+import ITAdminModule from "./src/admin/ITAdminModule";
 import {
   compressImageFile,
   createPreviewUrl,
@@ -210,6 +226,18 @@ function isAdminUser(user) {
   return ["admin", "administrator", "super admin", "superadmin"].includes(role)
     || department === "admin"
     || username === "admin";
+}
+
+function getMonitoringDepartment(user) {
+  const role = String(user?.role || "").trim().toLowerCase().replace(/[_-]+/g, " ");
+  const department = String(user?.dept || user?.department || "").trim().toLowerCase().replace(/[_-]+/g, " ");
+  if (isAdminUser(user)) return "admin";
+  if (isCrmExecutive(role) || role === "sales executive" || department === "crm" || department === "sales") return "crm";
+  if (role === "student" || department === "student") return "learning";
+  for (const key of ["hr", "it", "operation", "operations"]) {
+    if (role === key || department === key) return key === "operations" ? "operation" : key;
+  }
+  return "other";
 }
 
 function isLeadAssignmentUser(user) {
@@ -317,6 +345,7 @@ function normalizeCourseToTraining(course) {
         : lessons.filter((lesson) => String(lesson.section || "General").trim().toLowerCase() === sectionName.toLowerCase()),
     };
   });
+
   const firstLesson = Array.isArray(course?.lessons) ? course.lessons[0] : null;
   const firstTask = Array.isArray(firstLesson?.tasks) ? firstLesson.tasks[0] : null;
   return {
@@ -385,7 +414,7 @@ const sidebarSections = [
   {
     heading: "CRM",
     items: [
-      { id: "dashboard", label: "CRM Dashboard", icon: LayoutDashboard },
+      { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
       { id: "project-create", label: "Create Project", icon: CirclePlus },
       { id: "crm", label: "All Leads", icon: PhoneCall },
       { id: "crm-approved", label: "Approved Leads", icon: CheckCheck },
@@ -442,6 +471,24 @@ const sidebarSections = [
       { id: "course-view", label: "View Courses", icon: BookOpen },
       { id: "course-check", label: "Check Tasks", icon: ClipboardCheck },
       { id: "enrollment-requests", label: "Enrollment Requests", icon: Bell },
+    ],
+  },
+  {
+    heading: "IT",
+    items: [
+      { id: "it-admin-projects", label: "All Projects", group: "PROJECT MANAGEMENT", icon: BriefcaseBusiness },
+      { id: "it-admin-new-projects", label: "New Projects", group: "PROJECT MANAGEMENT", icon: CirclePlus },
+      { id: "it-admin-active-projects", label: "Active Projects", group: "PROJECT MANAGEMENT", icon: ClipboardCheck },
+      { id: "it-admin-completed-projects", label: "Completed Projects", group: "PROJECT MANAGEMENT", icon: CheckCheck },
+      { id: "it-admin-it-employees", label: "IT Employees", group: "EMPLOYEE MANAGEMENT", icon: Users },
+      { id: "it-admin-assign-projects", label: "Assign Projects", group: "EMPLOYEE MANAGEMENT", icon: UserRoundCheck },
+      { id: "it-admin-workload", label: "Employee Workload", group: "EMPLOYEE MANAGEMENT", icon: Activity },
+      { id: "it-admin-tasks", label: "All Tasks", group: "TASK MANAGEMENT", icon: ClipboardList },
+      { id: "it-admin-pending-tasks", label: "Pending Tasks", group: "TASK MANAGEMENT", icon: ListTodo },
+      { id: "it-admin-overdue-tasks", label: "Overdue Tasks", group: "TASK MANAGEMENT", icon: CalendarMinus2 },
+      { id: "it-admin-project-reports", label: "Project Reports", group: "REPORTS & ANALYTICS", icon: FileText },
+      { id: "it-admin-employee-performance", label: "Employee Performance", group: "REPORTS & ANALYTICS", icon: TrendingUp },
+      { id: "it-admin-delivery-reports", label: "Project Delivery Reports", group: "REPORTS & ANALYTICS", icon: BarChart3 },
     ],
   },
   {
@@ -1149,6 +1196,13 @@ function readCollectionFromStorage(key, fallback) {
   }
 }
 
+function isHrUser(user) {
+  if (isAdminUser(user)) return false;
+  const role = String(user?.role || "").trim().toLowerCase();
+  const department = String(user?.dept || user?.department || "").trim().toLowerCase();
+  return role === "hr" || department === "hr";
+}
+
 function isItUser(user) {
   return String(user?.role || "").trim().toLowerCase() === "it"
     || String(user?.dept || user?.department || "").trim().toLowerCase() === "it";
@@ -1214,8 +1268,15 @@ function App() {
   const [authMode, setAuthMode] = useState("login");
   const [activePage, setActivePage] = useState("dashboard");
   const [adminPreviewProjects, setAdminPreviewProjects] = useState([]);
+  const [monitorProjects, setMonitorProjects] = useState([]);
+  const [monitorEmployees, setMonitorEmployees] = useState([]);
+  const [monitorCourses, setMonitorCourses] = useState([]);
+  const [monitorRefreshing, setMonitorRefreshing] = useState(false);
+  const [monitorRefreshError, setMonitorRefreshError] = useState("");
+  const [monitorLastRefreshed, setMonitorLastRefreshed] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [itAdminSectionOpen, setItAdminSectionOpen] = useState(true);
   const [globalQuery, setGlobalQuery] = useState("");
   const contentRef = useRef(null);
   const deferredQuery = useDeferredValue(globalQuery);
@@ -1246,16 +1307,9 @@ function App() {
   const [crmLeadsReadyFor, setCrmLeadsReadyFor] = useState("");
 
   const [settingsForm, setSettingsForm] = useState({ name: "", email: "", phone: "", emergencyContact: "", maritalStatus: "", education: "", dept: "", position: "", role: "", joined: "", state: "", branch: "", branchCode: "", address: "", username: "", imageUrl: "", imagePublicId: "" });
-  const [passwordForm, setPasswordForm] = useState({ current: "", new: "", confirm: "" });
-  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
-  const [showNewPassword, setShowNewPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [settingsSaving, setSettingsSaving] = useState(false);
-  const [passwordSaving, setPasswordSaving] = useState(false);
   const [settingsMessage, setSettingsMessage] = useState("");
   const [settingsMessageType, setSettingsMessageType] = useState("success");
-  const [passwordMessage, setPasswordMessage] = useState("");
-  const [passwordMessageType, setPasswordMessageType] = useState("success");
   const [avatarFile, setAvatarFile] = useState(null);
   const [avatarPreview, setAvatarPreview] = useState("");
   const [usernameError, setUsernameError] = useState("");
@@ -1297,8 +1351,11 @@ function App() {
   const [stipPrograms, setStipPrograms] = useState(initialStipPrograms);
   const [loginForm, setLoginForm] = useState(readSavedLogin);
   const [rememberLogin, setRememberLogin] = useState(() => Boolean(readSavedLogin().username));
+  const [loginError, setLoginError] = useState("");
+  const [loginSubmitting, setLoginSubmitting] = useState(false);
   const [signupForm, setSignupForm] = useState({ name: "", username: "", password: "" });
   const [showSignupPassword, setShowSignupPassword] = useState(false);
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
   const [currentUser, setCurrentUser] = useState(() => {
     try {
       const params = new URLSearchParams(window.location.search);
@@ -1310,6 +1367,57 @@ function App() {
     return getCurrentUser();
   });
   const [dashboardTab, setDashboardTab] = useState("overview");
+
+  async function refreshDashboardMonitor() {
+    if (!isAdminUser(currentUser) || monitorRefreshing) return;
+    setMonitorRefreshing(true);
+    const requireMonitorRows = (request, label) => request.then((rows) => {
+      if (!Array.isArray(rows)) throw new Error(`${label} returned an invalid response.`);
+      return rows;
+    }).catch((error) => {
+      throw new Error(`${label}: ${error?.message || "Unable to load data."}`);
+    });
+    const results = await Promise.allSettled([
+      requireMonitorRows(fetchUsersForMonitor(), "Users"),
+      requireMonitorRows(fetchLeadsForMonitor(true), "Leads"),
+      requireMonitorRows(fetchTasksForMonitor(), "Tasks"),
+      requireMonitorRows(fetchAttendanceForMonitor(), "Attendance"),
+      requireMonitorRows(fetchLeavesForMonitor(), "Leave requests"),
+      requireMonitorRows(fetchProjects(), "IT projects"),
+      requireMonitorRows(fetchEmployeesForMonitor(), "Employee records"),
+      requireMonitorRows(fetchCallListDataForMonitor(""), "CRM call lists"),
+      requireMonitorRows(fetchEnrollmentRequestsForMonitor(true), "Enrollment requests"),
+      requireMonitorRows(fetchTaskSubmissionsForMonitor(), "Student submissions"),
+      requireMonitorRows(fetchCoursesForMonitor(true), "Courses"),
+    ]);
+    const setters = [
+      setUsers,
+      (rows) => setLeads(rows.map(normalizeLeadForUi)),
+      setTasks,
+      setAttendance,
+      setLeaves,
+      setMonitorProjects,
+      setMonitorEmployees,
+      (rows) => setCrmUploadRows(mergeCallListRows(rows)),
+      setAllEnrollmentRequests,
+      setTaskSubmissions,
+      setMonitorCourses,
+    ];
+    const failures = [];
+    results.forEach((result, index) => {
+      if (result.status === "fulfilled" && Array.isArray(result.value)) {
+        setters[index](result.value);
+      } else if (result.status === "rejected") {
+        failures.push(result.reason?.message || "A dashboard data source could not be refreshed.");
+      }
+    });
+    setMonitorLastRefreshed(new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }));
+    setMonitorRefreshError(failures.length
+      ? `${failures.length} data source${failures.length === 1 ? "" : "s"} could not be refreshed: ${failures.slice(0, 3).join(" ")}${failures.length > 3 ? " See the browser console for additional errors." : ""}`
+      : "");
+    setMonitorRefreshing(false);
+  }
+
   const [createUserForm, setCreateUserForm] = useState({
     name: "",
     email: "",
@@ -1432,6 +1540,8 @@ function App() {
         setAppView("student-dashboard");
       } else if (isCrmExecutive(savedSession.role)) {
         setAppView("crm-executive");
+      } else if (isHrUser(savedSession)) {
+        setAppView("hr-dashboard");
       } else if (isItUser(savedSession)) {
         setAppView("it-dashboard");
       } else {
@@ -1522,6 +1632,11 @@ function App() {
       if (active) setTaskSubmissionLoading(false);
     });
     return () => { active = false; };
+  }, [activePage, currentUser]);
+
+  useEffect(() => {
+    if (activePage !== "dashboard" || !isAdminUser(currentUser)) return;
+    refreshDashboardMonitor();
   }, [activePage, currentUser]);
 
   useEffect(() => {
@@ -1863,6 +1978,8 @@ function App() {
       setAppView("student-dashboard");
     } else if (isCrmExecutive(currentUser.role)) {
       setAppView("crm-executive");
+    } else if (isHrUser(currentUser)) {
+      setAppView("hr-dashboard");
     }
   }, [currentUser]);
 
@@ -1935,16 +2052,17 @@ function App() {
   }, [currentUser, activePage]);
 
   const navResults = useMemo(() => {
-    if (!deferredQuery.trim()) return sidebarSections;
-    return sidebarSections
+    const availableSections = sidebarSections.filter((section) => section.heading !== "IT" || isAdminUser(currentUser));
+    if (!deferredQuery.trim()) return availableSections;
+    return availableSections
       .map((section) => ({
         ...section,
         items: section.items.filter((item) =>
-          item.label.toLowerCase().includes(deferredQuery.toLowerCase()),
+          `${item.group || ""} ${item.label}`.toLowerCase().includes(deferredQuery.toLowerCase()),
         ),
       }))
       .filter((section) => section.items.length > 0);
-  }, [deferredQuery]);
+  }, [deferredQuery, currentUser]);
 
   const pageTitle =
     sidebarSections
@@ -1953,6 +2071,18 @@ function App() {
     || (activePage === "project-create" ? "Create Project" : "Dashboard");
 
   const pendingEnrollmentRequestCount = allEnrollmentRequests.filter((request) => request.status === "pending").length;
+  const itOverdueTaskCount = tasks.filter((task) => {
+    const assignee = users.find((user) => (
+      String(user.id || user._id || "") === String(task.assigneeId || "")
+      || String(user.name || "").toLowerCase() === String(task.assignee || task.emp || "").toLowerCase()
+      || String(user.username || "").toLowerCase() === String(task.assignee || "").toLowerCase()
+    ));
+    const dueDate = String(task.dueDate || task.due || "").slice(0, 10);
+    return getMonitoringDepartment(assignee) === "it"
+      && !["done", "completed", "cancelled"].includes(String(task.status || "").toLowerCase())
+      && dueDate
+      && dueDate < new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date());
+  }).length;
   const filteredEnrollmentRequests = allEnrollmentRequests.filter((request) => {
     const query = enrollmentRequestQuery.trim().toLowerCase();
     const matchesQuery = !query || [request.studentName, request.studentPhone, request.courseName, request.courseId]
@@ -2120,6 +2250,111 @@ function App() {
   const callConnected = crmReportUsers.reduce((sum, report) => sum + (report.completed || 0), 0);
   const callNotConnected = crmReportUsers.reduce((sum, report) => sum + (report.notAttended || 0), 0);
   const callConnectionRate = callTotal > 0 ? Math.round((callConnected / callTotal) * 100) : 0;
+  const monitoringToday = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date());
+  const monitorUsersFor = (department) => activeUsers.filter((user) => getMonitoringDepartment(user) === department);
+  const monitorTasksFor = (department) => tasks.filter((task) => {
+    const assignee = users.find((user) =>
+      String(user.id || user._id || "") === String(task.assigneeId || "")
+      || String(user.name || "").toLowerCase() === String(task.assignee || task.emp || "").toLowerCase()
+      || String(user.username || "").toLowerCase() === String(task.assignee || "").toLowerCase());
+    return getMonitoringDepartment(assignee) === department;
+  });
+  const monitorOpenTasks = (rows) => rows.filter((task) => !["done", "completed", "cancelled"].includes(String(task.status || "").trim().toLowerCase()));
+  const monitorOverdueTasks = (rows) => monitorOpenTasks(rows).filter((task) => {
+    const dueDate = String(task.dueDate || task.due || "").slice(0, 10);
+    return dueDate && dueDate < monitoringToday;
+  });
+  const monitorPendingLeaves = leaves.filter((leave) => ["pending", "requested", "open"].includes(String(leave.status || "").trim().toLowerCase()));
+  const monitorPendingEnrollments = allEnrollmentRequests.filter((request) => ["pending", "contacted"].includes(String(request.status || "").trim().toLowerCase()));
+  const monitorUnreviewedSubmissions = taskSubmissions.filter((submission) =>
+    String(submission.taskStudentPdfUpload || "").trim() && !hasTaskGrade(submission.grade));
+  const monitorTiles = [
+    {
+      id: "crm",
+      title: "CRM Executive",
+      metrics: [
+        ["Active team", monitorUsersFor("crm").length],
+        ["Call-list contacts", crmUploadRows.length],
+        ["Leads", leads.length],
+        ["Follow-ups", followUps.length],
+      ],
+      detail: "Leads and call-list activity from the shared CRM backend.",
+    },
+    {
+      id: "hr",
+      title: "HR",
+      metrics: [
+        ["Active HR users", monitorUsersFor("hr").length],
+        ["Employee records", monitorEmployees.length],
+        ["Attendance marked today", attendance.filter((record) => String(record.date || "").slice(0, 10) === monitoringToday).length],
+        ["Pending leave requests", monitorPendingLeaves.length],
+      ],
+      detail: "Shared employee, attendance, leave, and task records.",
+    },
+    {
+      id: "it",
+      title: "IT",
+      metrics: [
+        ["Active team", monitorUsersFor("it").length],
+        ["Total projects", monitorProjects.length],
+        ["New projects to review", monitorProjects.filter((project) => String(project.status || "").toLowerCase() === "new").length],
+        ["Active projects", monitorProjects.filter((project) => String(project.status || "").toLowerCase() === "active").length],
+      ],
+      detail: "Project statuses from the shared project backend.",
+    },
+    {
+      id: "operation",
+      title: "Operations",
+      metrics: [
+        ["Active team", monitorUsersFor("operation").length],
+        ["Open assigned tasks", monitorOpenTasks(monitorTasksFor("operation")).length],
+        ["Overdue tasks", monitorOverdueTasks(monitorTasksFor("operation")).length],
+        ["Pending approvals", monitorPendingLeaves.length + monitorPendingEnrollments.length],
+      ],
+      detail: "Operations users and shared tasks assigned to them. A dedicated Operations workspace is not yet available.",
+    },
+    {
+      id: "learning",
+      title: "Student & Learning",
+      metrics: [
+        ["Students", studentUsers.length],
+        ["Courses", monitorCourses.length],
+        ["Pending enrollment requests", monitorPendingEnrollments.length],
+        ["Submissions to review", monitorUnreviewedSubmissions.length],
+      ],
+      detail: "Student accounts, courses, enrollment requests, and uploaded task submissions.",
+    },
+  ];
+  const monitorExceptions = [
+    ...monitorOverdueTasks(tasks).map((task) => ({
+      id: `task-${task.id}`,
+      type: "Overdue task",
+      owner: task.assignee || users.find((user) => String(user.id || user._id) === String(task.assigneeId || ""))?.name || "Unassigned",
+      item: task.title || "Untitled task",
+      status: task.status || "Open",
+    })),
+    ...monitorPendingLeaves.map((leave) => ({
+      id: `leave-${leave.id}`,
+      type: "Leave request",
+      owner: leave.employeeName || leave.emp || "Employee",
+      item: `${leave.type || "Leave"} · ${leave.from || ""}${leave.to ? ` to ${leave.to}` : ""}`,
+      status: leave.status,
+    })),
+    ...monitorPendingEnrollments.map((request) => ({
+      id: `enrollment-${request.id}`,
+      type: "Enrollment request",
+      owner: request.studentName || "Student",
+      item: request.courseName || "Course enrollment",
+      status: request.status,
+    })),
+    ...monitorProjects.filter((project) => String(project.status || "").toLowerCase() === "new").map((project) => ({
+      id: `project-${project.id}`,
+      type: "IT project review",
+      owner: project.assignedEmployeeName || "IT team",
+      item: project.name || project.projectName || "Untitled project",
+      status: project.status,
+    })),
+  ].slice(0, 12);
 
   const pipelineStages = [
     { label: "New", count: leads.filter((l) => l.status === "Pending").length, color: "var(--blue)" },
@@ -2311,44 +2546,6 @@ function App() {
       setSettingsMessageType("error");
     } finally {
       setSettingsSaving(false);
-    }
-  }
-
-  async function handleChangePassword() {
-    if (!currentUser) return;
-    setPasswordMessage("");
-
-    const { current, new: newPass, confirm } = passwordForm;
-
-    if (!current || !newPass || !confirm) {
-      setPasswordMessage("All password fields are required");
-      setPasswordMessageType("error");
-      return;
-    }
-
-    if (newPass !== confirm) {
-      setPasswordMessage("New password and confirm password do not match");
-      setPasswordMessageType("error");
-      return;
-    }
-
-    if (newPass.length < 6) {
-      setPasswordMessage("New password must be at least 6 characters");
-      setPasswordMessageType("error");
-      return;
-    }
-
-    try {
-      setPasswordSaving(true);
-      const result = await changePassword(currentUser._id || currentUser.id, current, newPass);
-      setPasswordMessage(result.message || "Password changed successfully.");
-      setPasswordMessageType("success");
-      setPasswordForm({ current: "", new: "", confirm: "" });
-    } catch (err) {
-      setPasswordMessage(err.message || "Failed to change password.");
-      setPasswordMessageType("error");
-    } finally {
-      setPasswordSaving(false);
     }
   }
 
@@ -3343,13 +3540,22 @@ function App() {
 
   async function handleLogin(event) {
     event.preventDefault();
+    if (loginSubmitting) return;
+    const username = loginForm.username.trim();
+    const password = loginForm.password;
+    if (!username || !password) {
+      setLoginError("Enter both your username and password.");
+      return;
+    }
+    setLoginError("");
+    setLoginSubmitting(true);
     try {
       if (rememberLogin) {
-        safeStorageSet(SAVED_LOGIN_STORAGE_KEY, JSON.stringify(loginForm));
+        safeStorageSet(SAVED_LOGIN_STORAGE_KEY, JSON.stringify({ username, password }));
       } else {
         safeStorageRemove(SAVED_LOGIN_STORAGE_KEY);
       }
-      const user = await authLogin(loginForm.username, loginForm.password);
+      const user = await authLogin(username, password);
       setCurrentUser(user);
       if (String(user.role || "").toLowerCase() === "student") {
         localStorage.setItem("crmst-student-session", JSON.stringify(user));
@@ -3357,11 +3563,20 @@ function App() {
         notify(`Welcome back, ${user.name}.`);
         return;
       }
-      setAppView(isCrmExecutive(user.role) ? "crm-executive" : isItUser(user) ? "it-dashboard" : "dashboard");
+      setAppView(isCrmExecutive(user.role) ? "crm-executive" : isHrUser(user) ? "hr-dashboard" : isItUser(user) ? "it-dashboard" : "dashboard");
       notify(`Welcome back, ${user.name}.`);
     } catch (err) {
       console.warn("API login failed", err);
-      notify(err.message || "Invalid username or password.");
+      const message = err.status === 401
+        ? "Username or password is incorrect."
+        : err.status === 503
+          ? "Login service is unavailable. Please try again later."
+          : err instanceof TypeError
+            ? "Unable to reach the login service. Check the connection and try again."
+            : err.message || "Unable to sign in. Please try again.";
+      setLoginError(message);
+    } finally {
+      setLoginSubmitting(false);
     }
   }
 
@@ -3963,32 +4178,53 @@ function App() {
             <form className="auth-form" onSubmit={handleLogin}>
               <p className="eyebrow">Member login</p>
               <h2>Access admin panel or dashboard</h2>
+              {loginError && <p className="auth-login-error" role="alert">{loginError}</p>}
               <Field label="Username">
                 <input
+                  required
+                  autoCapitalize="none"
                   value={loginForm.username}
                   autoComplete="username"
                   onChange={(event) =>
-                    setLoginForm((current) => ({
-                      ...current,
-                      username: event.target.value,
-                    }))
+                    {
+                      setLoginError("");
+                      setLoginForm((current) => ({
+                        ...current,
+                        username: event.target.value,
+                      }));
+                    }
                   }
                   placeholder="Enter your username"
                 />
               </Field>
               <Field label="Password">
-                <input
-                  type="password"
-                  value={loginForm.password}
-                  autoComplete="current-password"
-                  onChange={(event) =>
-                    setLoginForm((current) => ({
-                      ...current,
-                      password: event.target.value,
-                    }))
-                  }
-                  placeholder="Enter your password"
-                />
+                <div className="password-input-wrap">
+                  <input
+                    required
+                    type={showLoginPassword ? "text" : "password"}
+                    value={loginForm.password}
+                    autoComplete="current-password"
+                    onChange={(event) =>
+                      {
+                        setLoginError("");
+                        setLoginForm((current) => ({
+                          ...current,
+                          password: event.target.value,
+                        }));
+                      }
+                    }
+                    placeholder="Enter your password"
+                  />
+                  <button
+                    type="button"
+                    className="password-toggle"
+                    aria-label={showLoginPassword ? "Hide password" : "Show password"}
+                    aria-pressed={showLoginPassword}
+                    onClick={() => setShowLoginPassword((visible) => !visible)}
+                  >
+                    {showLoginPassword ? <Eye size={16} /> : <EyeOff size={16} />}
+                  </button>
+                </div>
               </Field>
               <label className="remember-login">
                 <input
@@ -3998,9 +4234,9 @@ function App() {
                 />
                 <span>Remember credentials on this device</span>
               </label>
-              <button className="primary-button full-width" type="submit">
+              <button className="primary-button full-width" type="submit" disabled={loginSubmitting}>
                 <LockKeyhole size={16} />
-                Login and Continue
+                {loginSubmitting ? "Signing in..." : "Login and Continue"}
               </button>
             </form>
           ) : (
@@ -4116,6 +4352,15 @@ function App() {
     );
   }
 
+  if (currentUser && isHrUser(currentUser) && !isCrmExecutive(currentUser.role)) {
+    return (
+      <ErrorBoundary>
+        <HrDashboard key={currentUser.id || currentUser._id || currentUser.username} user={currentUser} onLogout={logout} />
+        {toast ? <div className="toast">{toast}</div> : null}
+      </ErrorBoundary>
+    );
+  }
+
   if (appView === "it-dashboard" || (currentUser && isItUser(currentUser))) {
     return (
       <ErrorBoundary>
@@ -4191,36 +4436,54 @@ function App() {
         <nav className="nav">
           {navResults.map((section) => (
             <div key={section.heading} className="nav-group">
-              <p>{section.heading}</p>
-              {section.items.map((item) => {
+              {section.heading === "IT" ? (
+                <button
+                  type="button"
+                  className="it-admin-section-toggle"
+                  aria-expanded={itAdminSectionOpen || Boolean(deferredQuery.trim())}
+                  onClick={() => setItAdminSectionOpen((open) => !open)}
+                >
+                  <span>{section.heading}</span>
+                  <ChevronDown size={14} className={itAdminSectionOpen || deferredQuery.trim() ? "" : "is-collapsed"} />
+                </button>
+              ) : <p>{section.heading}</p>}
+              {(section.heading !== "IT" || itAdminSectionOpen || Boolean(deferredQuery.trim())) && section.items.map((item, index) => {
                 const Icon = item.icon;
                 return (
-                  <button
-                    key={item.id}
-                    className={`nav-item nav-item-${item.id} ${activePage === item.id ? "active" : ""}`}
-                    onClick={() => {
-                      if (activePage === "course-add" && item.id !== "course-add") {
-                        closeTrainingModal();
-                      }
-                      setActivePage(item.id);
-                      if (contentRef.current) {
-                        contentRef.current.scrollTop = 0;
-                      }
-                      setMobileNavOpen(false);
-                    }}
-                  >
-                    <span className="nav-item-left">
-                      <Icon size={16} />
-                      <span>{item.label}</span>
-                    </span>
-                    {item.id === "enrollment-requests" && pendingEnrollmentRequestCount > 0 ? (
-                      <span className="nav-pill">{pendingEnrollmentRequestCount}</span>
-                    ) : item.id === "hr-leaves" && leavePendingCount > 0 ? (
-                      <span className="nav-pill">{leavePendingCount}</span>
-                    ) : (
-                      <ChevronRight size={14} />
+                  <div key={item.id}>
+                    {section.heading === "IT" && item.group && (!index || section.items[index - 1]?.group !== item.group) && (
+                      <p className="it-admin-nav-subheading">{item.group}</p>
                     )}
-                  </button>
+                    <button
+                      className={`nav-item nav-item-${item.id} ${activePage === item.id ? "active" : ""}`}
+                      onClick={() => {
+                        if (activePage === "course-add" && item.id !== "course-add") {
+                          closeTrainingModal();
+                        }
+                        setActivePage(item.id);
+                        if (contentRef.current) {
+                          contentRef.current.scrollTop = 0;
+                        }
+                        setMobileNavOpen(false);
+                      }}
+                    >
+                      <span className="nav-item-left">
+                        <Icon size={16} />
+                        <span>{item.label}</span>
+                      </span>
+                      {item.id === "enrollment-requests" && pendingEnrollmentRequestCount > 0 ? (
+                        <span className="nav-pill">{pendingEnrollmentRequestCount}</span>
+                      ) : item.id === "hr-leaves" && leavePendingCount > 0 ? (
+                        <span className="nav-pill">{leavePendingCount}</span>
+                      ) : item.id === "it-admin-new-projects" && adminPreviewProjects.filter((project) => String(project.status || "").toLowerCase() === "new").length > 0 ? (
+                        <span className="nav-pill">{adminPreviewProjects.filter((project) => String(project.status || "").toLowerCase() === "new").length}</span>
+                      ) : item.id === "it-admin-overdue-tasks" && itOverdueTaskCount > 0 ? (
+                        <span className="nav-pill">{itOverdueTaskCount}</span>
+                      ) : (
+                        <ChevronRight size={14} />
+                      )}
+                    </button>
+                  </div>
                 );
               })}
             </div>
@@ -4293,6 +4556,20 @@ function App() {
               }}
             />
           )}
+          {activePage.startsWith("it-admin-") && (
+            <ITAdminModule
+              page={activePage}
+              isAdmin={isAdminUser(currentUser)}
+              users={users}
+              tasks={tasks}
+              projects={adminPreviewProjects}
+              serviceOptions={serviceCatalog}
+              onProjectsChange={setAdminPreviewProjects}
+              onTasksChange={setTasks}
+              onUsersChange={setUsers}
+              onNavigate={setActivePage}
+            />
+          )}
           {activePage === "dashboard" && (
             <>
               <section className="hero-grid">
@@ -4321,6 +4598,7 @@ function App() {
                   { id: "team", label: "Team Performance" },
                   { id: "followups", label: "Follow-ups" },
                   { id: "activity", label: "Activity" },
+                  { id: "departments", label: "All Departments" },
                 ].map((tab) => (
                   <button
                     key={tab.id}
@@ -4331,6 +4609,47 @@ function App() {
                   </button>
                 ))}
               </div>
+
+              {dashboardTab === "overview" && (
+                <section className="department-monitor department-monitor-overview">
+                  <div className="department-monitor-heading">
+                    <div>
+                      <p className="eyebrow">ADMIN CONTROL CENTER</p>
+                      <h2>Department monitoring</h2>
+                      <p>Shared activity from CRM, HR, IT, Operations, and Learning.</p>
+                    </div>
+                    <div className="department-monitor-refresh">
+                      {monitorLastRefreshed && <span>Updated {monitorLastRefreshed}</span>}
+                      <button className="primary-button" type="button" onClick={() => setDashboardTab("departments")}>
+                        View all departments
+                      </button>
+                    </div>
+                  </div>
+                  {monitorRefreshing && <p className="department-monitor-note">Loading the latest department data...</p>}
+                  {monitorRefreshError && <p className="department-monitor-error" role="alert">{monitorRefreshError}</p>}
+                  <div className="department-monitor-grid">
+                    {monitorTiles.map((tile) => (
+                      <article className="department-monitor-card" key={tile.id}>
+                        <div className="department-monitor-card-heading">
+                          <h3>{tile.title}</h3>
+                          <span className="department-monitor-live">Shared data</span>
+                        </div>
+                        <dl>
+                          {tile.metrics.map(([label, value]) => (
+                            <div key={label}>
+                              <dt>{label}</dt>
+                              <dd>{value}</dd>
+                            </div>
+                          ))}
+                        </dl>
+                      </article>
+                    ))}
+                  </div>
+                  <p className="department-monitor-note">
+                    HR browser-only records and IT demo-only team/bug data are not connected to shared monitoring yet.
+                  </p>
+                </section>
+              )}
 
               {dashboardTab === "overview" && (
                 <section className="dashboard-grid">
@@ -4729,6 +5048,92 @@ function App() {
                       ))}
                     </div>
                   </Panel>
+                </section>
+              )}
+
+              {dashboardTab === "departments" && (
+                <section className="department-monitor">
+                  <div className="department-monitor-heading">
+                    <div>
+                      <p className="eyebrow">ADMIN CONTROL CENTER</p>
+                      <h2>Cross-dashboard monitoring</h2>
+                      <p>Department activity and shared work across CRM, HR, IT, Operations, and Learning.</p>
+                    </div>
+                    <div className="department-monitor-refresh">
+                      {monitorLastRefreshed && <span>Updated {monitorLastRefreshed}</span>}
+                      <button className="primary-button" type="button" onClick={refreshDashboardMonitor} disabled={monitorRefreshing}>
+                        {monitorRefreshing ? "Refreshing..." : "Refresh data"}
+                      </button>
+                    </div>
+                  </div>
+
+                  {monitorRefreshError && <p className="department-monitor-error" role="alert">{monitorRefreshError}</p>}
+
+                  <div className="department-monitor-grid">
+                    {monitorTiles.map((tile) => (
+                      <article className="department-monitor-card" key={tile.id}>
+                        <div className="department-monitor-card-heading">
+                          <h3>{tile.title}</h3>
+                          <span className="department-monitor-live">Shared data</span>
+                        </div>
+                        <dl>
+                          {tile.metrics.map(([label, value]) => (
+                            <div key={label}>
+                              <dt>{label}</dt>
+                              <dd>{value}</dd>
+                            </div>
+                          ))}
+                        </dl>
+                        <p>{tile.detail}</p>
+                      </article>
+                    ))}
+                  </div>
+
+                  <Panel title="Items requiring attention">
+                    {monitorExceptions.length ? (
+                      <div className="table-wrap">
+                        <table className="table">
+                          <thead><tr><th>Type</th><th>Owner</th><th>Item</th><th>Status</th></tr></thead>
+                          <tbody>
+                            {monitorExceptions.map((item) => (
+                              <tr key={item.id}>
+                                <td>{item.type}</td>
+                                <td>{item.owner}</td>
+                                <td>{item.item}</td>
+                                <td>{item.status}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : <p className="panel-empty">No overdue tasks or pending requests found in the shared data.</p>}
+                  </Panel>
+
+                  <Panel title={`IT project portfolio (${monitorProjects.length})`}>
+                    {monitorProjects.length ? (
+                      <div className="table-wrap">
+                        <table className="table">
+                          <thead><tr><th>Project</th><th>Assigned to</th><th>Status</th><th>Priority</th><th>Due</th><th>Progress</th></tr></thead>
+                          <tbody>
+                            {monitorProjects.map((project) => (
+                              <tr key={project.id || project.projectId}>
+                                <td>{project.name || project.projectName || "Untitled project"}</td>
+                                <td>{project.assignedEmployeeName || "Unassigned"}</td>
+                                <td>{project.status || "New"}</td>
+                                <td>{project.priority || "—"}</td>
+                                <td>{project.due || project.expectedDelivery || "—"}</td>
+                                <td>{Number.isFinite(Number(project.progress)) ? `${Number(project.progress)}%` : project.status === "Completed" ? "100%" : "—"}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : <p className="panel-empty">No shared IT projects were found.</p>}
+                  </Panel>
+
+                  <p className="department-monitor-note">
+                    Monitoring includes records available through the shared backend. HR dashboard entries currently saved only in a browser, and IT demo-only team or bug data, are not shared with Admin yet. Operations monitoring is based on its users and shared task assignments; a dedicated Operations workspace is not built yet.
+                  </p>
                 </section>
               )}
 
@@ -6197,40 +6602,7 @@ function App() {
                       <h3>Change Password</h3>
                     </div>
                     <div className="settings-form">
-                      <Field label="Current Password">
-                        <div className="password-input-wrap">
-                          <input type={showCurrentPassword ? "text" : "password"} value={passwordForm.current} onChange={(event) => setPasswordForm((current) => ({ ...current, current: event.target.value }))} />
-                          <button type="button" className="password-toggle" onClick={() => setShowCurrentPassword((v) => !v)}>
-                            {showCurrentPassword ? <Eye size={16} /> : <EyeOff size={16} />}
-                          </button>
-                        </div>
-                      </Field>
-                      <Field label="New Password">
-                        <div className="password-input-wrap">
-                          <input type={showNewPassword ? "text" : "password"} value={passwordForm.new} onChange={(event) => setPasswordForm((current) => ({ ...current, new: event.target.value }))} />
-                          <button type="button" className="password-toggle" onClick={() => setShowNewPassword((v) => !v)}>
-                            {showNewPassword ? <Eye size={16} /> : <EyeOff size={16} />}
-                          </button>
-                        </div>
-                      </Field>
-                      <Field label="Confirm New Password">
-                        <div className="password-input-wrap">
-                          <input type={showConfirmPassword ? "text" : "password"} value={passwordForm.confirm} onChange={(event) => setPasswordForm((current) => ({ ...current, confirm: event.target.value }))} />
-                          <button type="button" className="password-toggle" onClick={() => setShowConfirmPassword((v) => !v)}>
-                            {showConfirmPassword ? <Eye size={16} /> : <EyeOff size={16} />}
-                          </button>
-                        </div>
-                      </Field>
-                      <div className="form-actions">
-                        <button className="primary-button" onClick={handleChangePassword} disabled={passwordSaving}>
-                          {passwordSaving ? "Changing..." : "Change Password"}
-                        </button>
-                      </div>
-                      {passwordMessage && (
-                        <div className={`settings-message ${passwordMessageType === "error" ? "error" : "success"}`}>
-                          {passwordMessage}
-                        </div>
-                      )}
+                      <PasswordResetLink userId={currentUser?._id || currentUser?.id} email={currentUser?.email} />
                     </div>
                   </div>
                 </div>

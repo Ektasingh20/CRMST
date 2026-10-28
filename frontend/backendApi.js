@@ -235,6 +235,18 @@ export async function changePassword(id, currentPassword, newPassword) {
   });
 }
 
+export async function sendPasswordResetLink(id) {
+  return request(`/users/${encodeURIComponent(id)}/password-reset`, { method: "POST" });
+}
+
+export async function confirmPasswordReset(resetToken, oobCode, newPassword) {
+  return request("/auth/password-reset/confirm", {
+    method: "POST",
+    auth: false,
+    body: JSON.stringify({ resetToken, oobCode, newPassword }),
+  });
+}
+
 export async function deleteUser(id) {
   return request(`/users/${encodeURIComponent(id)}`, {
     method: "DELETE",

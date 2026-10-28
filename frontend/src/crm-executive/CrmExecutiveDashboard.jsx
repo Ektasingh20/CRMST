@@ -4,7 +4,8 @@ import { useMessageTemplates } from "../../useMessageTemplates.js";
 import { resolveLeadTemplate, templateSelectionPatch } from "../../whatsAppMessage.js";
 import RemarkField from "../../RemarkField.jsx";
 import { callLeadForm } from "../../callLeads.js";
-import { createTask as createTaskApi, fetchTasks, updateTask as updateTaskApi, fetchAttendance, createAttendance, updateAttendance, fetchLeaves, createLeave, updateMyProfile, changePassword, fetchAppNotifications, markAppNotificationRead } from "../../backendApi.js";
+import { createTask as createTaskApi, fetchTasks, updateTask as updateTaskApi, fetchAttendance, createAttendance, updateAttendance, fetchLeaves, createLeave, updateMyProfile, fetchAppNotifications, markAppNotificationRead } from "../../backendApi.js";
+import PasswordResetLink from "../PasswordResetLink.jsx";
 import { TRAINING_CALL_LIST_PROGRAMS, SERVICE_CALL_LIST_SERVICES, CALL_STATUS_OPTIONS, CALL_LIST_INTEREST_STATUS_OPTIONS, normalizeCallStatus, normalizeInterestStatus, normalizeCallProgram, matchesCallListFilters } from "../../callListConfig.js";
 import { isCrmPageLoading } from "./crmPageLoading.js";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -2204,11 +2205,7 @@ function LeaveRequestTab({ leaveRequests, setLeaveRequests, showToast }) {
 
 function SettingsTab({ profile, setProfile, showToast, currentUser, onProfileUpdated }) {
   const [profileForm, setProfileForm] = useState(profile);
-  const [passwordForm, setPasswordForm] = useState({ current: "", next: "", confirm: "" });
-  const [showPw, setShowPw] = useState({ current: false, next: false, confirm: false });
   const [message, setMessage] = useState(null);
-  const [pwErrors, setPwErrors] = useState({});
-  const [passwordSaving, setPasswordSaving] = useState(false);
 
   const handleSaveProfile = async () => {
     try {
@@ -2220,25 +2217,6 @@ function SettingsTab({ profile, setProfile, showToast, currentUser, onProfileUpd
       setMessage({ type: "success", text: "Profile updated successfully" });
       showToast("Profile saved");
     } catch (error) { setMessage({ type: "error", text: error.message || "Could not save profile" }); }
-  };
-
-  const handleChangePassword = async () => {
-    const nextErrors = {};
-    if (!passwordForm.current) nextErrors.current = "Enter your current password";
-    if (!passwordForm.next || passwordForm.next.length < 6) nextErrors.next = "New password must be at least 6 characters";
-    if (passwordForm.next !== passwordForm.confirm) nextErrors.confirm = "Passwords do not match";
-    setPwErrors(nextErrors);
-    if (Object.keys(nextErrors).length) return;
-    setPasswordSaving(true);
-    try {
-      await changePassword(currentUser?.id || currentUser?._id, passwordForm.current, passwordForm.next);
-      setPasswordForm({ current: "", next: "", confirm: "" });
-      showToast("Password updated");
-    } catch (error) {
-      showToast(error.message || "Could not update password");
-    } finally {
-      setPasswordSaving(false);
-    }
   };
 
   return (
@@ -2279,32 +2257,7 @@ function SettingsTab({ profile, setProfile, showToast, currentUser, onProfileUpd
             <h3>Change Password</h3>
           </div>
           <div className="settings-form">
-            {["current", "next", "confirm"].map((key) => (
-              <div className="field" key={key}>
-                <span>{key === "current" ? "Current Password" : key === "next" ? "New Password" : "Confirm New Password"}</span>
-                <div className="password-input-wrap">
-                  <input
-                    type={showPw[key] ? "text" : "password"}
-                    value={passwordForm[key]}
-                    onChange={(e) => setPasswordForm((f) => ({ ...f, [key]: e.target.value }))}
-                  />
-                  <button
-                    type="button"
-                    className="password-toggle"
-                    aria-label={`${showPw[key] ? "Hide" : "Show"} ${key === "current" ? "current" : key === "next" ? "new" : "confirm new"} password`}
-                    onClick={() => setShowPw((f) => ({ ...f, [key]: !f[key] }))}
-                  >
-                    {showPw[key] ? <IconEye size={16} /> : <IconEyeOff size={16} />}
-                  </button>
-                </div>
-                {pwErrors[key] && <span className="field-error">{pwErrors[key]}</span>}
-              </div>
-            ))}
-          </div>
-          <div className="form-actions">
-            <button className="primary-button" onClick={handleChangePassword} disabled={passwordSaving}>
-              <IconCheck size={16} /> Update Password
-            </button>
+            <PasswordResetLink userId={currentUser?.id || currentUser?._id} email={currentUser?.email || profileForm.email} />
           </div>
         </div>
       </div>

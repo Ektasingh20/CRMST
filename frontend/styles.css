@@ -611,6 +611,15 @@ img {
   margin: 0 0 8px;
   font-size: 1.7rem;
 }
+.auth-login-error {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(176, 46, 35, 0.25);
+  border-radius: 10px;
+  background: #fff1ef;
+  color: #9f2d23;
+  font-size: 0.9rem;
+}
 .remember-login {
   display: flex;
   align-items: center;
@@ -2883,6 +2892,153 @@ img {
   box-shadow: 0 12px 24px rgba(88, 59, 34, 0.08);
 }
 
+.department-monitor {
+  display: grid;
+  gap: 18px;
+}
+
+.department-monitor-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 22px 24px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.department-monitor-heading h2 {
+  margin: 0;
+  font-size: 1.3rem;
+}
+
+.department-monitor-heading p:not(.eyebrow) {
+  margin: 6px 0 0;
+  color: var(--text-soft);
+}
+
+.department-monitor-heading .eyebrow {
+  margin: 0 0 6px;
+}
+
+.department-monitor-refresh {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.department-monitor-refresh > span {
+  color: var(--text-soft);
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.department-monitor-refresh button:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+.department-monitor-error {
+  margin: 0;
+  padding: 12px 16px;
+  border: 1px solid rgba(176, 46, 35, 0.25);
+  border-radius: 12px;
+  background: #fff1ef;
+  color: #9f2d23;
+}
+
+.department-monitor-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.department-monitor-card {
+  min-width: 0;
+  padding: 20px;
+  border: 1px solid rgba(178, 147, 118, 0.18);
+  border-radius: 20px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 243, 238, 0.98));
+  box-shadow: 0 18px 36px rgba(62, 43, 28, 0.06);
+}
+
+.department-monitor-card-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.department-monitor-card-heading h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.department-monitor-live {
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: rgba(40, 122, 89, 0.1);
+  color: #287a59;
+  font-size: 0.68rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.department-monitor-card dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+
+.department-monitor-card dl > div {
+  padding: 12px;
+  border-radius: 14px;
+  background: rgba(248, 243, 238, 0.94);
+}
+
+.department-monitor-card dt {
+  color: var(--text-soft);
+  font-size: 0.72rem;
+}
+
+.department-monitor-card dd {
+  margin: 5px 0 0;
+  color: var(--text);
+  font-size: 1.15rem;
+  font-weight: 800;
+}
+
+.department-monitor-card > p,
+.department-monitor-note {
+  margin: 14px 0 0;
+  color: var(--text-soft);
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+
+.department-monitor-note {
+  margin: 0;
+  padding: 14px 16px;
+  border-left: 3px solid var(--warning);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.department-monitor > .panel {
+  min-width: 0;
+}
+
+.department-monitor .table-wrap {
+  overflow-x: auto;
+}
+
+.department-monitor .table {
+  min-width: 620px;
+}
+
 .pipeline-stages {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -3076,6 +3232,10 @@ img {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .department-monitor-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .quick-actions-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
@@ -3087,6 +3247,21 @@ img {
 
 @media (max-width: 720px) {
   .pipeline-stages {
+    grid-template-columns: 1fr;
+  }
+
+  .department-monitor-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    padding: 18px;
+  }
+
+  .department-monitor-refresh {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .department-monitor-grid {
     grid-template-columns: 1fr;
   }
 
@@ -5247,3 +5422,26 @@ img {
 .project-selected-files li > span { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: .82rem; }
 .project-selected-files small { display: block; color: var(--text-soft); font-size: .7rem; margin-top: 4px; }
 .project-documents-field > small { color: var(--text-soft); line-height: 1.6; font-size: .78rem; }
+/* Shared Firebase password reset action used by dashboard settings. */
+.password-reset-link{display:grid;gap:10px;margin:4px 0;font-size:12px}
+.password-reset-link p{margin:0;color:var(--text-soft);line-height:1.5}
+.password-reset-link button{justify-self:start;border:1px solid #b9a18e;border-radius:7px;background:#fff;color:#68462e;padding:9px 13px;font:inherit;font-weight:700;cursor:pointer}
+.password-reset-link button:disabled{opacity:.6;cursor:wait}
+.password-reset-status{line-height:1.45}
+.password-reset-status.success{color:#28734c}
+.password-reset-status.error{color:#b42318}
+.password-reset-page{min-height:100vh;display:grid;place-items:center;padding:24px;background:linear-gradient(135deg,#f5eee7,#ebe2d8);color:#27211d;font-family:inherit}
+.password-reset-card{width:min(100%,440px);padding:32px;border:1px solid #e7ddd4;border-radius:18px;background:#fff;box-shadow:0 18px 50px rgba(54,37,24,.12)}
+.password-reset-lock{font-size:25px}
+.password-reset-eyebrow{margin:12px 0 5px;color:#805333;font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.08em}
+.password-reset-card h1{margin:0;font-size:26px}
+.password-reset-intro{margin:10px 0 20px;color:#71665d;line-height:1.5}
+.password-reset-card form{display:grid;gap:15px}
+.password-reset-card label{display:grid;gap:6px;font-size:13px;font-weight:700}
+.password-reset-card input{width:100%;min-height:42px;padding:9px 11px;border:1px solid #d9cec5;border-radius:8px;font:inherit}
+.password-reset-card form button{min-height:44px;border:0;border-radius:8px;background:#744b2e;color:white;font:inherit;font-weight:700;cursor:pointer}
+.password-reset-card form button:disabled{opacity:.6;cursor:wait}
+.password-reset-page-message{margin:14px 0 0;font-size:13px;line-height:1.5}
+.password-reset-page-message.success{color:#28734c}
+.password-reset-page-message.error{color:#b42318}
+.password-reset-card>a{display:inline-block;margin-top:12px;color:#744b2e;font-weight:700}

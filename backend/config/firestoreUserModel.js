@@ -122,8 +122,24 @@ class Query {
       const snapshot = await this.directRef.get();
       return snapshot.exists ? [new Document(this.Model, snapshot.ref, snapshot.data())] : [];
     }
-    let rows = (await this.Model._getCachedDocuments())
-      .filter((doc) => matches(doc, this.filter));
+    const username = this.filter.username;
+    let documents;
+    if (typeof username === "string") {
+      try {
+        documents = (await getFirestore().collectionGroup("members").where("username", "==", username).get()).docs
+          .filter((doc) => doc.ref.path.startsWith("users/"))
+          .map((doc) => new Document(this.Model, doc.ref, doc.data()));
+      } catch (error) {
+        if (error?.code !== 9 || !/collection.group.*index|index.*collection.group/i.test(String(error?.message || ""))) {
+          throw error;
+        }
+        console.warn("User lookup index is not available; falling back to the cached user scan.");
+        documents = await this.Model._getCachedDocuments();
+      }
+    } else {
+      documents = await this.Model._getCachedDocuments();
+    }
+    let rows = documents.filter((doc) => matches(doc, this.filter));
     if (this.sortSpec) {
       const [field, direction] = Object.entries(this.sortSpec)[0] || [];
       rows.sort((a, b) => String(a[field] ?? "").localeCompare(String(b[field] ?? "")) * (direction < 0 ? -1 : 1));

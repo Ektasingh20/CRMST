@@ -6,6 +6,7 @@ import TeamOverview from "./team/TeamOverview.jsx";
 import AssignProjects from "./team/AssignProjects.jsx";
 import TeamProgress from "./team/TeamProgress.jsx";
 import { fetchProjects, updateProject } from "../../backendApi.js";
+import PasswordResetLink from "../PasswordResetLink.jsx";
 import React, { useEffect, useState, useRef } from "react";
 import { createPortal } from "react-dom";
 import { withDemoProjectPresentation } from "./demoProjectPresentation";
@@ -489,6 +490,8 @@ img { display: block; max-width: 100%; }
 
 const NAV_ITEMS = [
   { key: "dashboard", label: "Dashboard", icon: LayoutDashboard, group: "Overview" },
+  { key: "mark-attendance", label: "Mark Attendance", icon: CalendarCheck, group: "Attendance" },
+  { key: "attendance-report", label: "Attendance Report", icon: ClipboardList, group: "Attendance" },
   { key: "new-projects", label: "New Projects", icon: FolderKanban, group: "Projects" },
   { key: "active-projects", label: "Active Projects", icon: ClipboardCheck, group: "Projects" },
   { key: "completed-projects", label: "Completed Projects", icon: CircleCheck, group: "Projects" },
@@ -500,12 +503,12 @@ const NAV_ITEMS = [
   { key: "leave-request", label: "Leave Request", icon: UserCircle2, group: "Account" },
 ];
 
-const NAV_GROUPS = ["Overview", "Projects", ...(canManageTeam ? ["Team"] : []), "Work", "Support", "Account"];
+const NAV_GROUPS = ["Overview", "Attendance", "Projects", ...(canManageTeam ? ["Team"] : []), "Work", "Support", "Account"];
 const TITLES = {
   ...teamTitles,
   dashboard: "Dashboard",
   "mark-attendance": "Mark Attendance",
-  "attendance-report": "Attendance Reports",
+  "attendance-report": "Attendance Report",
   "new-projects": "New Projects",
   "active-projects": "Active Projects",
   "my-work": "My Work",
@@ -976,7 +979,7 @@ function AttendanceReportPage({ notify }) {
    PAGE: SETTINGS
    ============================================================ */
 
-function SettingsPage({ notify }) {
+function SettingsPage({ notify, user }) {
   const [dark, setDark] = useState(false);
   const [profile, setProfile] = useState({
     fullName: "Ekta Singh", dob: "2004-10-20", gender: "Female",
@@ -987,8 +990,6 @@ function SettingsPage({ notify }) {
   const [emergency, setEmergency] = useState({ name: "Ekta Singh", relation: "Sibling", number: "73000•••94" });
   const [kyc, setKyc] = useState({ pan: "XXXXX9489X", aadhaar: "XXXX XXXX 3249" });
   const [bank, setBank] = useState({ bankName: "Central Bank of India", holder: "Ekta Singh", account: "XXXXXX3185", ifsc: "CBIN0280463", branch: "Bhawani Mandi" });
-  const [pwd, setPwd] = useState({ old: "", next: "", confirm: "" });
-  const [showPwd, setShowPwd] = useState(false);
 
   const docs = [
     { label: "Aadhaar Card", uploaded: true },
@@ -1002,12 +1003,6 @@ function SettingsPage({ notify }) {
 
   const set = (setter, key) => (e) => setter((s) => ({ ...s, [key]: e.target.value }));
 
-  const handleUpdatePassword = () => {
-    if (!pwd.old || !pwd.next || !pwd.confirm) return notify("Fill in all password fields.");
-    if (pwd.next !== pwd.confirm) return notify("New passwords don't match.");
-    setPwd({ old: "", next: "", confirm: "" });
-    notify("Password updated successfully.");
-  };
 
   return (
     <div>
@@ -1065,21 +1060,7 @@ function SettingsPage({ notify }) {
         <div className="settings-section">
           <div className="settings-section-header"><h3>Change Password</h3></div>
           <div className="settings-form">
-            <Field label="Old Password" required>
-              <div className="password-input-wrap">
-                <input type={showPwd ? "text" : "password"} value={pwd.old} onChange={(e) => setPwd((s) => ({ ...s, old: e.target.value }))} placeholder="Enter current password" />
-                <button type="button" className="password-toggle" onClick={() => setShowPwd((s) => !s)}>
-                  {showPwd ? <EyeOff size={15} /> : <Eye size={15} />}
-                </button>
-              </div>
-            </Field>
-            <Field label="New Password" required>
-              <input type={showPwd ? "text" : "password"} value={pwd.next} onChange={(e) => setPwd((s) => ({ ...s, next: e.target.value }))} placeholder="Enter new password" />
-            </Field>
-            <Field label="Confirm New Password" required>
-              <input type={showPwd ? "text" : "password"} value={pwd.confirm} onChange={(e) => setPwd((s) => ({ ...s, confirm: e.target.value }))} placeholder="Confirm new password" />
-            </Field>
-            <button className="primary-button full-width" onClick={handleUpdatePassword}>Update Password</button>
+            <PasswordResetLink userId={user?._id || user?.id} email={user?.email || profile.workEmail} />
           </div>
         </div>
       </div>
@@ -1468,7 +1449,7 @@ function ITWorkspace({ user, projects, onProjectsChange, onLogout }) {
       case "open-bugs": return <OpenBugsPage key={user?.name || EMPLOYEE.name} projects={employeeProjects} person={user?.name || EMPLOYEE.name} />;
       case "clarification": return <ClarificationPage key={user?.name || EMPLOYEE.name} person={user?.name || EMPLOYEE.name} projects={employeeProjects.filter((project) => project.status !== "Rejected")} />;
       case "completed-projects": return <ProjectsPage title="Completed Projects" subtitle="Projects marked completed by the project team." projects={employeeProjects.filter((project) => project.status === "Completed")} onView={(project) => openProject(project, "project-details")} onReview={() => {}} />;
-      case "settings": return <SettingsPage notify={notify} />;
+      case "settings": return <SettingsPage notify={notify} user={user} />;
       case "leave-request": return <LeaveRequestPage notify={notify} />;
       default: return null;
     }

@@ -1,0 +1,36 @@
+.hr-planner{min-width:0;display:grid;gap:16px}
+.hr-planner-heading,.hr-planner-section-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.hr-planner h2,.hr-planner h3{margin:0;color:var(--ink)}
+.hr-planner h2{font-size:23px}.hr-planner h3{font-size:16px;overflow-wrap:anywhere}
+.hr-planner-heading p,.hr-planner-muted{font-size:12px;color:var(--mute);line-height:1.6}
+.hr-planner-heading p{margin:5px 0 0}.hr-planner-heading>.hr-btn{flex:none}
+.hr-planner-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.hr-shell .hr-planner-stats button{padding:16px;text-align:left;border:1px solid var(--line);background:var(--cream);border-radius:14px}
+.hr-planner-stats span{font-size:12px;color:var(--mute)}.hr-planner-stats strong{display:block;margin-top:6px;font-size:26px}
+.hr-planner-editor,.hr-planner-item{padding:18px;min-width:0}
+.hr-planner-fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:16px 0}
+.hr-planner-fields .hr-f{min-width:0}.hr-planner-wide{grid-column:1/-1}
+.hr-planner textarea{width:100%;resize:vertical;padding:10px;border:1px solid var(--line);border-radius:10px;background:#fff;font:inherit;color:var(--ink)}
+.hr-planner textarea:focus-visible{outline:2px solid var(--ring);outline-offset:2px}
+.hr-planner-editor-actions,.hr-planner-item-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.hr-planner-filters{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.hr-planner-search{display:flex;align-items:center;gap:8px;flex:1;min-width:200px;padding:0 12px;border:1px solid var(--line);border-radius:12px;background:#fff;color:var(--mute)}
+.hr-shell .hr-planner-search input{width:100%;border:0;background:transparent;box-shadow:none;outline:none}
+.hr-planner-search:focus-within{outline:2px solid var(--ring);outline-offset:2px}
+.hr-planner-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.hr-planner-item{display:flex;flex-direction:column;gap:12px}.hr-planner-item p{margin:0}
+.hr-planner-type,.hr-planner-due{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--mute)}
+.hr-planner-status{padding:4px 8px;border-radius:7px;background:var(--cream);font-size:11px;white-space:nowrap;color:var(--ink)}
+.hr-planner-status.status-overdue{background:#fbe3de;color:#98372c}.hr-planner-status.status-completed{background:#e0f3ea;color:#1f6f58}.hr-planner-status.status-due-today{background:#faefd6;color:#795518}
+.hr-planner-notes{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px;line-height:1.6}
+.hr-planner-checklist{display:grid;gap:8px}.hr-planner-checklist progress{width:100%;height:7px;accent-color:var(--copper)}
+.hr-planner-checklist label{display:flex;align-items:center;gap:8px;font-size:13px}.hr-planner-checklist input{width:16px;height:16px;accent-color:var(--copper)}
+.hr-planner-item-actions{margin-top:auto;padding-top:12px;border-top:1px solid var(--line)}.hr-planner-item-actions .hr-ghost{font-size:12px;padding:7px 10px}
+.hr-planner-item-actions button:first-child{margin-right:auto}
+.hr-planner-error,.hr-planner-notice,.hr-planner-undo{margin:0;padding:12px;border-radius:10px;font-size:13px;overflow-wrap:anywhere}
+.hr-planner-error{background:#fbe3de;color:#98372c}.hr-planner-notice{background:#e0f3ea;color:#1f6f58}
+.hr-planner-undo{display:flex;align-items:center;justify-content:space-between;gap:12px;background:var(--cream)}
+.hr-planner-empty{text-align:center;padding:32px 16px}.hr-planner-empty>svg{color:var(--copper);margin-bottom:12px}.hr-planner-empty p{color:var(--mute);font-size:13px}
+.hr-dark-mode .hr-planner .hr-card,.hr-dark-mode .hr-planner textarea,.hr-dark-mode .hr-planner-search{background:var(--cream)}
+@media(max-width:1100px){.hr-planner-grid{grid-template-columns:minmax(0,1fr)}}
+@media(max-width:620px){.hr-planner-heading{align-items:flex-start;flex-direction:column}.hr-planner-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.hr-planner-fields{grid-template-columns:minmax(0,1fr)}.hr-planner-search{flex-basis:100%}.hr-planner-filters>select{flex:1;min-width:0}.hr-planner-editor,.hr-planner-item{padding:14px}}
