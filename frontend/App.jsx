@@ -54,6 +54,7 @@ import {
   Globe,
   GraduationCap,
   IdCard,
+  CreditCard,
   LayoutDashboard,
   ListTodo,
   LockKeyhole,
@@ -76,7 +77,9 @@ import {
   User,
   UserPlus,
   UserRoundCheck,
+  UserX,
   Users,
+  Wallet,
   Workflow,
   X,
   Eye,
@@ -103,6 +106,7 @@ import programImage14 from "./assets/14.png";
 import {
   authLogin,
   authSignup,
+  requestPasswordResetByUsername,
   loadUsers,
   loadAssignableUsers,
   loadLeads,
@@ -416,36 +420,64 @@ const sidebarSections = [
     items: [
       { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
       { id: "project-create", label: "Create Project", icon: CirclePlus },
-      { id: "crm", label: "All Leads", icon: PhoneCall },
-      { id: "crm-approved", label: "Approved Leads", icon: CheckCheck },
-      { id: "co-approved", label: "Assigned Leads", icon: CheckCheck },
-      { id: "sales-report", label: "CRM Reports", icon: Activity },
-      { id: "crm-upload", label: "Upload CRM Data", icon: Upload },
+      {
+        id: "lead-management",
+        label: "Lead Management",
+        icon: PhoneCall,
+        children: [
+          { id: "crm", label: "All Leads", icon: PhoneCall },
+          { id: "crm-approved", label: "Approved Leads", icon: CheckCheck },
+          { id: "sales-add", label: "Add Lead", icon: CirclePlus },
+          { id: "sales-approved", label: "Assigned Leads", icon: CheckCheck },
+        ],
+      },
+      {
+        id: "crm-management",
+        label: "CRM Management",
+        icon: Activity,
+        children: [
+          { id: "crm-reports", label: "CRM Reports", icon: Activity },
+          { id: "sales-report", label: "Sales Reports", icon: TrendingUp },
+          { id: "crm-upload", label: "Upload CRM Data", icon: Upload },
+        ],
+      },
     ],
   },
   {
     heading: "USERS",
     items: [
-      { id: "user-create", label: "Create User", icon: UserPlus },
-      { id: "user-view", label: "View Users", icon: Users },
-    ],
-  },
-  {
-    heading: "SALES",
-    items: [
-      { id: "sales-add", label: "Add Lead", icon: CirclePlus },
-      { id: "sales-approved", label: "Assigned Leads", icon: CheckCircle2 },
-      { id: "sales-report", label: "Sales Reports", icon: Activity },
+      {
+        id: "employee-management",
+        label: "Employee Management",
+        icon: Users,
+        children: [
+          { id: "user-create", label: "Create Profile", icon: UserPlus },
+          { id: "employee-profiles", label: "Employee Profiles", icon: Users },
+          { id: "ex-employee-profiles", label: "Ex Employee Profiles", icon: UserX },
+          { id: "all-employees", label: "View All Employee", icon: ContactRound },
+          { id: "salary-report", label: "Salary Report", icon: FileText },
+          { id: "employee-id-cards", label: "ID Card", icon: IdCard },
+          { id: "payroll-system", label: "Payroll System", icon: Wallet },
+        ],
+      },
     ],
   },
   {
     heading: "HR",
     items: [
-      { id: "hr-assign", label: "Assign Task", icon: ClipboardCheck },
-      { id: "hr-tasks", label: "All Tasks", icon: ListTodo },
-      { id: "hr-leaves", label: "Leave Requests", icon: CalendarMinus2 },
-      { id: "hr-attendance", label: "Attendance", icon: CalendarCheck2 },
-      { id: "hr-emp", label: "Employee Profiles", icon: IdCard },
+      {
+        id: "hr-management",
+        label: "HR Management",
+        icon: ClipboardCheck,
+        children: [
+          { id: "hr-assign", label: "Assign Task", icon: ClipboardCheck },
+          { id: "hr-assigned-tasks", label: "Assigned Tasks", icon: ClipboardList },
+          { id: "hr-tasks", label: "All Tasks", icon: ListTodo },
+          { id: "hr-leaves", label: "View All Leave Request", icon: CalendarMinus2 },
+          { id: "hr-attendance", label: "Attendance Report", icon: CalendarCheck2 },
+          { id: "hr-ex-emp", label: "Ex-Employee", icon: UserX },
+        ],
+      },
     ],
   },
   {
@@ -508,72 +540,24 @@ const internshipTracks = ["Front End (React.js)", "Back End (Node.js)", "Full St
 
 const serviceReferenceImages = [programImage1, programImage2, programImage3, programImage4, programImage5];
 const stipReferenceImages = [programImage11, programImage12, programImage13, programImage14];
+const HR_DASHBOARD_STORAGE_KEY = "hr_dashboard_v2";
 
-const initialUsers = [
-  {
-    id: "1",
-    name: "Rahul Joshi",
-    username: "rahul",
-    password: "rahul123",
-    email: "rahul@st.co.in",
-    phone: "9876001001",
-    emergencyContact: "9876001002",
-    maritalStatus: "Single",
-    education: "B.Tech",
-    role: "CRM Executive",
-    dept: "CRM",
-    position: "CRM Executive",
-    status: "Active",
-    joined: "2026-01-15",
-    state: "Rajasthan",
-    branch: "Ajmer",
-    branchCode: "AJ-01",
-    address: "123 Main Road, Ajmer, Rajasthan",
-    type: "Current",
-  },
-  {
-    id: "2",
-    name: "Priya Meena",
-    username: "priya",
-    password: "priya123",
-    email: "priya@st.co.in",
-    phone: "9876001002",
-    emergencyContact: "9876001003",
-    maritalStatus: "Married",
-    education: "MBA",
-    role: "Sales Executive",
-    dept: "Sales",
-    position: "Sales Executive",
-    status: "Active",
-    joined: "2026-03-01",
-    state: "Rajasthan",
-    branch: "Jaipur",
-    branchCode: "JP-01",
-    address: "456 MG Road, Jaipur, Rajasthan",
-    type: "Current",
-  },
-  {
-    id: "3",
-    name: "Amit Sharma",
-    username: "amit",
-    password: "amit123",
-    email: "amit@st.co.in",
-    phone: "9876001003",
-    emergencyContact: "9876001004",
-    maritalStatus: "Single",
-    education: "B.Com",
-    role: "HR",
-    dept: "HR",
-    position: "HR Executive",
-    status: "Active",
-    joined: "2025-06-10",
-    state: "Rajasthan",
-    branch: "Ajmer",
-    branchCode: "AJ-01",
-    address: "789 Civil Lines, Ajmer, Rajasthan",
-    type: "Current",
-  },
-];
+function readHrDashboardData() {
+  try {
+    const value = JSON.parse(window.localStorage.getItem(HR_DASHBOARD_STORAGE_KEY) || "null");
+    return value && typeof value === "object" ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function isHrExEmployee(employee) {
+  return String(employee?.exEmployee || "").trim().toLowerCase() === "yes"
+    || ["inactive", "disabled", "ex", "former"].includes(String(employee?.status || "active").trim().toLowerCase())
+    || String(employee?.type || "").trim().toLowerCase() === "former";
+}
+
+const initialUsers = [];
 
 const initialLeads = [
   {
@@ -1139,14 +1123,7 @@ async function persistImageIfNeeded(item, notify) {
 }
 
 function readUsersFromStorage() {
-  const raw = safeStorageGet(USERS_STORAGE_KEY);
-  if (!raw) return initialUsers;
-  try {
-    const parsed = sanitizeImageCollection(JSON.parse(raw));
-    return Array.isArray(parsed) && parsed.length > 0 ? parsed : initialUsers;
-  } catch {
-    return initialUsers;
-  }
+  return [];
 }
 
 function getLeadCacheUserKey(user) {
@@ -1264,9 +1241,14 @@ function ItDashboard({ user, users = [], tasks = [], leaves = [], employees = []
 }
 
 function App() {
+  const monitoringToday = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date());
   const [appView, setAppView] = useState("home");
   const [authMode, setAuthMode] = useState("login");
   const [activePage, setActivePage] = useState("dashboard");
+  const [leadManagementOpen, setLeadManagementOpen] = useState(false);
+  const [employeeManagementOpen, setEmployeeManagementOpen] = useState(false);
+  const [crmManagementOpen, setCrmManagementOpen] = useState(false);
+  const [hrManagementOpen, setHrManagementOpen] = useState(false);
   const [adminPreviewProjects, setAdminPreviewProjects] = useState([]);
   const [monitorProjects, setMonitorProjects] = useState([]);
   const [monitorEmployees, setMonitorEmployees] = useState([]);
@@ -1315,6 +1297,8 @@ function App() {
   const [usernameError, setUsernameError] = useState("");
 
   const [users, setUsers] = useState(initialUsers);
+  const [hrDashboardData, setHrDashboardData] = useState(null);
+  const [hrDashboardDataStatus, setHrDashboardDataStatus] = useState("idle");
   const [leadAssignmentUsers, setLeadAssignmentUsers] = useState([]);
   const [leads, setLeads] = useState(initialLeads);
   const [leadsLoadedFromBackend, setLeadsLoadedFromBackend] = useState(false);
@@ -1353,6 +1337,8 @@ function App() {
   const [rememberLogin, setRememberLogin] = useState(() => Boolean(readSavedLogin().username));
   const [loginError, setLoginError] = useState("");
   const [loginSubmitting, setLoginSubmitting] = useState(false);
+  const [resetSubmitting, setResetSubmitting] = useState(false);
+  const [resetMessage, setResetMessage] = useState("");
   const [signupForm, setSignupForm] = useState({ name: "", username: "", password: "" });
   const [showSignupPassword, setShowSignupPassword] = useState(false);
   const [showLoginPassword, setShowLoginPassword] = useState(false);
@@ -1366,7 +1352,7 @@ function App() {
     } catch {}
     return getCurrentUser();
   });
-  const [dashboardTab, setDashboardTab] = useState("overview");
+  const dashboardTab = "overview";
 
   async function refreshDashboardMonitor() {
     if (!isAdminUser(currentUser) || monitorRefreshing) return;
@@ -1430,7 +1416,10 @@ function App() {
     role: "CRM Executive",
     dept: "CRM",
     position: "",
+    salary: "20000",
     joined: "",
+    exEmployee: "No",
+    resignationDate: "",
     state: "",
     branch: "",
     branchCode: "",
@@ -1442,6 +1431,7 @@ function App() {
   const [createUserFile, setCreateUserFile] = useState(null);
   const [isCreatingUser, setIsCreatingUser] = useState(false);
   const [editingUserId, setEditingUserId] = useState(null);
+  const [userFormReturnPage, setUserFormReturnPage] = useState("employee-profiles");
   const [createLead, setCreateLead] = useState({
     name: "",
     phone: "",
@@ -1597,7 +1587,7 @@ function App() {
         if (Array.isArray(remoteTasks)) setTasks(remoteTasks);
         if (Array.isArray(remoteAttendance)) setAttendance(remoteAttendance);
         if (Array.isArray(remoteLeaves)) setLeaves(remoteLeaves);
-        if (remoteUsers.length) {
+        if (Array.isArray(remoteUsers)) {
           setUsers(remoteUsers);
           const savedProfile = remoteUsers.find((user) => String(user._id || user.id) === String(session._id || session.id));
           if (savedProfile) setCurrentUser(savedProfile);
@@ -2054,21 +2044,146 @@ function App() {
   const navResults = useMemo(() => {
     const availableSections = sidebarSections.filter((section) => section.heading !== "IT" || isAdminUser(currentUser));
     if (!deferredQuery.trim()) return availableSections;
-    return availableSections
-      .map((section) => ({
-        ...section,
-        items: section.items.filter((item) =>
-          `${item.group || ""} ${item.label}`.toLowerCase().includes(deferredQuery.toLowerCase()),
-        ),
-      }))
-      .filter((section) => section.items.length > 0);
+    const query = deferredQuery.toLowerCase();
+    return availableSections.map((section) => ({
+      ...section,
+      items: section.items.flatMap((item) => {
+        if (!item.children) return `${item.group || ""} ${item.label}`.toLowerCase().includes(query) ? [item] : [];
+        const children = item.children.filter((child) => `${child.group || ""} ${child.label}`.toLowerCase().includes(query));
+        return `${item.group || ""} ${item.label}`.toLowerCase().includes(query)
+          ? [item]
+          : children.length ? [{ ...item, children }] : [];
+      }),
+    })).filter((section) => section.items.length > 0);
   }, [deferredQuery, currentUser]);
 
   const pageTitle =
     sidebarSections
-      .flatMap((section) => section.items)
+      .flatMap((section) => section.items.flatMap((item) => item.children || [item]))
       .find((item) => item.id === activePage)?.label
     || (activePage === "project-create" ? "Create Project" : "Dashboard");
+  const employeeManagementPageIds = ["employee-profiles", "ex-employee-profiles", "all-employees", "salary-report", "employee-id-cards", "payroll-system"];
+  const hrManagementPageIds = ["hr-assign", "hr-assigned-tasks", "hr-tasks", "hr-leaves", "hr-attendance", "hr-ex-emp"];
+
+  useEffect(() => {
+    if (["crm", "crm-approved", "sales-add", "sales-approved", "co-approved"].includes(activePage)) setLeadManagementOpen(true);
+  }, [activePage]);
+  useEffect(() => {
+    if (["crm-reports", "sales-report", "crm-upload"].includes(activePage)) setCrmManagementOpen(true);
+  }, [activePage]);
+  useEffect(() => {
+    if (hrManagementPageIds.includes(activePage)) setHrManagementOpen(true);
+  }, [activePage]);
+  useEffect(() => {
+    if (employeeManagementPageIds.includes(activePage) || activePage === "user-create") setEmployeeManagementOpen(true);
+  }, [activePage]);
+
+  useEffect(() => {
+    if (!isAdminUser(currentUser)) return undefined;
+    let active = true;
+    const refresh = () => {
+      const snapshot = readHrDashboardData();
+      // Ignore legacy browser demo rows; the roster is backend only.
+      loadUsers().then((backendUsers) => {
+        if (!active) return;
+        const emps = (Array.isArray(backendUsers) ? backendUsers : [])
+          .filter((user) => !isAdminUser(user) && String(user.role || "").toLowerCase() !== "student"
+            && String(user.dept || user.department || "").toLowerCase() !== "student")
+          .map((user) => {
+            const backendId = String(user.id || user._id || "");
+            return {
+              ...user, id: backendId, backendId,
+              name: user.name || user.username || "Employee",
+              dept: user.dept || user.department || "",
+              desig: user.position || user.role || "",
+              photo: user.imageUrl || user.photo || "",
+              status: isHrExEmployee(user) ? "ex" : "active",
+            };
+          }).filter((employee) => employee.backendId);
+        const cleanSnapshot = {
+          ...(snapshot || {}), emps, att: {}, leaves: [], tasks: [], paid: {},
+          hrDocuments: [], hrResignations: [], hrTickets: [], hrNotifications: [], hrAppraisals: [],
+        };
+        setHrDashboardData(cleanSnapshot);
+        setHrDashboardDataStatus("ready");
+        try { window.localStorage.setItem(HR_DASHBOARD_STORAGE_KEY, JSON.stringify(cleanSnapshot)); } catch { /* ignore */ }
+      }).catch((error) => console.warn("Unable to load backend employee profiles.", error));
+    };
+    refresh();
+    window.addEventListener("storage", refresh);
+    window.addEventListener("focus", refresh);
+    window.addEventListener("pageshow", refresh);
+    return () => {
+      active = false;
+      window.removeEventListener("storage", refresh);
+      window.removeEventListener("focus", refresh);
+      window.removeEventListener("pageshow", refresh);
+    };
+  }, [activePage, currentUser]);
+
+  function persistHrDashboardData(nextData) {
+    try {
+      window.localStorage.setItem(HR_DASHBOARD_STORAGE_KEY, JSON.stringify(nextData));
+      setHrDashboardData(nextData);
+      setHrDashboardDataStatus("ready");
+      return true;
+    } catch (error) {
+      console.warn("Unable to save shared HR dashboard data.", error);
+      notify("Could not save the HR dashboard data in this browser.");
+      return false;
+    }
+  }
+
+  function updateHrLeaveStatus(leave, status) {
+    const data = readHrDashboardData() || hrDashboardData;
+    if (!data) {
+      notify("HR Dashboard data is not initialized in this browser.");
+      return;
+    }
+    const updatedAt = new Date().toISOString();
+    const leavesNext = (data.leaves || []).map((item) => String(item.id) === String(leave.id)
+      ? { ...item, status, approvedBy: status === "Pending" ? "" : (currentUser?.name || currentUser?.username || "Admin"), approvedAt: status === "Pending" ? "" : updatedAt }
+      : item);
+    const attendanceNext = { ...(data.att || {}) };
+    if (status === "Approved" && leave.from && leave.to) {
+      const start = new Date(`${leave.from}T00:00:00Z`);
+      const end = new Date(`${leave.to}T00:00:00Z`);
+      for (let date = start; !Number.isNaN(date.getTime()) && date <= end; date.setUTCDate(date.getUTCDate() + 1)) {
+        attendanceNext[`${date.toISOString().slice(0, 10)}|${leave.empId}`] = "Leave";
+      }
+    }
+    if (persistHrDashboardData({ ...data, leaves: leavesNext, att: attendanceNext })) {
+      notify(`Leave request ${String(status).toLowerCase()} in the HR Dashboard data.`);
+    }
+  }
+
+  const navigateToSidebarItem = (item) => {
+    if (activePage === "course-add" && item.id !== "course-add") closeTrainingModal();
+    setActivePage(item.id);
+    if (contentRef.current) contentRef.current.scrollTop = 0;
+    setMobileNavOpen(false);
+  };
+
+  const renderNavItem = (item, nested = false, showNestedIcon = false) => {
+    const Icon = item.icon;
+    const badge = item.id === "enrollment-requests" && pendingEnrollmentRequestCount > 0
+      ? pendingEnrollmentRequestCount
+      : item.id === "hr-leaves" && (hrDashboardData?.leaves || []).filter((leave) => leave.status === "Pending").length > 0
+        ? (hrDashboardData?.leaves || []).filter((leave) => leave.status === "Pending").length
+        : item.id === "it-admin-new-projects"
+          ? adminPreviewProjects.filter((project) => String(project.status || "").toLowerCase() === "new").length
+          : item.id === "it-admin-overdue-tasks" ? itOverdueTaskCount : 0;
+    return (
+      <button
+        key={item.id}
+        className={`nav-item nav-item-${item.id} ${nested ? "nav-item-nested" : ""} ${activePage === item.id ? "active" : ""}`}
+        onClick={() => navigateToSidebarItem(item)}
+      >
+        <span className={`nav-item-left ${nested ? "nav-item-left-nested" : ""}`}>{(!nested || showNestedIcon) && <Icon size={16} />}<span>{item.label}</span></span>
+        {badge > 0 ? <span className="nav-pill">{badge}</span> : !nested ? <ChevronRight size={14} /> : null}
+      </button>
+    );
+  };
 
   const pendingEnrollmentRequestCount = allEnrollmentRequests.filter((request) => request.status === "pending").length;
   const itOverdueTaskCount = tasks.filter((task) => {
@@ -2126,6 +2241,53 @@ function App() {
   }, [users]);
 
   const activeUsers = users.filter((user) => String(user?.status || "Active").trim().toLowerCase() !== "inactive");
+  const employeeUsers = users.filter((user) => {
+    const role = String(user?.role || "").trim().toLowerCase();
+    const department = String(user?.dept || user?.department || "").trim().toLowerCase();
+    return role !== "student" && department !== "student";
+  });
+  const activeEmployeeUsers = employeeUsers.filter((user) => String(user?.status || "Active").trim().toLowerCase() !== "inactive");
+  const hrEmployees = Array.isArray(hrDashboardData?.emps) ? hrDashboardData.emps : [];
+  const activeHrEmployees = hrEmployees.filter((employee) => !isHrExEmployee(employee));
+  const hrTaskAssignees = activeHrEmployees.filter((employee) => {
+    const role = String(employee.role || employee.desig || employee.position || "").toLowerCase();
+    return (role.includes("crm") && role.includes("executive")) || String(employee.dept || "").toLowerCase() === "sales";
+  });
+  const availableHrTaskAssignees = hrTaskAssignees.length ? hrTaskAssignees : activeHrEmployees;
+  const hrEmployeeDirectoryRows = hrEmployees.map((employee) => ({
+    ...employee,
+    id: String(employee.id || ""),
+    _id: String(employee.backendId || employee.id || ""),
+    name: employee.name || employee.username || "Employee",
+    dept: employee.dept || employee.department || "",
+    position: employee.desig || employee.position || employee.role || "",
+    imageUrl: employee.imageUrl || employee.photo || "",
+    status: isHrExEmployee(employee) ? "Inactive" : "Active",
+    type: isHrExEmployee(employee) ? "Former" : "Current",
+    exEmployee: isHrExEmployee(employee) ? "Yes" : "No",
+  }));
+  const hrTasks = Array.isArray(hrDashboardData?.tasks) ? hrDashboardData.tasks : [];
+  const hrTaskRows = hrTasks.map((task) => ({
+    ...task,
+    emp: hrEmployees.find((employee) => String(employee.id) === String(task.assignedTo))?.name || task.emp || task.assignee || "Unassigned",
+    due: task.due || task.dueDate || "",
+  }));
+  const hrLeaves = Array.isArray(hrDashboardData?.leaves) ? hrDashboardData.leaves : [];
+  const hrAttendanceRows = Object.entries(hrDashboardData?.att || {}).map(([key, status]) => {
+    const [date, employeeId] = key.split("|");
+    const employee = hrEmployees.find((item) => String(item.id) === String(employeeId));
+    return {
+      id: `${date}-${employeeId}`,
+      date,
+      employeeId,
+      employeeName: employee?.name || `Employee ${employeeId}`,
+      status: typeof status === "string" ? status : String(status?.status || "Marked"),
+      checkIn: status?.checkIn || "",
+      checkOut: status?.checkOut || "",
+      remark: status?.remark || "",
+    };
+  }).sort((left, right) => String(right.date).localeCompare(String(left.date)));
+  const dashboardOpenTasks = tasks.filter((task) => !["done", "completed", "cancelled"].includes(String(task.status || "").trim().toLowerCase()));
   const leadAssignableUsers = activeUsers.filter(isLeadAssignmentUser);
   const enteredBy = currentUser
     ? `${currentUser.name || currentUser.username || "User"} (${currentUser.position || currentUser.role || "User"})`
@@ -2184,7 +2346,7 @@ function App() {
   const revenue = wonLeads.reduce((sum, lead) => sum + Number(lead.value || 0), 0);
 
   useEffect(() => {
-    const approvedPage = activePage === "sales-approved" || activePage === "co-approved" || activePage === "sales-report";
+    const approvedPage = activePage === "sales-approved" || activePage === "co-approved" || activePage === "sales-report" || activePage === "crm-reports";
     if (!approvedPage || leadRecoveryAttempted.current || wonLeads.length > 0) return;
     leadRecoveryAttempted.current = true;
     loadLeads().then((remoteLeads) => {
@@ -2196,7 +2358,7 @@ function App() {
   }, [activePage, leadsLoadedFromBackend, wonLeads.length]);
 
   useEffect(() => {
-    if (!["crm", "crm-approved"].includes(activePage) || !isAdminUser(currentUser)) return undefined;
+    if (!["crm", "crm-approved", "crm-reports", "sales-report"].includes(activePage) || !isAdminUser(currentUser)) return undefined;
     const userKey = String(currentUser?.id || currentUser?._id || currentUser?.username || "");
     const pageKey = `${userKey}:${activePage}`;
     if (!userKey || adminAllLeadsLoadedForUser.current === pageKey) return undefined;
@@ -2250,7 +2412,6 @@ function App() {
   const callConnected = crmReportUsers.reduce((sum, report) => sum + (report.completed || 0), 0);
   const callNotConnected = crmReportUsers.reduce((sum, report) => sum + (report.notAttended || 0), 0);
   const callConnectionRate = callTotal > 0 ? Math.round((callConnected / callTotal) * 100) : 0;
-  const monitoringToday = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date());
   const monitorUsersFor = (department) => activeUsers.filter((user) => getMonitoringDepartment(user) === department);
   const monitorTasksFor = (department) => tasks.filter((task) => {
     const assignee = users.find((user) =>
@@ -2266,6 +2427,8 @@ function App() {
   });
   const monitorPendingLeaves = leaves.filter((leave) => ["pending", "requested", "open"].includes(String(leave.status || "").trim().toLowerCase()));
   const monitorPendingEnrollments = allEnrollmentRequests.filter((request) => ["pending", "contacted"].includes(String(request.status || "").trim().toLowerCase()));
+  const dashboardAttendanceToday = attendance.filter((record) => String(record.date || "").slice(0, 10) === monitoringToday);
+  const dashboardPendingRequests = monitorPendingLeaves.length + allEnrollmentRequests.filter((request) => ["pending", "requested", "open"].includes(String(request.status || "").trim().toLowerCase())).length;
   const monitorUnreviewedSubmissions = taskSubmissions.filter((submission) =>
     String(submission.taskStudentPdfUpload || "").trim() && !hasTaskGrade(submission.grade));
   const monitorTiles = [
@@ -2522,7 +2685,13 @@ function App() {
 
     try {
       setSettingsSaving(true);
-      const updatedUser = { name, email, phone, emergencyContact, maritalStatus, education, dept, position, role, joined, state, branch, branchCode, address, username };
+      const updatedUser = { name, phone, emergencyContact, maritalStatus, education, dept, position, role, joined, state, branch, branchCode, address, username };
+      // Avoid revalidating an unchanged email when the user only updates their
+      // photo or another profile field; old duplicate email records should not
+      // block unrelated profile saves.
+      if (email.toLowerCase() !== String(currentUser.email || "").trim().toLowerCase()) {
+        updatedUser.email = email;
+      }
 
       if (avatarFile) {
         const compressed = await compressImageFile(avatarFile);
@@ -3580,6 +3749,24 @@ function App() {
     }
   }
 
+  async function handleForgotPassword() {
+    const username = loginForm.username.trim();
+    if (!username) {
+      setResetMessage("Enter your username first.");
+      return;
+    }
+    setResetSubmitting(true);
+    setResetMessage("");
+    try {
+      const result = await requestPasswordResetByUsername(username);
+      setResetMessage(result?.message || "If your account has a valid email, a reset link will be sent.");
+    } catch (error) {
+      setResetMessage(error.message || "Could not process the reset request. Please try again.");
+    } finally {
+      setResetSubmitting(false);
+    }
+  }
+
   async function handleSignup(event) {
     event.preventDefault();
     const name = signupForm.name.trim();
@@ -3639,18 +3826,35 @@ function App() {
     return savedLead;
   }
 
-  async function assignTaskToCrmExecutive(event) {
+  async function assignTaskToEmployee(event) {
     event.preventDefault();
     if (!adminTaskForm.title.trim() || !adminTaskForm.assigneeId) {
-      notify("Enter a task title and select a CRM Executive.");
+      notify("Enter a task title and select an employee.");
       return;
     }
-    try {
-      const saved = await createTask({ ...adminTaskForm, id: `task-${Date.now()}` });
-      setTasks((current) => [saved, ...current]);
-      setAdminTaskForm({ title: "", description: "", assigneeId: "", priority: "Medium", dueDate: new Date().toISOString().slice(0, 10) });
-      notify("Task assigned and saved to the backend.");
-    } catch (error) { notify(error.message || "Could not assign task."); }
+    const hrData = readHrDashboardData() || hrDashboardData;
+    if (!hrData || !Array.isArray(hrData.emps)) {
+      notify("Open the HR Dashboard once to initialize its shared employee data.");
+      return;
+    }
+    const assignee = hrData.emps.find((employee) => String(employee.id) === String(adminTaskForm.assigneeId));
+    if (!assignee) {
+      notify("That employee is no longer in the HR directory. Reopen Assign Task and try again.");
+      return;
+    }
+    const task = {
+      id: Date.now(),
+      title: adminTaskForm.title.trim(),
+      description: adminTaskForm.description.trim(),
+      assignedTo: assignee.id,
+      assignedBy: 1,
+      priority: adminTaskForm.priority || "Medium",
+      due: adminTaskForm.dueDate || "",
+      status: "Pending",
+    };
+    if (!persistHrDashboardData({ ...hrData, tasks: [...(hrData.tasks || []), task] })) return;
+    setAdminTaskForm({ title: "", description: "", assigneeId: "", priority: "Medium", dueDate: new Date().toISOString().slice(0, 10) });
+    notify(`Task assigned to ${assignee.name} and saved with HR Dashboard data.`);
   }
 
   async function updateLeaveRequestStatus(leave, status) {
@@ -3670,11 +3874,13 @@ function App() {
   const name = createUserForm.name.trim();
   const email = createUserForm.email.trim();
   const phone = createUserForm.phone.trim();
+  const emergencyContact = createUserForm.emergencyContact.trim();
   const education = createUserForm.education.trim();
   const username = createUserForm.username.trim();
   const password = createUserForm.password.trim();
   const dept = createUserForm.dept.trim();
   const position = createUserForm.position.trim();
+  const salary = Math.max(0, Number(createUserForm.salary) || 0);
   const role = dept === "IT" ? createUserForm.role.trim() : departmentRoleMap[dept] || dept;
   const joined = createUserForm.joined.trim();
   const state = createUserForm.state.trim();
@@ -3687,7 +3893,8 @@ function App() {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { notify("Enter a valid email address."); return; }
     if (!phone) { notify("Contact number is required."); return; }
     if (!/^[6-9]\d{9}$/.test(phone)) { notify("Contact number must be exactly 10 digits and start with 6, 7, 8, or 9."); return; }
-    if (!education) { notify("Education is required."); return; }
+    if (!emergencyContact) { notify("Emergency contact is required."); return; }
+    if (!/^[6-9]\d{9}$/.test(emergencyContact)) { notify("Emergency contact must be exactly 10 digits and start with 6, 7, 8, or 9."); return; }
     if (!dept) { notify("Department is required."); return; }
     if (!position) { notify("Position is required."); return; }
     if (!role) { notify("Role is required."); return; }
@@ -3700,6 +3907,7 @@ function App() {
     if (!branch) { notify("Branch is required."); return; }
     if (!branchCode) { notify("Branch code is required."); return; }
     if (!address) { notify("Address is required."); return; }
+    if (createUserForm.exEmployee === "Yes" && !createUserForm.resignationDate) { notify("Select the employee's last working day."); return; }
 
     if (users.some((entry) => String(entry.id || entry._id) !== String(editingUserId) && String(entry.username || "").toLowerCase() === username.toLowerCase())) {
       notify("Username already exists. Please choose another username.");
@@ -3727,11 +3935,13 @@ function App() {
       name,
       email,
       phone,
+      emergencyContact,
       maritalStatus: createUserForm.maritalStatus || "",
-      education,
+      education: education || "",
       username,
       dept,
       position,
+      salary,
       role,
       canAssignProjects: dept === "IT" && (IT_ROLES.includes(role) ? defaultProjectEligibility(role) : createUserForm.canAssignProjects === true),
       joined,
@@ -3741,8 +3951,11 @@ function App() {
       address,
       imageUrl,
       imagePublicId,
-      status: "Active",
-      type: "Current",
+      exEmployee: createUserForm.exEmployee,
+      resignationDate: createUserForm.exEmployee === "Yes" ? createUserForm.resignationDate : "",
+      status: createUserForm.exEmployee === "Yes" ? "Inactive" : "Active",
+      employeeStatus: createUserForm.exEmployee === "Yes" ? "Inactive" : "Active",
+      type: createUserForm.exEmployee === "Yes" ? "Former" : "Current",
     };
     if (password) userPayload.password = password;
 
@@ -3765,10 +3978,13 @@ function App() {
         education: "",
         username: "",
         password: "",
-        role: "CRM Executive",
-        dept: "CRM",
+        role: "",
+        dept: "",
         position: "",
+        salary: "20000",
         joined: "",
+        exEmployee: "No",
+        resignationDate: "",
         state: "",
         branch: "",
         branchCode: "",
@@ -3779,7 +3995,7 @@ function App() {
       setCreateUserPreview("");
       setCreateUserFile(null);
       notify(wasEditing ? "User updated successfully." : "New user created successfully.");
-      setActivePage("user-view");
+      setActivePage(wasEditing ? userFormReturnPage : "employee-profiles");
     } catch (err) {
       if (err.status === 409 && /username already exists/i.test(err.message)) {
         notify("Username already exists. Please choose another username.");
@@ -3990,6 +4206,7 @@ function App() {
   }
 
   function editUser(user) {
+    setUserFormReturnPage(activePage);
     setCreateUserForm({
       name: user.name || "",
       email: user.email || "",
@@ -4004,6 +4221,7 @@ function App() {
       canAssignProjects: canReceiveProject(user),
       dept: user.dept || user.department || "CRM",
       position: user.position || "",
+      salary: String(Number(user.salary) || 0),
       joined: user.joined || "",
       state: user.state || "",
       branch: user.branch || "",
@@ -4234,6 +4452,12 @@ function App() {
                 />
                 <span>Remember credentials on this device</span>
               </label>
+              <div className="auth-forgot-password">
+                <button type="button" onClick={handleForgotPassword} disabled={resetSubmitting || loginSubmitting}>
+                  {resetSubmitting ? "Requesting reset..." : "Forgot password?"}
+                </button>
+                {resetMessage && <small role="status">{resetMessage}</small>}
+              </div>
               <button className="primary-button full-width" type="submit" disabled={loginSubmitting}>
                 <LockKeyhole size={16} />
                 {loginSubmitting ? "Signing in..." : "Login and Continue"}
@@ -4448,41 +4672,40 @@ function App() {
                 </button>
               ) : <p>{section.heading}</p>}
               {(section.heading !== "IT" || itAdminSectionOpen || Boolean(deferredQuery.trim())) && section.items.map((item, index) => {
-                const Icon = item.icon;
+                if (item.children) {
+                  const Icon = item.icon;
+                  const openState = item.id === "lead-management" ? leadManagementOpen
+                    : item.id === "employee-management" ? employeeManagementOpen
+                      : item.id === "crm-management" ? crmManagementOpen : hrManagementOpen;
+                  const isOpen = openState || Boolean(deferredQuery.trim());
+                  const childIsActive = item.children.some((child) => child.id === activePage);
+                  return (
+                    <div className="nav-dropdown" key={item.id}>
+                      <button
+                        type="button"
+                        className={`nav-item nav-item-${item.id} ${childIsActive ? "active" : ""}`}
+                        aria-expanded={isOpen}
+                        onClick={() => item.id === "lead-management"
+                          ? setLeadManagementOpen((open) => !open)
+                          : item.id === "employee-management"
+                            ? setEmployeeManagementOpen((open) => !open)
+                            : item.id === "crm-management"
+                              ? setCrmManagementOpen((open) => !open)
+                              : setHrManagementOpen((open) => !open)}
+                      >
+                        <span className="nav-item-left"><Icon size={16} /><span>{item.label}</span></span>
+                        <ChevronDown size={14} className={isOpen ? "nav-dropdown-chevron open" : "nav-dropdown-chevron"} />
+                      </button>
+                      {isOpen && <div className="nav-dropdown-children">{item.children.map((child) => renderNavItem(child, true, item.id !== "lead-management"))}</div>}
+                    </div>
+                  );
+                }
                 return (
                   <div key={item.id}>
                     {section.heading === "IT" && item.group && (!index || section.items[index - 1]?.group !== item.group) && (
                       <p className="it-admin-nav-subheading">{item.group}</p>
                     )}
-                    <button
-                      className={`nav-item nav-item-${item.id} ${activePage === item.id ? "active" : ""}`}
-                      onClick={() => {
-                        if (activePage === "course-add" && item.id !== "course-add") {
-                          closeTrainingModal();
-                        }
-                        setActivePage(item.id);
-                        if (contentRef.current) {
-                          contentRef.current.scrollTop = 0;
-                        }
-                        setMobileNavOpen(false);
-                      }}
-                    >
-                      <span className="nav-item-left">
-                        <Icon size={16} />
-                        <span>{item.label}</span>
-                      </span>
-                      {item.id === "enrollment-requests" && pendingEnrollmentRequestCount > 0 ? (
-                        <span className="nav-pill">{pendingEnrollmentRequestCount}</span>
-                      ) : item.id === "hr-leaves" && leavePendingCount > 0 ? (
-                        <span className="nav-pill">{leavePendingCount}</span>
-                      ) : item.id === "it-admin-new-projects" && adminPreviewProjects.filter((project) => String(project.status || "").toLowerCase() === "new").length > 0 ? (
-                        <span className="nav-pill">{adminPreviewProjects.filter((project) => String(project.status || "").toLowerCase() === "new").length}</span>
-                      ) : item.id === "it-admin-overdue-tasks" && itOverdueTaskCount > 0 ? (
-                        <span className="nav-pill">{itOverdueTaskCount}</span>
-                      ) : (
-                        <ChevronRight size={14} />
-                      )}
-                    </button>
+                    {renderNavItem(item)}
                   </div>
                 );
               })}
@@ -4582,149 +4805,45 @@ function App() {
                 </div>
               </section>
 
-              <section className="stats-grid">
-                <StatCard tone="rose" icon={Users} label="Total Leads" value={leads.length} note="Live pipeline volume" />
-                <StatCard tone="green" icon={CheckCircle2} label="Enrolled / Won" value={wonLeads.length} note="Qualified outcomes" />
-                <StatCard tone="blue" icon={UserRoundCheck} label="Active Users" value={activeUsers.length} note="Current staff access" />
-                <StatCard tone="amber" icon={BadgeIndianRupee} label="Revenue" value={compactCurrency(revenue)} note="Closed business value" />
-              </section>
-
-              <div className="dashboard-tabs">
-                {[
-                  { id: "overview", label: "Overview" },
-                  { id: "pipeline", label: "Lead Pipeline" },
-                  { id: "sales", label: "Sales Overview" },
-                  { id: "calls", label: "Call Performance" },
-                  { id: "team", label: "Team Performance" },
-                  { id: "followups", label: "Follow-ups" },
-                  { id: "activity", label: "Activity" },
-                  { id: "departments", label: "All Departments" },
-                ].map((tab) => (
-                  <button
-                    key={tab.id}
-                    className={`dashboard-tab ${dashboardTab === tab.id ? "active" : ""}`}
-                    onClick={() => setDashboardTab(tab.id)}
-                  >
-                    {tab.label}
-                  </button>
-                ))}
-              </div>
-
               {dashboardTab === "overview" && (
-                <section className="department-monitor department-monitor-overview">
-                  <div className="department-monitor-heading">
-                    <div>
-                      <p className="eyebrow">ADMIN CONTROL CENTER</p>
-                      <h2>Department monitoring</h2>
-                      <p>Shared activity from CRM, HR, IT, Operations, and Learning.</p>
-                    </div>
-                    <div className="department-monitor-refresh">
-                      {monitorLastRefreshed && <span>Updated {monitorLastRefreshed}</span>}
-                      <button className="primary-button" type="button" onClick={() => setDashboardTab("departments")}>
-                        View all departments
-                      </button>
-                    </div>
-                  </div>
-                  {monitorRefreshing && <p className="department-monitor-note">Loading the latest department data...</p>}
-                  {monitorRefreshError && <p className="department-monitor-error" role="alert">{monitorRefreshError}</p>}
-                  <div className="department-monitor-grid">
-                    {monitorTiles.map((tile) => (
-                      <article className="department-monitor-card" key={tile.id}>
-                        <div className="department-monitor-card-heading">
-                          <h3>{tile.title}</h3>
-                          <span className="department-monitor-live">Shared data</span>
-                        </div>
-                        <dl>
-                          {tile.metrics.map(([label, value]) => (
-                            <div key={label}>
-                              <dt>{label}</dt>
-                              <dd>{value}</dd>
-                            </div>
-                          ))}
-                        </dl>
-                      </article>
-                    ))}
-                  </div>
-                  <p className="department-monitor-note">
-                    HR browser-only records and IT demo-only team/bug data are not connected to shared monitoring yet.
-                  </p>
+                <section className="stats-grid admin-overview-stats">
+                  <StatCard tone="rose" icon={Users} label="Total Employees" value={employeeUsers.length} note="All staff accounts" />
+                  <StatCard tone="green" icon={UserRoundCheck} label="Active Users" value={activeEmployeeUsers.length} note="Active staff accounts" />
+                  <StatCard tone="blue" icon={CalendarCheck2} label="Attendance" value={dashboardAttendanceToday.length} note="Records marked today" />
+                  <StatCard tone="amber" icon={ClipboardCheck} label="Pending Requests" value={dashboardPendingRequests} note="Leave and enrollment" />
+                  <StatCard tone="rose" icon={ListTodo} label="Open Tasks" value={dashboardOpenTasks.length} note="Work still in progress" />
                 </section>
               )}
 
               {dashboardTab === "overview" && (
-                <section className="dashboard-grid">
-                  <Panel title="CRM call performance (today)">
-                    <div className="table-wrap">
-                      <table className="table">
-                        <thead>
-                          <tr>
-                            <th>CRM Executive</th>
-                            <th>Completed</th>
-                            <th>Pending</th>
-                            <th>Follow-Up</th>
-                            <th>Not Attended Calls</th>
-                            <th>Total Calls</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {crmReportUsers.slice(0, 5).map((report) => (
-                            <tr key={report.exec}>
-                              <td>
-                                <div className="person-cell">
-                                  <div className="avatar soft">{initials(report.exec)}</div>
-                                  <strong>{report.exec}</strong>
-                                </div>
-                              </td>
-                              <td>{report.completed}</td>
-                              <td>{report.pending}</td>
-                              <td>{report.followUp}</td>
-                              <td>{report.notAttended}</td>
-                              <td>{report.total}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                    <div className="panel-footer">
-                      <button className="ghost-button compact" onClick={() => setActivePage("crm")}>
-                        View Full Report <ArrowRight size={14} />
-                      </button>
-                    </div>
-                  </Panel>
-
-                  <Panel title="Pending follow-ups">
-                    <div className="follow-up-list">
-                      {followUps.slice(0, 5).map((lead, index) => (
-                        <div key={`${lead.id || lead.name || "lead"}-${index}`} className="follow-up-item">
-                          <span className="dot" />
-                          <div>
-                            <strong>{lead.name}</strong>
-                            <span>{lead.interest}</span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                    <div className="panel-footer">
-                      <button className="ghost-button compact" onClick={() => setActivePage("crm")}>
-                        View All <ArrowRight size={14} />
-                      </button>
-                    </div>
-                  </Panel>
-
-                  <Panel title="Recent activity">
-                    <div className="activity-list">
-                      {logs.slice(0, 5).map((log) => (
-                        <div key={log.id} className={`activity-item ${log.kind}`}>
-                          <span className={`log-dot ${log.kind}`} />
-                          <div className="activity-body">
-                            <strong>{log.user}</strong>
-                            <span>{log.action}</span>
-                          </div>
-                          <span className="activity-time">{log.time}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </Panel>
+                <section className="admin-overview-grid">
+                  <article className="admin-overview-panel">
+                    <div className="admin-overview-panel-heading"><div><p className="eyebrow">WORKFORCE</p><h2>Employee snapshot</h2></div><BriefcaseBusiness size={20} /></div>
+                    <div className="admin-overview-progress"><span>Active employees</span><strong>{activeEmployeeUsers.length} <small>of {employeeUsers.length}</small></strong><div><i style={{ width: `${employeeUsers.length ? Math.min(100, (activeEmployeeUsers.length / employeeUsers.length) * 100) : 0}%` }} /></div></div>
+                    <div className="admin-overview-foot"><span>Inactive accounts</span><strong>{employeeUsers.length - activeEmployeeUsers.length}</strong></div>
+                  </article>
+                  <article className="admin-overview-panel">
+                    <div className="admin-overview-panel-heading"><div><p className="eyebrow">TODAY</p><h2>Attendance</h2></div><CalendarCheck2 size={20} /></div>
+                    {dashboardAttendanceToday.length ? <div className="admin-overview-list">{dashboardAttendanceToday.slice(0, 4).map((record, index) => {
+                      const person = employeeUsers.find((user) => String(user.id || user._id) === String(record.userId || record.employeeId || record.employee || ""));
+                      return <div className="admin-overview-list-row" key={record.id || record._id || `${record.date}-${index}`}><span className="avatar soft">{initials(person?.name || record.name || record.employeeName || "Staff")}</span><strong>{person?.name || record.name || record.employeeName || record.employee || "Employee"}</strong><span className="admin-overview-status">{record.status || "Marked"}</span></div>;
+                    })}</div> : <p className="admin-overview-empty">No attendance records have been marked today.</p>}
+                    <button className="ghost-button compact" onClick={() => setActivePage("hr-attendance")}>View attendance <ArrowRight size={14} /></button>
+                  </article>
+                  <article className="admin-overview-panel">
+                    <div className="admin-overview-panel-heading"><div><p className="eyebrow">NEEDS REVIEW</p><h2>Pending requests</h2></div><ClipboardList size={20} /></div>
+                    <div className="admin-overview-list">{[
+                      ...monitorPendingLeaves.slice(0, 3).map((item) => ({ key: `leave-${item.id || item._id}`, title: item.name || item.employeeName || "Leave request", detail: item.reason || item.type || "Leave request", kind: "Leave" })),
+                      ...allEnrollmentRequests.filter((item) => ["pending", "requested", "open"].includes(String(item.status || "").trim().toLowerCase())).slice(0, 3).map((item) => ({ key: `enroll-${item.id || item._id}`, title: item.studentName || item.name || "Enrollment request", detail: item.courseName || "Enrollment", kind: "Enrollment" })),
+                    ].slice(0, 4).map((item) => <div className="admin-overview-list-row request-row" key={item.key}><span className="admin-overview-kind">{item.kind}</span><div><strong>{item.title}</strong><small>{item.detail}</small></div><span className="admin-overview-status pending">Pending</span></div>)}
+                    {!dashboardPendingRequests && <p className="admin-overview-empty">No pending requests.</p>}</div>
+                    <button className="ghost-button compact" onClick={() => setActivePage("hr-leaves")}>Review requests <ArrowRight size={14} /></button>
+                  </article>
+                  <article className="admin-overview-panel">
+                    <div className="admin-overview-panel-heading"><div><p className="eyebrow">CURRENT WORK</p><h2>Open tasks</h2></div><ListTodo size={20} /></div>
+                    {dashboardOpenTasks.length ? <div className="admin-overview-list">{dashboardOpenTasks.slice(0, 4).map((task, index) => <div className="admin-overview-list-row task-row" key={task.id || task._id || `${task.title}-${index}`}><span className="admin-task-priority" data-priority={String(task.priority || "medium").toLowerCase()} /><div><strong>{task.title || "Untitled task"}</strong><small>{task.emp || task.assignee || "Unassigned"} · Due {task.dueDate || task.due || "No date"}</small></div><span className="admin-overview-status">{task.status || "Open"}</span></div>)}</div> : <p className="admin-overview-empty">No open tasks.</p>}
+                    <button className="ghost-button compact" onClick={() => setActivePage("hr-tasks")}>View tasks <ArrowRight size={14} /></button>
+                  </article>
                 </section>
               )}
 
@@ -5165,7 +5284,7 @@ function App() {
           )}
 
           {activePage === "user-create" && (
-            <Panel title={editingUserId ? "Edit user" : "Create new user"}>
+            <Panel title={editingUserId ? "Edit employee profile" : "Create employee profile"}>
               <form className="form-grid" onSubmit={addMember} autoComplete="off">
                 <p className="form-section-title">Personal Information</p>
                 <Field label="Full Name *">
@@ -5189,11 +5308,25 @@ function App() {
                 </Field>
                 <Field label="Contact Number *">
                   <input
+                    type="tel"
+                    inputMode="numeric"
+                    pattern="[6-9][0-9]{9}"
                     value={createUserForm.phone}
                     onChange={(event) =>
                       setCreateUserForm((current) => ({ ...current, phone: event.target.value.replace(/\D/g, "") }))
                     }
-                    placeholder="Enter your contact number here"
+                    placeholder="Enter 10-digit phone number"
+                    maxLength={10}
+                  />
+                </Field>
+                <Field label="Emergency Contact *">
+                  <input
+                    type="tel"
+                    inputMode="numeric"
+                    pattern="[6-9][0-9]{9}"
+                    value={createUserForm.emergencyContact}
+                    onChange={(event) => setCreateUserForm((current) => ({ ...current, emergencyContact: event.target.value.replace(/\D/g, "") }))}
+                    placeholder="Enter 10-digit emergency number"
                     maxLength={10}
                   />
                 </Field>
@@ -5210,13 +5343,13 @@ function App() {
                     ))}
                   </select>
                 </Field>
-                <Field label="Education *">
+                <Field label="Education">
                   <input
                     value={createUserForm.education}
                     onChange={(event) =>
                       setCreateUserForm((current) => ({ ...current, education: event.target.value }))
                     }
-                    placeholder="Enter your highest qualification here"
+                    placeholder="e.g. B.Tech, MBA, MCA (Optional)"
                   />
                 </Field>
 
@@ -5236,6 +5369,7 @@ function App() {
                       }));
                     }}
                   >
+                    <option value="">Select department</option>
                     {backendDepartments.map((dept) => (
                       <option key={dept} value={dept}>{dept}</option>
                     ))}
@@ -5270,7 +5404,15 @@ function App() {
                     placeholder="Enter your position here"
                   />
                 </Field>
-                <p className="form-section-title">Joining Information</p>
+                <Field label="Monthly Salary (₹)">
+                  <input
+                    type="number"
+                    min="0"
+                    value={createUserForm.salary}
+                    onChange={(event) => setCreateUserForm((current) => ({ ...current, salary: event.target.value }))}
+                    placeholder="Enter monthly salary"
+                  />
+                </Field>
                 <Field label="Date of Joining *">
                   <input
                     type="date"
@@ -5280,6 +5422,15 @@ function App() {
                     }
                   />
                 </Field>
+                <Field label="Ex-Employee">
+                  <select value={createUserForm.exEmployee} onChange={(event) => setCreateUserForm((current) => ({ ...current, exEmployee: event.target.value, resignationDate: event.target.value === "Yes" ? current.resignationDate : "" }))}>
+                    <option value="No">No</option>
+                    <option value="Yes">Yes</option>
+                  </select>
+                </Field>
+                {createUserForm.exEmployee === "Yes" && <Field label="Last Working Day *">
+                  <input type="date" value={createUserForm.resignationDate} onChange={(event) => setCreateUserForm((current) => ({ ...current, resignationDate: event.target.value }))} />
+                </Field>}
                 <Field label="Profile Photo">
                   <div className="avatar-upload">
                     <input
@@ -5317,7 +5468,6 @@ function App() {
                   </div>
                 </Field>
 
-                <p className="form-section-title">Login Information</p>
                 <Field label="Username *">
                   <input
                     value={createUserForm.username}
@@ -5383,7 +5533,7 @@ function App() {
 
                 <div className="form-actions span-full">
                   <button className="primary-button" type="submit" disabled={isCreatingUser}>
-                    {isCreatingUser ? (editingUserId ? "Updating User..." : "Creating User...") : (editingUserId ? "Update User" : "Create User")}
+                    {isCreatingUser ? (editingUserId ? "Updating Profile..." : "Saving profile...") : (editingUserId ? "Save changes" : "Create profile")}
                   </button>
                 </div>
               </form>
@@ -5605,7 +5755,7 @@ function App() {
             </>
           )}
 
-          {activePage === "sales-report" && (
+          {["sales-report", "crm-reports"].includes(activePage) && (
             <>
               <section className="stats-grid compact">
                 <StatCard tone="blue" icon={Users} label="Total Leads" value={leads.length} note="Across sales modules" />
@@ -5702,9 +5852,9 @@ function App() {
           )}
 
           {activePage === "hr-assign" && (
-            <Panel title="Assign task to CRM Executive">
-              <form className="form-grid" onSubmit={assignTaskToCrmExecutive}>
-                <label className="field"><span>CRM Executive *</span><select value={adminTaskForm.assigneeId} onChange={(event) => setAdminTaskForm((current) => ({ ...current, assigneeId: event.target.value }))}><option value="">Select CRM Executive</option>{activeUsers.filter((user) => isCrmExecutive(user.role)).map((user) => <option key={user.id || user._id} value={user.id || user._id}>{user.name || user.username}</option>)}</select></label>
+            <Panel title="Assign task to employee">
+              <form className="form-grid" onSubmit={assignTaskToEmployee}>
+                <label className="field"><span>Employee *</span><select value={adminTaskForm.assigneeId} onChange={(event) => setAdminTaskForm((current) => ({ ...current, assigneeId: event.target.value }))}><option value="">Select employee</option>{availableHrTaskAssignees.map((employee) => <option key={employee.id} value={employee.id}>{employee.name} · {employee.dept || employee.desig || employee.role}</option>)}</select></label>
                 <label className="field"><span>Task title *</span><input value={adminTaskForm.title} onChange={(event) => setAdminTaskForm((current) => ({ ...current, title: event.target.value }))} placeholder="e.g. Follow up warm leads" /></label>
                 <label className="field"><span>Priority</span><select value={adminTaskForm.priority} onChange={(event) => setAdminTaskForm((current) => ({ ...current, priority: event.target.value }))}><option>High</option><option>Medium</option><option>Low</option></select></label>
                 <label className="field"><span>Due date</span><input type="date" value={adminTaskForm.dueDate} onChange={(event) => setAdminTaskForm((current) => ({ ...current, dueDate: event.target.value }))} /></label>
@@ -5716,17 +5866,24 @@ function App() {
 
           {activePage === "hr-tasks" && (
             <Panel title="All tasks">
-              <TaskTable tasks={tasks} />
+              {hrDashboardDataStatus === "missing" ? <p className="admin-employee-loading">Open the HR Dashboard once to initialize its employee and task data.</p> : <TaskTable tasks={hrTaskRows} />}
+            </Panel>
+          )}
+
+          {activePage === "hr-assigned-tasks" && (
+            <Panel title="Tasks assigned to employees">
+              {hrDashboardDataStatus === "missing" ? <p className="admin-employee-loading">Open the HR Dashboard once to initialize its employee and task data.</p> : <TaskTable tasks={hrTaskRows.filter((task) => Number(task.assignedBy) === 1)} />}
             </Panel>
           )}
 
           {activePage === "hr-leaves" && (
             <Panel title="Leave requests">
+              {hrDashboardDataStatus === "missing" ? <p className="admin-employee-loading">Open the HR Dashboard once to initialize its leave request data.</p> : <>
               <div className="admin-leave-overview">
-                <div><span>Total requests</span><strong>{leaves.length}</strong></div>
-                <div className="pending"><span>Pending review</span><strong>{leaves.filter((leave) => leave.status === "Pending").length}</strong></div>
-                <div className="approved"><span>Approved</span><strong>{leaves.filter((leave) => leave.status === "Approved").length}</strong></div>
-                <div className="rejected"><span>Rejected</span><strong>{leaves.filter((leave) => leave.status === "Rejected").length}</strong></div>
+                <div><span>Total requests</span><strong>{hrLeaves.length}</strong></div>
+                <div className="pending"><span>Pending review</span><strong>{hrLeaves.filter((leave) => leave.status === "Pending").length}</strong></div>
+                <div className="approved"><span>Approved</span><strong>{hrLeaves.filter((leave) => leave.status === "Approved").length}</strong></div>
+                <div className="rejected"><span>Rejected</span><strong>{hrLeaves.filter((leave) => leave.status === "Rejected").length}</strong></div>
               </div>
               <div className="table-wrap admin-leave-table-wrap">
                 <table className="table">
@@ -5742,13 +5899,15 @@ function App() {
                   </tr>
                 </thead>
                 <tbody>
-                  {leaves.length === 0 && <tr><td colSpan="7" className="empty-cell">No leave requests yet.</td></tr>}
-                  {leaves.map((leave) => (
+                  {hrLeaves.length === 0 && <tr><td colSpan="7" className="empty-cell">No leave requests yet.</td></tr>}
+                  {hrLeaves.map((leave) => {
+                    const employee = hrEmployees.find((item) => String(item.id) === String(leave.empId));
+                    return (
                     <tr key={leave.id}>
                       <td>
                         <div className="person-cell">
-                          <div className="avatar soft">{initials(leave.employeeName || "CRM Executive")}</div>
-                          <strong>{leave.employeeName || "CRM Executive"}</strong>
+                          <div className="avatar soft">{initials(employee?.name || "Employee")}</div>
+                          <strong>{employee?.name || `Employee ${leave.empId}`}</strong>
                         </div>
                       </td>
                       <td>{leave.type}</td>
@@ -5758,7 +5917,7 @@ function App() {
                       <td>{leave.reason}</td>
                       <td>
                         {leave.status === "Pending" ? (
-                          <select className="leave-decision-select" value={leave.status} onChange={(event) => updateLeaveRequestStatus(leave, event.target.value)}>
+                          <select className="leave-decision-select" value={leave.status} onChange={(event) => updateHrLeaveStatus(leave, event.target.value)}>
                             <option value="Pending">Pending</option>
                             <option value="Approved">Approve</option>
                             <option value="Rejected">Reject</option>
@@ -5766,15 +5925,18 @@ function App() {
                         ) : <span className={badgeClass(leave.status)}>{leave.status}</span>}
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
               </div>
+              </>}
             </Panel>
           )}
 
           {activePage === "hr-attendance" && (
             <Panel title="Attendance report">
+              {hrDashboardDataStatus === "missing" ? <p className="admin-employee-loading">Open the HR Dashboard once to initialize its attendance data.</p> : <>
               <div className="table-wrap">
                 <table className="table">
                 <thead>
@@ -5788,8 +5950,8 @@ function App() {
                   </tr>
                 </thead>
                 <tbody>
-                  {attendance.length === 0 && <tr><td colSpan="6" className="empty-cell">No attendance records yet.</td></tr>}
-                  {attendance.map((record) => (
+                  {hrAttendanceRows.length === 0 && <tr><td colSpan="6" className="empty-cell">No attendance records yet.</td></tr>}
+                  {hrAttendanceRows.map((record) => (
                     <tr key={record.id}>
                       <td><strong>{record.employeeName || "CRM Executive"}</strong></td>
                       <td>{formatDateDDMMYYYY(record.date)}</td>
@@ -5802,8 +5964,17 @@ function App() {
                 </tbody>
               </table>
               </div>
+              </>}
             </Panel>
           )}
+
+          {activePage === "employee-profiles" && <AdminEmployeeManagement mode="active" users={hrEmployeeDirectoryRows} status={hrDashboardDataStatus} />}
+          {activePage === "ex-employee-profiles" && <AdminEmployeeManagement mode="former" users={hrEmployeeDirectoryRows} status={hrDashboardDataStatus} />}
+          {activePage === "all-employees" && <AdminEmployeeManagement mode="all" users={hrEmployeeDirectoryRows} status={hrDashboardDataStatus} />}
+          {activePage === "salary-report" && <AdminEmployeeManagement mode="salary" users={hrEmployeeDirectoryRows} status={hrDashboardDataStatus} />}
+          {activePage === "employee-id-cards" && <AdminEmployeeManagement mode="cards" users={hrEmployeeDirectoryRows} status={hrDashboardDataStatus} />}
+          {activePage === "payroll-system" && <AdminEmployeeManagement mode="payroll" users={hrEmployeeDirectoryRows} status={hrDashboardDataStatus} />}
+          {activePage === "hr-ex-emp" && <AdminEmployeeManagement mode="former" users={hrEmployeeDirectoryRows} status={hrDashboardDataStatus} />}
 
           {activePage === "hr-emp" && (
             <Panel title="Employee profiles">
@@ -8579,6 +8750,61 @@ function TaskTable({ tasks }) {
       </table>
     </div>
   );
+}
+
+function AdminEmployeeManagement({ mode, users = [], status = "idle", onEdit }) {
+  const [query, setQuery] = useState("");
+  const former = (user) => String(user.exEmployee || "").trim().toLowerCase() === "yes"
+    || ["inactive", "disabled", "ex", "former"].includes(String(user.status || "active").trim().toLowerCase())
+    || String(user.type || "").trim().toLowerCase() === "former";
+  const employees = users.filter((user) => mode === "all" ? true : mode === "former" ? former(user) : !former(user));
+  const filtered = employees.filter((user) => [user.name, user.username, user.email, user.phone, user.dept, user.position, user.role]
+    .join(" ").toLowerCase().includes(query.trim().toLowerCase()));
+  const title = ({ active: "Employee Profiles", former: "Ex Employee Profiles", all: "View All Employee", salary: "Salary Report", cards: "Employee ID Cards", payroll: "Payroll System" })[mode] || "Employee Management";
+  const activeEmployees = users.filter((user) => !former(user));
+  const monthlyTotal = activeEmployees.reduce((sum, user) => sum + (Number(user.salary) || 0), 0);
+
+  if (status !== "ready") {
+    const message = status === "missing"
+      ? "Open the HR Dashboard once to initialize its shared employee data."
+      : status === "error"
+        ? "Could not load the shared employee directory. Open this section again to retry."
+        : "Loading the shared employee directory…";
+    return <Panel title={title}><p className={status === "error" ? "admin-employee-error" : "admin-employee-loading"} role={status === "error" ? "alert" : "status"}>{message}</p></Panel>;
+  }
+
+  if (mode === "cards") {
+    return <section className="admin-employee-workspace"><Panel title={`Employee ID Cards (${filtered.length})`}>
+      <div className="admin-employee-toolbar"><input aria-label="Search employee ID cards" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search employees…" /></div>
+      {filtered.length ? <div className="admin-employee-id-grid">{filtered.map((user) => <article className="admin-employee-id-card" key={user.id || user._id}>
+        <div className="admin-employee-id-brand"><LogoBadge compact /><span>SYSTEM TECHNOLOGIES</span></div>
+        <div className="admin-employee-id-person">{user.imageUrl ? <img src={user.imageUrl} alt="" /> : <span>{initials(user.name || user.username || "Employee")}</span>}<div><strong>{user.name || user.username || "Employee"}</strong><small>{user.position || user.role || "Employee"}</small></div></div>
+        <dl><div><dt>Employee ID</dt><dd>{user.id || user._id}</dd></div><div><dt>Department</dt><dd>{user.dept || user.department || "—"}</dd></div><div><dt>Joined</dt><dd>{user.joined || "—"}</dd></div></dl>
+      </article>)}</div> : <div className="catalog-empty-state">No employees match your search.</div>}
+    </Panel></section>;
+  }
+
+  const salaryMode = mode === "salary" || mode === "payroll";
+  return <section className="admin-employee-workspace">
+    {mode === "payroll" && <section className="stats-grid compact three-up admin-payroll-stats">
+      <StatCard tone="blue" icon={Users} label="Active Employees" value={activeEmployees.length} note="Shared employee directory" />
+      <StatCard tone="green" icon={Wallet} label="Monthly Payroll" value={compactCurrency(monthlyTotal)} note="Total of saved monthly salaries" />
+      <StatCard tone="amber" icon={BadgeIndianRupee} label="Average Salary" value={compactCurrency(activeEmployees.length ? Math.round(monthlyTotal / activeEmployees.length) : 0)} note="Per active employee" />
+    </section>}
+    <Panel title={`${title} (${filtered.length})`}>
+      <div className="admin-employee-toolbar"><input aria-label={`Search ${title}`} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by name, department, or role…" /></div>
+      {filtered.length ? <div className="table-wrap"><table className="table"><thead><tr>
+        <th>Employee</th><th>Department</th><th>Position</th><th>Email</th><th>Phone</th>{salaryMode && <th>Monthly Salary</th>}<th>Status</th>{!salaryMode && <th>Joined</th>}{onEdit && <th>Action</th>}
+      </tr></thead><tbody>{filtered.map((user) => <tr key={user.id || user._id}>
+        <td><div className="person-cell">{user.imageUrl ? <img className="avatar" src={user.imageUrl} alt="" /> : <div className="avatar soft">{initials(user.name || user.username || "Employee")}</div>}<strong>{user.name || user.username || "Employee"}</strong></div></td>
+        <td>{user.dept || user.department || "—"}</td><td>{user.position || user.role || "—"}</td><td>{user.email || "—"}</td><td>{user.phone || "—"}</td>
+        {salaryMode && <td>{compactCurrency(Number(user.salary) || 0)}</td>}
+        <td><span className={badgeClass(user.status || (former(user) ? "Inactive" : "Active"))}>{former(user) ? "Inactive" : (user.status || "Active")}</span></td>
+        {!salaryMode && <td>{user.joined || "—"}</td>}
+        {onEdit && <td><button type="button" className="ghost-button compact" onClick={() => onEdit(user)}><Edit3 size={14} /> Edit</button></td>}
+      </tr>)}</tbody></table></div> : <div className="catalog-empty-state">No employees match this view.</div>}
+    </Panel>
+  </section>;
 }
 
 function UsersTable({ users, onEdit }) {

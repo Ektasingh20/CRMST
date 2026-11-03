@@ -15,6 +15,7 @@ import OpenBugsPage from "./OpenBugsPage";
 import DailyOverview from "./DailyOverview.jsx";
 import MyWorkPage from "./MyWorkPage.jsx";
 import ClarificationPage from "./ClarificationPage";
+import HelpdeskChat, { HelpdeskIncomingToast } from "../shared/HelpdeskChat.jsx";
 import ProjectStatusSection from "./ProjectStatusSection";
 import { applyProjectStatus, projectStatusSummary } from "./projectStatus";
 import { getUploadedProjectFiles, requirementSections } from "./projectFiles";
@@ -499,6 +500,7 @@ const NAV_ITEMS = [
   { key: "my-work", label: "My Work", icon: ClipboardList, group: "Work" },
   { key: "open-bugs", label: "Open Bugs", icon: Bug, group: "Support" },
   { key: "clarification", label: "Clarification", icon: MessageSquare, group: "Support" },
+  { key: "hr-helpdesk", label: "HR Helpdesk", icon: MessageSquare, group: "Support" },
   { key: "settings", label: "Settings", icon: SettingsIcon, group: "Account" },
   { key: "leave-request", label: "Leave Request", icon: UserCircle2, group: "Account" },
 ];
@@ -517,6 +519,7 @@ const TITLES = {
   "overdue-tasks": "My Work",
   "open-bugs": "Open Bugs",
   clarification: "Clarification",
+  "hr-helpdesk": "HR Helpdesk",
   "completed-projects": "Completed Projects",
   "project-details": "Project Details",
   "project-review": "Project Review",
@@ -1448,6 +1451,7 @@ function ITWorkspace({ user, projects, onProjectsChange, onLogout }) {
       case "my-work": return <MyWorkPage projects={employeeProjects} person={user?.name || EMPLOYEE.name} onNavigate={setPage} onProject={(project) => openProject(project, "project-details")} />;
       case "open-bugs": return <OpenBugsPage key={user?.name || EMPLOYEE.name} projects={employeeProjects} person={user?.name || EMPLOYEE.name} />;
       case "clarification": return <ClarificationPage key={user?.name || EMPLOYEE.name} person={user?.name || EMPLOYEE.name} projects={employeeProjects.filter((project) => project.status !== "Rejected")} />;
+      case "hr-helpdesk": return <HelpdeskChat user={user} displayName={user?.name || EMPLOYEE.name} />;
       case "completed-projects": return <ProjectsPage title="Completed Projects" subtitle="Projects marked completed by the project team." projects={employeeProjects.filter((project) => project.status === "Completed")} onView={(project) => openProject(project, "project-details")} onReview={() => {}} />;
       case "settings": return <SettingsPage notify={notify} user={user} />;
       case "leave-request": return <LeaveRequestPage notify={notify} />;
@@ -1477,6 +1481,7 @@ function ITWorkspace({ user, projects, onProjectsChange, onLogout }) {
         </div>
       </div>
       <Toast message={toast} onClose={() => setToast("")} />
+      <HelpdeskIncomingToast user={user} onOpen={() => setPage("hr-helpdesk")} />
     </>
   );
 }

@@ -214,6 +214,26 @@ export async function requestPasswordResetEmail(req, res) {
   }
 }
 
+// Public login-page entry point. Keep the response identical whether the
+// username exists so the endpoint cannot be used to enumerate accounts.
+export async function requestPasswordResetByUsername(req, res) {
+  if (!isMongoConnected) return res.status(503).json({ error: "Database is unavailable. Please try again later." });
+  try {
+    const username = String(req.body?.username || "").trim().toLowerCase();
+    if (!username) return res.status(400).json({ error: "Enter your username to request a reset link." });
+    const user = await User.findOne({ username });
+    if (!user) return res.json({ message: "If an account with that username has a valid email, a reset link will be sent." });
+    req.params = { ...(req.params || {}), id: String(user.id || user._id) };
+    req.user = { id: String(user.id || user._id) };
+    const originalJson = res.json.bind(res);
+    res.json = () => originalJson({ message: "If an account with that username has a valid email, a reset link will be sent." });
+    return requestPasswordResetEmail(req, res);
+  } catch (error) {
+    console.error("Public password reset request failed:", error);
+    return res.status(500).json({ error: "Could not process the password reset request." });
+  }
+}
+
 export async function confirmPasswordReset(req, res) {
   if (!isMongoConnected) return res.status(503).json({ error: "Database is unavailable. Please try again later." });
   try {

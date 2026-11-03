@@ -6,6 +6,7 @@ import RemarkField from "../../RemarkField.jsx";
 import { callLeadForm } from "../../callLeads.js";
 import { createTask as createTaskApi, fetchTasks, updateTask as updateTaskApi, fetchAttendance, createAttendance, updateAttendance, fetchLeaves, createLeave, updateMyProfile, fetchAppNotifications, markAppNotificationRead } from "../../backendApi.js";
 import PasswordResetLink from "../PasswordResetLink.jsx";
+import HelpdeskChat, { HelpdeskIncomingToast } from "../shared/HelpdeskChat.jsx";
 import { TRAINING_CALL_LIST_PROGRAMS, SERVICE_CALL_LIST_SERVICES, CALL_STATUS_OPTIONS, CALL_LIST_INTEREST_STATUS_OPTIONS, normalizeCallStatus, normalizeInterestStatus, normalizeCallProgram, matchesCallListFilters } from "../../callListConfig.js";
 import { isCrmPageLoading } from "./crmPageLoading.js";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -233,6 +234,11 @@ const IconDownload = (p) => (
 const IconCheck = (p) => (
   <Icon {...p}>
     <path d="m5 12 5 5 9-9" />
+  </Icon>
+);
+const IconMessage = (p) => (
+  <Icon {...p}>
+    <path d="M20 11.5a7.5 7.5 0 0 1-7.5 7.5H5l-2 2v-6a7.5 7.5 0 1 1 17-3.5Z" />
   </Icon>
 );
 const IconEyeOff = (p) => (
@@ -2306,6 +2312,10 @@ const NAV_GROUPS = [
     ],
   },
   {
+    label: "Support",
+    items: [{ key: "hrhelpdesk", label: "HR Helpdesk", icon: IconMessage }],
+  },
+  {
     label: "Account",
     items: [{ key: "notifications", label: "Notifications", icon: IconBell }, { key: "settings", label: "Settings", icon: IconSettings }],
   },
@@ -2325,6 +2335,7 @@ const TAB_TITLES = {
   markattendance: ["Mark Attendance", "Log today's attendance"],
   attendancereport: ["Attendance Report", "Monthly attendance history"],
   leaverequest: ["Leave Request", "Apply for and track leave"],
+  hrhelpdesk: ["HR Helpdesk", "Chat directly with the HR team"],
 };
 
 function Sidebar({ activeTab, onNavigate, profile, badges, onLogout }) {
@@ -2731,11 +2742,13 @@ export default function CrmExecutiveDashboard({
             {activeTab === "leaverequest" && (
               <LeaveRequestTab leaveRequests={leaveRequests} setLeaveRequests={setLeaveRequests} showToast={showToast} />
             )}
+            {activeTab === "hrhelpdesk" && <HelpdeskChat user={currentUser} displayName={profile.name} />}
             </>}
           </div>
         </div>
       </div>
       <Toast toast={toast} />
+      <HelpdeskIncomingToast user={currentUser} onOpen={() => handleNavigate("hrhelpdesk")} />
     </div>
   );
 }

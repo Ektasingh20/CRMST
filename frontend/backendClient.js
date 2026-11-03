@@ -1,6 +1,7 @@
 import {
   login as apiLogin,
   signup as apiSignup,
+  requestPasswordResetByUsername as apiRequestPasswordResetByUsername,
   fetchUsers,
   fetchAssignableUsers,
   createUser,
@@ -352,6 +353,10 @@ export async function authLogin(username, password) {
   saveUserSession(user);
 
   return user;
+}
+
+export async function requestPasswordResetByUsername(username) {
+  return apiRequestPasswordResetByUsername(username);
 }
 
 export async function authSignup(name, username, password) {

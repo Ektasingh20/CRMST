@@ -63,7 +63,6 @@
 .hr-shell .hr-employee-action{display:inline-flex;align-items:center;justify-content:center;gap:4px;padding:5px 8px;border:1px solid transparent;border-radius:7px;font-size:12px;font-weight:600}
 .hr-shell .hr-employee-action.view{background:#faefd6;color:#76530f}
 .hr-shell .hr-employee-action.edit{background:#e3ecfa;color:#2c5a9e}
-.hr-shell .hr-employee-action.restore{background:#e0f3ea;color:var(--ok)}
 .hr-shell .hr-employee-action.delete{background:#fbe3de;color:var(--bad)}
 .hr-shell .hr-employee-action:disabled{opacity:.45;cursor:not-allowed}
 .hr-profile-view{position:relative;display:flex;flex-direction:column;align-items:center;gap:8px;padding:8px}
@@ -84,6 +83,7 @@
 .hr-employee-fields .hr-f{min-width:0}
 .hr-employee-fields .hr-f input,.hr-employee-fields .hr-f select{width:100%;min-height:40px;border-color:#d8e0ea;border-radius:8px;background:#f8fafc}
 .hr-employee-fields .hr-f input[readonly]{background:#eef2f6;color:var(--mute)}
+.hr-employee-fields .hr-f input:disabled,.hr-employee-fields .hr-f select:disabled{background:#eef2f6;color:var(--mute);cursor:not-allowed;opacity:.72}
 .hr-employee-fields .hr-f textarea{width:100%;min-height:78px;resize:vertical;font:inherit;font-size:14px;color:var(--ink);padding:10px 12px;border:1px solid #d8e0ea;border-radius:8px;background:#f8fafc}
 .hr-employee-fields .hr-f:has(textarea),.hr-employee-fields .hr-f:has(.hr-profile-photo-editor){grid-column:span 2}
 .hr-employee-fields .hr-f.hr-employee-wide{grid-column:1/-1}
@@ -118,6 +118,7 @@
 .hr-document-row strong{overflow-wrap:anywhere}
 .hr-document-view{display:inline-flex;align-items:center;gap:4px;flex:none;padding:5px 8px;border-radius:7px;background:#e0f3ea !important;color:var(--ok) !important;font-size:11px;font-weight:600}
 .hr-document-missing{flex:none;color:var(--mute);font-size:11px}
+.hr-prior-experience-none{margin:0 10px 10px}
 .hr-document-preview{display:grid;justify-items:start;gap:10px;margin:0 12px 12px;padding:12px;border:1px solid var(--line);border-radius:10px;background:#fbfaf9}
 .hr-document-preview-heading{display:flex;justify-content:space-between;align-items:center;gap:12px;width:100%;font-size:12px;overflow-wrap:anywhere}
 .hr-document-preview img,.hr-document-preview iframe{width:100%;max-height:360px;border:0;object-fit:contain}

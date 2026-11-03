@@ -195,6 +195,14 @@ export async function login(username, password) {
   return result;
 }
 
+export async function requestPasswordResetByUsername(username) {
+  return request("/auth/password-reset/request", {
+    method: "POST",
+    auth: false,
+    body: JSON.stringify({ username }),
+  });
+}
+
 export async function signup(name, username, password) {
   const result = await request("/auth/signup", {
     method: "POST",
@@ -208,6 +216,57 @@ export async function signup(name, username, password) {
 
 export async function fetchUsers() {
   return request("/users");
+}
+
+export async function uploadPriorExperienceDocument(id, key, file) {
+  const data = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => typeof reader.result === "string" ? resolve(reader.result) : reject(new Error("Unable to read this file."));
+    reader.onerror = () => reject(new Error("Unable to read this file."));
+    reader.readAsDataURL(file);
+  });
+  return request(`/users/${encodeURIComponent(id)}/prior-experience-documents/${encodeURIComponent(key)}`, {
+    method: "POST",
+    body: JSON.stringify({ name: file.name, data }),
+  });
+}
+
+export async function downloadPriorExperienceDocument(id, key) {
+  if (!getToken()) {
+    handleUnauthorized("Please log in to continue.");
+    const authError = new Error("Authentication required");
+    authError.status = 401;
+    throw authError;
+  }
+  const response = await fetch(`${API_BASE}/users/${encodeURIComponent(id)}/prior-experience-documents/${encodeURIComponent(key)}`, {
+    headers: buildHeaders(true),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    const error = new Error(body?.error || response.statusText || "Unable to download document.");
+    error.status = response.status;
+    if (response.status === 401) handleUnauthorized(error.message);
+    throw error;
+  }
+  return response.blob();
+}
+
+export const fetchHelpdeskConversations = () => request("/hr-helpdesk/conversations");
+
+export async function createHelpdeskConversation(subject, message, employeeId = "") {
+  return request("/hr-helpdesk/conversations", {
+    method: "POST",
+    body: JSON.stringify({ subject, message, ...(employeeId ? { employeeId } : {}) }),
+  });
+}
+
+export const fetchHelpdeskMessages = (conversationId) => request(`/hr-helpdesk/conversations/${encodeURIComponent(conversationId)}/messages`);
+
+export async function sendHelpdeskMessage(conversationId, text) {
+  return request(`/hr-helpdesk/conversations/${encodeURIComponent(conversationId)}/messages`, {
+    method: "POST",
+    body: JSON.stringify({ text }),
+  });
 }
 
 export async function fetchAssignableUsers() {
@@ -582,6 +641,10 @@ export async function deleteAttendance(id) {
 
 export async function fetchEmployees() {
   return request("/employees");
+}
+
+export async function fetchHrDashboard() {
+  return request("/hr/dashboard");
 }
 
 export async function createEmployee(employee) {

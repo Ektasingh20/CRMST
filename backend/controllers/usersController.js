@@ -23,7 +23,7 @@ function normalizeStudentFields(payload) {
 export async function createUser(req, res) {
   if (!isMongoConnected) return mongoUnavailable(res);
   try {
-    const { name, email, phone, emergencyContact, maritalStatus, education, username, password, dept, position, role, joined, state, branch, branchCode, address, imageUrl = "", imagePublicId = "" } = req.body;
+    const { name, email, phone, emergencyContact, maritalStatus, education, username, password, dept, position, role, joined, state, branch, branchCode, address, salary = 0, imageUrl = "", imagePublicId = "" } = req.body;
 
     const employment = normalizeEmployment(req.body);
 
@@ -34,7 +34,7 @@ export async function createUser(req, res) {
       }
     }
 
-    if (!name || !email || !phone || !education || !dept || !position || !role || !joined || !username || !password || !state || !branch || !branchCode || !address) {
+    if (!name || !email || !phone || !dept || !position || !role || !joined || !username || !password || !state || !branch || !branchCode || !address) {
       return res.status(400).json({ error: "All required fields must be filled" });
     }
 
@@ -51,6 +51,9 @@ export async function createUser(req, res) {
     }
 
     const usernameLower = String(username).trim().toLowerCase();
+    if (!/^[a-zA-Z0-9_]+$/.test(usernameLower)) {
+      return res.status(400).json({ error: "Username can only contain letters, numbers, and underscores." });
+    }
     const existingUsername = await User.findOne({ username: usernameLower });
     if (existingUsername) {
       return res.status(409).json({ error: "Username already exists" });
@@ -62,6 +65,8 @@ export async function createUser(req, res) {
     }
 
     const hash = await bcrypt.hash(password, 10);
+    const isFormerEmployee = String(req.body?.exEmployee || "No").trim().toLowerCase() === "yes";
+    const resignationDate = String(req.body?.resignationDate || "").trim();
     // const generatedId = `${usernameLower}-${Date.now()}`;
 
     const user = await User.create(normalizeStudentFields({
@@ -82,10 +87,19 @@ export async function createUser(req, res) {
       branch: String(branch).trim(),
       branchCode: String(branchCode).trim(),
       address: String(address).trim(),
+      salary: Number(salary) || 0,
       imageUrl: String(imageUrl || "").trim(),
       imagePublicId: String(imagePublicId || "").trim(),
-      status: "Active",
-      type: "Current",
+      exEmployee: isFormerEmployee ? "Yes" : "No",
+      employeeStatus: isFormerEmployee ? "Inactive" : "Active",
+      resignationDate,
+      left: isFormerEmployee ? (resignationDate || new Date().toISOString().slice(0, 10)) : "",
+      status: isFormerEmployee ? "Inactive" : "Active",
+      type: isFormerEmployee ? "Former" : "Current",
+      createdById: String(req.user?.id || req.user?._id || ""),
+      createdByRole: String(req.user?.role || ""),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     }));
 
     const { password: _password, ...safeUser } = user.toObject();

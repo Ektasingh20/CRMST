@@ -1,70 +1,57 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import "./hrDashboard.css";
 import "./hrDashboardForm.css";
 import HrPlanner from "./HrPlanner";
 import HrPeopleModules from "./HrPeopleModules";
+import HrWorkflowModules from "./HrWorkflowModules";
 import { usePageLoading, getPageTitle } from "./hrPageLoading";
 import { compressImageFile } from "../../imageUpload.js";
+import { createUser, fetchHrDashboard, fetchUsers, updateUser, updateMyProfile, deleteUser, uploadPriorExperienceDocument, downloadPriorExperienceDocument } from "../../backendApi.js";
+import { uploadImage } from "../../backendClient.js";
 import PasswordResetLink from "../PasswordResetLink.jsx";
+import { HelpdeskIncomingToast } from "../shared/HelpdeskChat.jsx";
 import {
   LayoutGrid, Users, CalendarCheck, ListChecks, Upload, Settings, LogOut, ChevronRight, ChevronDown,
   Search, Bell, Calendar, UserPlus, Plus, CalendarClock, Check, UserX, CreditCard, FileText, Wallet,
   ClipboardList, UserCog, ClipboardCheck, Briefcase, Menu, X, BellRing, UserCheck, Printer, Eye, EyeOff, Pencil, Trash2, UserCircle, Download,
-  Filter, RotateCcw, FileSpreadsheet, Phone, LockKeyhole, Moon, Sun, CalendarDays, Sparkles,
+  Filter, RotateCcw, FileSpreadsheet, Phone, LockKeyhole, Moon, Sun, CalendarDays, Sparkles, MessageCircle,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 
-/* ================= helpers & seed data ================= */
+/* ================= helpers & dashboard data ================= */
 const P = (s) => { const [a, b, c] = s.split("-"); return new Date(+a, b - 1, +c); };
 const iso = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const TODAY = iso();
 const MONTH = TODAY.slice(0, 7);
-const DEPTS = ["Sales", "IT", "HR", "Marketing"];
+const DEPTS = ["CRM", "HR", "IT", "Operation", "Student"];
 const inr = (n) => "₹" + Number(n || 0).toLocaleString("en-IN");
 const range = (a, b) => { const r = []; for (let d = P(a); d <= P(b) && r.length < 62; d.setDate(d.getDate() + 1)) r.push(iso(d)); return r; };
-const act = (d) => d.emps.filter((e) => e.status === "active");
+const isExEmployee = (employee) => String(employee?.exEmployee || "").trim().toLowerCase() === "yes"
+  || ["inactive", "disabled", "ex", "former"].includes(String(employee?.status || "").trim().toLowerCase())
+  || String(employee?.type || "").trim().toLowerCase() === "former";
+const act = (d) => d.emps.filter((employee) => !isExEmployee(employee));
 const nm = (d, id) => d.emps.find((e) => e.id === +id)?.name || "Unknown";
 const KEY = "hr_dashboard_v2";
 
-const FN = ["Rahul", "Priya", "Amit", "Neha", "Vikram", "Anita", "Rohit", "Kavya", "Suresh", "Pooja", "Manish", "Ritu", "Deepak", "Sneha", "Arjun", "Meena"];
-const LN = ["Joshi", "Meena", "Sharma", "Verma", "Gupta", "Singh", "Jain"];
-const TT = ["Follow up with new leads", "Update CRM records", "Prepare monthly report", "Client onboarding call", "Fix dashboard bug", "Team training session", "Verify documents", "Plan campaign calendar", "Review attendance sheet"];
-
-const seed = () => {
-  const emps = Array.from({ length: 32 }, (_, i) => {
-    const dept = i < 2 ? "HR" : i < 22 ? "Sales" : i < 31 ? "IT" : "Marketing";
-    const name = i ? `${FN[i % 16]} ${LN[i % 7]}` : "HR Admin";
-    return {
-      id: i + 1, name, dept, status: "active",
-      desig: i === 0 ? "Hiring Manager" : { Sales: "Sales Executive", IT: "Developer", HR: "HR Executive", Marketing: "Marketer" }[dept],
-      email: `${name.toLowerCase().replace(/ /g, ".")}${i}@systemtech.in`,
-      phone: `98${String(29000000 + i * 7919).slice(0, 8)}`,
-      salary: 20000 + ((i * 1700) % 26000),
-      joined: iso(new Date(2023, i % 12, 1 + (i % 27))),
-    };
-  });
-  const att = {};
-  emps.forEach((e) => {
-    if (e.id <= 9) att[`${TODAY}|${e.id}`] = "Present";
-    for (let k = 1; k <= 6; k++) { const d = new Date(); d.setDate(d.getDate() - k); att[`${iso(d)}|${e.id}`] = (e.id + k) % 7 === 0 ? "Absent" : "Present"; }
-  });
-  const d = (n) => { const x = new Date(); x.setDate(x.getDate() + n); return iso(x); };
-  const leaves = [
-    { id: 1, empId: 5, type: "Sick", from: d(1), to: d(2), reason: "Fever", status: "Pending" },
-    { id: 2, empId: 8, type: "Casual", from: d(3), to: d(3), reason: "Family function", status: "Pending" },
-    { id: 3, empId: 12, type: "Earned", from: d(-9), to: d(-7), reason: "Trip", status: "Approved" },
-    { id: 4, empId: 3, type: "Casual", from: d(-15), to: d(-15), reason: "Personal", status: "Rejected" },
-  ];
-  const tasks = Array.from({ length: 17 }, (_, i) => ({
-    id: i + 1, title: TT[i % TT.length], assignedTo: (i % 31) + 2 > 32 ? 1 : (i * 3) % 32 + 1, assignedBy: i % 4 === 0 ? 2 : 1,
-    due: d((i % 9) - 2), priority: ["Low", "Medium", "High"][i % 3], status: ["Pending", "In Progress", "Done"][i % 3],
-  }));
-  tasks[0].assignedTo = 1; tasks[1].assignedTo = 1; tasks[1].assignedBy = 2;
-  return { emps, att, leaves, tasks, paid: {}, log: [], me: { name: "HR", role: "Administrator", branch: "Ajmer", crm: "38", company: "System Technologies" } };
+const emptyDashboard = (saved = {}) => ({
+  emps: [], att: {}, leaves: [], tasks: [], paid: {}, log: [],
+  hrDocuments: [], hrResignations: [], hrTickets: [], hrNotifications: [], hrAppraisals: [],
+  me: { name: "HR", role: "Administrator", branch: "", crm: "", company: "System Technologies", ...(saved.me || {}) },
+});
+const load = () => {
+  try {
+    const saved = localStorage.getItem(KEY);
+    if (saved) {
+      const data = JSON.parse(saved);
+      // Discard legacy demo rows. Employee profiles are loaded from the backend;
+      // other HR sections start empty until they have backend records.
+      return emptyDashboard(data);
+    }
+  } catch { /* ignore */ }
+  return emptyDashboard();
 };
-const load = () => { try { const s = localStorage.getItem(KEY); if (s) return JSON.parse(s); } catch { /* ignore */ } return seed(); };
 
 const decide = (id, status, approvedBy = "") => (d) => {
   const l = d.leaves.find((x) => x.id === id); const att = { ...d.att };
@@ -101,6 +88,7 @@ const Seg = ({ value, opts, onChange }) => (
 
 /* ================= Dashboard ================= */
 function Dash({ c: { db, upd, go } }) {
+  const summary = db.hrSummary;
   const A = act(db);
   const st = A.map((e) => db.att[`${TODAY}|${e.id}`]);
   const attendance = ["Present", "Absent", "Leave"].map((status) => [status, st.filter((value) => value === status).length]);
@@ -112,9 +100,9 @@ function Dash({ c: { db, upd, go } }) {
   const departments = [...new Set(A.map((employee) => employee.dept))].sort((a, b) => a.localeCompare(b));
   const monthlyPayroll = A.reduce((total, employee) => total + (Number(employee.salary) || 0), 0);
   const stats = [
-    ["Active employees", A.length, `Across ${departments.length} departments`, Users, "Employee Profiles"],
-    ["Present today", attendance[0][1], `${marked} of ${A.length} attendance marked`, CalendarCheck, "All Attendance Report"],
-    ["Pending leave", pendingLeaves.length, `${db.leaves.filter((leave) => leave.status === "Approved").length} approved · ${db.leaves.filter((leave) => leave.status === "Rejected").length} declined`, CalendarClock, "View All Leave Request"],
+    ["Active employees", summary?.employeeCount ?? A.length, `Across ${Object.keys(summary?.departments || {}).length || departments.length} departments`, Users, "Employee Profiles"],
+    ["Present today", summary?.attendance?.Present ?? attendance[0][1], `${summary?.markedCount ?? marked} attendance marked`, CalendarCheck, "All Attendance Report"],
+    ["Pending leave", summary?.pendingLeaveCount ?? pendingLeaves.length, "Awaiting review", CalendarClock, "View All Leave Request"],
     ["Open tasks", openTasks.length, overdueTasks.length ? `${overdueTasks.length} overdue` : "None overdue", ListChecks, "All Task"],
     ["Monthly payroll", inr(monthlyPayroll), `Average ${inr(A.length ? Math.round(monthlyPayroll / A.length) : 0)} per employee`, Wallet, "Salary Report"],
   ];
@@ -178,8 +166,9 @@ function Dash({ c: { db, upd, go } }) {
 }
 
 /* ================= Employee management ================= */
-const blank = { name: "", email: "", phone: "", dept: "Sales", desig: "", salary: 20000, joined: TODAY };
-const PROFILE_DEPARTMENTS = ["HR", "Operations", "Sales", "IT", "Marketing"];
+const blank = { name: "", email: "", phone: "", dept: "CRM", desig: "", salary: 20000, joined: TODAY };
+const PROFILE_DEPARTMENTS = DEPTS;
+const PROFILE_DEPARTMENT_ROLES = { CRM: "CRM Executive", HR: "HR", Operation: "Operation", Student: "Student" };
 const PROFILE_DOCUMENTS = [
   ["aadhaarDocument", "Aadhaar Card"],
   ["panDocument", "PAN Card"],
@@ -189,6 +178,19 @@ const PROFILE_DOCUMENTS = [
   ["appointmentDocument", "Appointment Letter"],
   ["otherDocument", "Other Documents"],
 ];
+const PRIOR_EXPERIENCE_DOCUMENTS = [
+  ["experienceLetter", "Experience / Relieving Letter"],
+  ["priorPayslips", "Prior Employer Payslips"],
+  ["priorEmploymentProof", "Other Employment Proof"],
+];
+const profileForBackend = (profile) => {
+  const { documents = {}, priorExperienceDocuments, ...existing } = profile;
+  const priorDocumentKeys = new Set(PRIOR_EXPERIENCE_DOCUMENTS.map(([key]) => key));
+  return {
+    ...existing,
+    documents: Object.fromEntries(Object.entries(documents).filter(([key]) => !priorDocumentKeys.has(key))),
+  };
+};
 const PROFILE_SECTIONS = [
   {
     title: "1. Personal & Contact Information",
@@ -273,6 +275,7 @@ const PROFILE_SECTIONS = [
 ];
 const PROFILE_DEFAULTS = {
   dob: "", gender: "", personalEmail: "", emergencyContact: "", maritalStatus: "", education: "",
+  priorExperience: "No", priorEmployer: "", priorDesignation: "", priorEmploymentFrom: "", priorEmploymentTo: "",
   employmentType: "", employeeStatus: "Active", manager: "", workLocation: "", probationPeriod: "",
   noticePeriod: "", resignationDate: "", exEmployee: "No", state: "", branch: "Ajmer", branchCode: "CORP0001",
   panNumber: "", aadhaarNumber: "", bankName: "", accountNumber: "", ifscCode: "", bankBranch: "",
@@ -323,7 +326,7 @@ const readUploadedFile = (file) => new Promise((resolve, reject) => {
   reader.readAsDataURL(file);
 });
 
-function ProfileSection({ section, employee, editing, onChange, onFile, fileErrors = {} }) {
+function ProfileSection({ section, employee, editing, onChange, onFile, fileErrors = {}, photoStatus = "" }) {
   const totals = profileTotals(employee);
   const calculatedText = (key, value) => {
     if (key === "oneDayBasicSalary") return String(value);
@@ -359,6 +362,7 @@ function ProfileSection({ section, employee, editing, onChange, onFile, fileErro
                   : <div className="hr-profile-photo-large hr-profile-placeholder"><UserCircle size={36} /></div>}
                 <input type="file" accept="image/*" required={isRequired} aria-label="Upload profile photo" onChange={(event) => onFile(event, key, true)} />
                 {fileErrors[key] && <small className="hr-form-error" role="alert">{fileErrors[key]}</small>}
+                {photoStatus && <small className="hr-uploaded-file" role="status">{photoStatus}</small>}
               </div>
             ) : employee.photo
               ? <img className="hr-profile-photo-large" src={employee.photo} alt={`${employee.name} profile`} />
@@ -392,9 +396,12 @@ function ProfileSection({ section, employee, editing, onChange, onFile, fileErro
   );
 }
 
-function EmployeeProfileEditor({ employee, onBack, onSave }) {
+function EmployeeProfileEditor({ employee, onBack, onSave, onDocumentUploaded, onPhotoUploaded }) {
   const [form, setForm] = useState(() => employeeProfile(employee));
   const [fileErrors, setFileErrors] = useState({});
+  const [photoStatus, setPhotoStatus] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
   const change = (key, value) => setForm((current) => ({ ...current, [key]: value }));
   const upload = async (event, key, isPhoto = false) => {
     const file = event.target.files?.[0];
@@ -411,29 +418,48 @@ function EmployeeProfileEditor({ employee, onBack, onSave }) {
     }
     event.target.value = "";
     try {
+      if (!isPhoto && PRIOR_EXPERIENCE_DOCUMENTS.some(([documentKey]) => documentKey === key) && employee.backendId) {
+        const document = await uploadPriorExperienceDocument(employee.backendId, key, file);
+        setForm((current) => ({ ...current, priorExperienceDocuments: { ...(current.priorExperienceDocuments || {}), [key]: document } }));
+        onDocumentUploaded?.(key, document);
+        setFileErrors((current) => ({ ...current, [key]: "" }));
+        return;
+      }
       const processed = isPhoto ? await compressImageFile(file) : file;
-      const data = await readUploadedFile(processed);
       if (isPhoto) {
-        change(key, data);
+        setPhotoStatus("Uploading photo…");
+        if (!employee.backendId) throw new Error("This employee is not linked to a backend record.");
+        const uploaded = await uploadImage(processed);
+        if (!uploaded.imageUrl) throw new Error("Image upload did not return a photo URL.");
+        await updateUser(employee.backendId, { imageUrl: uploaded.imageUrl, imagePublicId: uploaded.publicId || "" });
+        setForm((current) => ({ ...current, [key]: uploaded.imageUrl, imageUrl: uploaded.imageUrl, imagePublicId: uploaded.publicId || "" }));
+        onPhotoUploaded?.(uploaded.imageUrl, uploaded.publicId || "");
+        setPhotoStatus("Photo uploaded and saved.");
       } else {
+        const data = await readUploadedFile(processed);
         setForm((current) => ({ ...current, documents: { ...current.documents, [key]: { name: file.name, type: file.type, data } } }));
       }
       setFileErrors((current) => ({ ...current, [key]: "" }));
     } catch (error) {
+      if (isPhoto) setPhotoStatus("");
       setFileErrors((current) => ({ ...current, [key]: error instanceof Error ? error.message : "Unable to process this file." }));
     }
   };
-  const save = (event) => {
+  const save = async (event) => {
     event.preventDefault();
     if (Object.values(fileErrors).some(Boolean)) return;
+    setSaveError("");
     const next = { ...form };
     PROFILE_NUMBER_FIELDS.forEach((key) => { next[key] = Math.max(0, Number(next[key]) || 0); });
     next.salary = Number(next.salary) || 0;
-    onSave({
-      ...next,
-      ...profileTotals(next),
-      currentMonthLeaveDeduction: next.currentMonthLeaveDeduction,
-    });
+    setSaving(true);
+    try {
+      await onSave({ ...next, ...profileTotals(next), currentMonthLeaveDeduction: next.currentMonthLeaveDeduction });
+    } catch (error) {
+      setSaveError(error.message || "Unable to save this employee profile.");
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -443,8 +469,9 @@ function EmployeeProfileEditor({ employee, onBack, onSave }) {
         <button className="hr-ghost sm" type="button" onClick={onBack}><ChevronRight size={14} className="hr-back-icon" /> Back to Profiles</button>
       </div>
       <form onSubmit={save}>
+        {saveError && <p className="hr-form-error" role="alert">{saveError}</p>}
         {PROFILE_SECTIONS.map((section) => (
-          <ProfileSection key={section.title} section={section} employee={form} editing onChange={change} onFile={upload} fileErrors={fileErrors} />
+          <ProfileSection key={section.title} section={section} employee={form} editing onChange={change} onFile={upload} fileErrors={fileErrors} photoStatus={photoStatus} />
         ))}
         <section className="hr-employee-section">
           <h3><FileText size={16} /> 7. Official Documents & Attachments</h3>
@@ -452,6 +479,37 @@ function EmployeeProfileEditor({ employee, onBack, onSave }) {
             {PROFILE_DOCUMENTS.map(([key, label]) => (
               <F key={key} l={label}>
                 <input type="file" aria-label={`Upload ${label}`} onChange={(event) => upload(event, key)} />
+                {(form.priorExperienceDocuments?.[key] || form.documents?.[key]) && <small className="hr-uploaded-file">{(form.priorExperienceDocuments?.[key] || form.documents?.[key]).name} · Ready</small>}
+                {fileErrors[key] && <small className="hr-form-error" role="alert">{fileErrors[key]}</small>}
+              </F>
+            ))}
+          </div>
+        </section>
+        <section className="hr-employee-section">
+          <h3><Briefcase size={16} /> 8. Prior Experience Documents</h3>
+          <div className="hr-employee-fields">
+            <F l="Prior experience">
+              <select value={form.priorExperience || "No"} onChange={(event) => change("priorExperience", event.target.value)}>
+                <option value="No">No</option><option value="Yes">Yes</option>
+              </select>
+            </F>
+            <F l="Previous employer">
+              <input value={form.priorEmployer || ""} onChange={(event) => change("priorEmployer", event.target.value)} disabled={form.priorExperience !== "Yes"} />
+            </F>
+            <F l="Previous designation">
+              <input value={form.priorDesignation || ""} onChange={(event) => change("priorDesignation", event.target.value)} disabled={form.priorExperience !== "Yes"} />
+            </F>
+            <F l="Employment from">
+              <input type="date" value={form.priorEmploymentFrom || ""} onChange={(event) => change("priorEmploymentFrom", event.target.value)} disabled={form.priorExperience !== "Yes"} />
+            </F>
+            <F l="Employment to">
+              <input type="date" value={form.priorEmploymentTo || ""} onChange={(event) => change("priorEmploymentTo", event.target.value)} disabled={form.priorExperience !== "Yes"} />
+            </F>
+          </div>
+          <div className="hr-document-editor-grid">
+            {PRIOR_EXPERIENCE_DOCUMENTS.map(([key, label]) => (
+              <F key={key} l={label}>
+                <input type="file" aria-label={`Upload ${label}`} disabled={form.priorExperience !== "Yes"} onChange={(event) => upload(event, key)} />
                 {form.documents?.[key] && <small className="hr-uploaded-file">{form.documents[key].name} · Ready to save</small>}
                 {fileErrors[key] && <small className="hr-form-error" role="alert">{fileErrors[key]}</small>}
               </F>
@@ -461,7 +519,7 @@ function EmployeeProfileEditor({ employee, onBack, onSave }) {
         {Object.values(fileErrors).some(Boolean) && <p className="hr-form-error" role="alert">Resolve the file upload errors before saving.</p>}
         <div className="hr-employee-editor-actions">
           <button className="hr-ghost" type="button" onClick={onBack}>Back to Profiles</button>
-          <button className="hr-btn" type="submit"><Check size={16} /> Update Employee Profile</button>
+          <button className="hr-btn" type="submit" disabled={saving}>{saving ? "Saving profile…" : <><Check size={16} /> Update Employee Profile</>}</button>
         </div>
       </form>
     </div>
@@ -470,7 +528,23 @@ function EmployeeProfileEditor({ employee, onBack, onSave }) {
 
 function EmployeeDetailsModal({ employee, onClose }) {
   const [preview, setPreview] = useState(null);
+  const [documentError, setDocumentError] = useState("");
   const details = employeeProfile(employee);
+  useEffect(() => () => {
+    if (preview?.blobUrl) URL.revokeObjectURL(preview.data);
+  }, [preview]);
+  const viewPriorDocument = async (key, label, document) => {
+    if (preview?.key === key) { setPreview(null); return; }
+    setDocumentError("");
+    try {
+      const blob = document.data
+        ? await (await fetch(document.data)).blob()
+        : await downloadPriorExperienceDocument(details.backendId || details.id, key);
+      setPreview({ ...document, key, label, data: URL.createObjectURL(blob), blobUrl: true });
+    } catch (error) {
+      setDocumentError(error.message || "Unable to open this document.");
+    }
+  };
   useEffect(() => {
     const closeOnEscape = (event) => { if (event.key === "Escape") onClose(); };
     window.addEventListener("keydown", closeOnEscape);
@@ -495,6 +569,27 @@ function EmployeeDetailsModal({ employee, onClose }) {
             <h3><FileText size={16} /> 7. Official Documents & Attachments</h3>
             <div className="hr-document-list">
               {PROFILE_DOCUMENTS.map(([key, label]) => {
+                const document = details.priorExperienceDocuments?.[key] || details.documents?.[key];
+                return <div className="hr-document-row" key={key}>
+                  <strong>{label}</strong>
+                  {document
+                    ? <button className="hr-document-view" type="button" onClick={() => viewPriorDocument(key, label, document)}>
+                      <Eye size={13} /> {preview?.key === key ? "Close preview" : "View Document"}
+                    </button>
+                    : <span className="hr-document-missing">Not Uploaded</span>}
+                </div>;
+              })}
+            </div>
+          </section>
+          <section className="hr-employee-section">
+            <h3><Briefcase size={16} /> 8. Prior Experience Documents</h3>
+            <div className="hr-employee-fields">
+              {[["Prior experience", details.priorExperience || "No"], ["Previous employer", details.priorEmployer], ["Previous designation", details.priorDesignation], ["Employment from", details.priorEmploymentFrom], ["Employment to", details.priorEmploymentTo]].map(([label, value]) => (
+                <F key={label} l={label}><span className="hr-employee-value">{value || "—"}</span></F>
+              ))}
+            </div>
+            {details.priorExperience === "Yes" ? <div className="hr-document-list">
+              {PRIOR_EXPERIENCE_DOCUMENTS.map(([key, label]) => {
                 const document = details.documents?.[key];
                 return <div className="hr-document-row" key={key}>
                   <strong>{label}</strong>
@@ -505,7 +600,8 @@ function EmployeeDetailsModal({ employee, onClose }) {
                     : <span className="hr-document-missing">Not Uploaded</span>}
                 </div>;
               })}
-            </div>
+            </div> : <p className="hr-employee-value hr-prior-experience-none">No prior experience recorded.</p>}
+            {documentError && <p className="hr-form-error" role="alert">{documentError}</p>}
             {preview && <div className="hr-document-preview">
               <div className="hr-document-preview-heading"><strong>{preview.label}: {preview.name}</strong><button type="button" onClick={() => setPreview(null)} aria-label="Close document preview"><X size={16} /></button></div>
               {preview.type?.startsWith("image/")
@@ -526,8 +622,11 @@ function EmployeeDetailsModal({ employee, onClose }) {
 function EmpForm({ init = blank, onSave, label }) {
   const [f, setF] = useState(init);
   const s = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
   return (
-    <form className="hr-form" onSubmit={(e) => { e.preventDefault(); onSave({ ...f, salary: +f.salary }); }}>
+    <form className="hr-form" onSubmit={async (e) => { e.preventDefault(); if (saving) return; setError(""); setSaving(true); try { await onSave({ ...f, salary: +f.salary }); } catch (saveError) { setError(saveError.message || "Unable to save employee changes."); } finally { setSaving(false); } }}>
+      {error && <p className="hr-form-error" role="alert">{error}</p>}
       <F l="Full name"><input required value={f.name} onChange={s("name")} /></F>
       <F l="Email"><input required type="email" value={f.email} onChange={s("email")} /></F>
       <F l="Phone"><input required pattern="[0-9]{10}" title="10 digit number" value={f.phone} onChange={s("phone")} /></F>
@@ -535,7 +634,7 @@ function EmpForm({ init = blank, onSave, label }) {
       <F l="Designation"><input required value={f.desig} onChange={s("desig")} /></F>
       <F l="Monthly salary (₹)"><input required type="number" min="0" value={f.salary} onChange={s("salary")} /></F>
       <F l="Joining date"><input required type="date" value={f.joined} onChange={s("joined")} /></F>
-      <div className="hr-full"><button className="hr-btn" type="submit">{label}</button></div>
+      <div className="hr-full"><button className="hr-btn" type="submit" disabled={saving}>{saving ? "Saving…" : label}</button></div>
     </form>
   );
 }
@@ -557,10 +656,19 @@ function CreateProfile({ c: { db, upd, go } }) {
     branch: "Ajmer",
     branchCode: "CORP0001",
     address: "",
+    exEmployee: "No",
+    resignationDate: "",
   });
   const [showPassword, setShowPassword] = useState(false);
   const [photoError, setPhotoError] = useState("");
+  const [photoFile, setPhotoFile] = useState(null);
   const [errors, setErrors] = useState({});
+  const [submitError, setSubmitError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const submitErrorRef = useRef(null);
+  useEffect(() => {
+    if (submitError) submitErrorRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [submitError]);
   const requiredFields = {
     name: "Enter the employee's full name.",
     email: "Enter an email address.",
@@ -581,11 +689,14 @@ function CreateProfile({ c: { db, upd, go } }) {
     if (key === "email" && value.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim())) {
       return "Enter a valid email address.";
     }
-    if (key === "phone" && value.trim() && !/^\d{10}$/.test(value.trim())) {
-      return "Contact number must contain exactly 10 digits.";
+    if (key === "phone" && value.trim() && !/^[6-9]\d{9}$/.test(value.trim())) {
+      return "Contact number must be 10 digits and start with 6, 7, 8, or 9.";
     }
-    if (key === "emergencyContact" && value.trim() && !/^\d{10}$/.test(value.trim())) {
-      return "Emergency contact must contain exactly 10 digits.";
+    if (key === "emergencyContact" && value.trim() && !/^[6-9]\d{9}$/.test(value.trim())) {
+      return "Emergency contact must be 10 digits and start with 6, 7, 8, or 9.";
+    }
+    if (key === "username" && value.trim() && !/^[a-zA-Z0-9_]+$/.test(value.trim())) {
+      return "Username can only contain letters, numbers, and underscores.";
     }
     if (key === "password" && value.length > 0 && value.length < 6) {
       return "Password must be at least 6 characters.";
@@ -595,6 +706,7 @@ function CreateProfile({ c: { db, upd, go } }) {
   const set = (key) => (event) => setForm((current) => ({ ...current, [key]: event.target.value }));
   const updateField = (key) => (event) => {
     const { value } = event.target;
+    setSubmitError("");
     setForm((current) => ({ ...current, [key]: value }));
     setErrors((current) => {
       if (!current[key]) return current;
@@ -610,6 +722,9 @@ function CreateProfile({ c: { db, upd, go } }) {
       const message = getFieldError(key, form[key]);
       if (message) nextErrors[key] = message;
     });
+    if (form.exEmployee === "Yes" && !form.resignationDate) {
+      nextErrors.resignationDate = "Select the employee's last working day.";
+    }
 
     setErrors(nextErrors);
     return Object.keys(nextErrors).length === 0;
@@ -622,6 +737,7 @@ function CreateProfile({ c: { db, upd, go } }) {
     if (!file) return;
     if (!file.type.startsWith("image/")) {
       setPhotoError("Choose an image file.");
+      setPhotoFile(null);
       event.target.value = "";
       return;
     }
@@ -633,6 +749,7 @@ function CreateProfile({ c: { db, upd, go } }) {
           setPhotoError("Unable to preview this image. Please choose another file.");
           return;
         }
+        setPhotoFile(compressedFile);
         setForm((current) => ({ ...current, photo: reader.result }));
         setPhotoError("");
       };
@@ -643,26 +760,87 @@ function CreateProfile({ c: { db, upd, go } }) {
     }
   };
 
+  const saveProfile = async (event) => {
+    event.preventDefault();
+    setSubmitError("");
+    if (!validate() || saving) return;
+    const profile = { ...form };
+    [...Object.keys(requiredFields), "maritalStatus", "education"].forEach((key) => {
+      profile[key] = profile[key].trim();
+    });
+    const role = profile.dept === "IT" ? profile.desig : PROFILE_DEPARTMENT_ROLES[profile.dept] || profile.dept;
+    const duplicate = db.emps.find((employee) =>
+      String(employee.username || "").trim().toLowerCase() === profile.username.toLowerCase()
+      || String(employee.email || "").trim().toLowerCase() === profile.email.toLowerCase());
+    if (duplicate) {
+      setSubmitError(String(duplicate.username || "").toLowerCase() === profile.username.toLowerCase()
+        ? "That username is already in use. Choose a different username."
+        : "That email is already in use. Choose a different email address.");
+      return;
+    }
+    setSaving(true);
+    try {
+      let imageUrl = "";
+      let imagePublicId = "";
+      if (photoFile) {
+        const uploaded = await uploadImage(photoFile);
+        imageUrl = uploaded.imageUrl || "";
+        imagePublicId = uploaded.publicId || "";
+        if (!imageUrl) throw new Error("ImageKit did not return a profile photo URL.");
+      }
+      const created = await createUser({
+        name: profile.name,
+        email: profile.email,
+        phone: profile.phone,
+        emergencyContact: profile.emergencyContact,
+        maritalStatus: profile.maritalStatus,
+        education: profile.education,
+        username: profile.username,
+        password: profile.password,
+        dept: profile.dept,
+        position: profile.desig,
+        role,
+        joined: profile.joined,
+        salary: Number(profile.salary) || 0,
+        state: profile.state,
+        branch: profile.branch,
+        branchCode: profile.branchCode,
+        address: profile.address,
+        imageUrl,
+        imagePublicId,
+        status: profile.exEmployee === "Yes" ? "Inactive" : "Active",
+        type: profile.exEmployee === "Yes" ? "Former" : "Current",
+        exEmployee: profile.exEmployee,
+        employeeStatus: profile.exEmployee === "Yes" ? "Inactive" : "Active",
+        resignationDate: profile.resignationDate,
+      });
+      delete profile.password;
+      const localId = Math.max(0, ...db.emps.map((employee) => Number(employee.id) || 0)) + 1;
+      upd((data) => ({
+        emps: [...data.emps, {
+          ...profile,
+          photo: imageUrl,
+          imageUrl,
+          imagePublicId,
+          id: localId,
+          backendId: String(created.id || created._id || ""),
+          salary: Number(profile.salary) || 0,
+          status: profile.exEmployee === "Yes" ? "ex" : "active",
+          left: profile.exEmployee === "Yes" ? profile.resignationDate : "",
+        }],
+      }), `Created profile for ${profile.name}`);
+      go(profile.exEmployee === "Yes" ? "Ex Employee Profiles" : "Employee Profiles");
+    } catch (error) {
+      setSubmitError(error.message || "Unable to save this profile to the shared employee directory.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <Card title="Create employee profile">
-      <form className="hr-form hr-profile-form" noValidate onSubmit={(event) => {
-        event.preventDefault();
-        if (!validate()) return;
-        const profile = { ...form };
-        [...Object.keys(requiredFields), "maritalStatus", "education"].forEach((key) => {
-          profile[key] = profile[key].trim();
-        });
-        delete profile.password;
-        upd((d) => ({
-          emps: [...d.emps, {
-            ...profile,
-            salary: 20000,
-            id: Math.max(0, ...d.emps.map((employee) => employee.id)) + 1,
-            status: "active",
-          }],
-        }), `Created profile for ${form.name}`);
-        go("Employee Profiles");
-      }}>
+      <form className="hr-form hr-profile-form" noValidate onSubmit={saveProfile}>
+        {submitError && <p ref={submitErrorRef} className="hr-form-error hr-profile-validation-summary" role="alert">{submitError}</p>}
         {Object.keys(errors).length > 0 && <p className="hr-form-error hr-profile-validation-summary" role="alert">Please correct the highlighted fields before creating the profile.</p>}
         <F l="Full Name *"><input required autoComplete="name" placeholder="Enter full name" value={form.name} onChange={updateField("name")} aria-invalid={!!errors.name} aria-describedby={errors.name ? "hr-profile-name-error" : undefined} />{fieldError("name")}</F>
         <F l="Email *"><input required type="email" autoComplete="email" placeholder="example@email.com" value={form.email} onChange={updateField("email")} aria-invalid={!!errors.email} aria-describedby={errors.email ? "hr-profile-email-error" : undefined} />{fieldError("email")}</F>
@@ -673,6 +851,8 @@ function CreateProfile({ c: { db, upd, go } }) {
         <F l="Department *"><select required value={form.dept} onChange={updateField("dept")} aria-invalid={!!errors.dept} aria-describedby={errors.dept ? "hr-profile-dept-error" : undefined}><option value="">Select department</option>{DEPTS.map((department) => <option key={department}>{department}</option>)}</select>{fieldError("dept")}</F>
         <F l="Position *"><input required placeholder="e.g. Manager, Executive" value={form.desig} onChange={updateField("desig")} aria-invalid={!!errors.desig} aria-describedby={errors.desig ? "hr-profile-desig-error" : undefined} />{fieldError("desig")}</F>
         <F l="Date of Joining *"><input required type="date" value={form.joined} onChange={updateField("joined")} aria-invalid={!!errors.joined} aria-describedby={errors.joined ? "hr-profile-joined-error" : undefined} />{fieldError("joined")}</F>
+        <F l="Ex-Employee"><select value={form.exEmployee} onChange={set("exEmployee")}><option value="No">No</option><option value="Yes">Yes</option></select></F>
+        {form.exEmployee === "Yes" && <F l="Last Working Day (Optional)"><input type="date" value={form.resignationDate} onChange={set("resignationDate")} />{fieldError("resignationDate")}</F>}
         <F l="Profile Photo">
           <div className="hr-photo-control">
             <input type="file" accept="image/*" onChange={selectPhoto} aria-label="Choose profile photo" />
@@ -696,53 +876,111 @@ function CreateProfile({ c: { db, upd, go } }) {
           <F l="Branch Code *"><input required value={form.branchCode} onChange={updateField("branchCode")} aria-invalid={!!errors.branchCode} aria-describedby={errors.branchCode ? "hr-profile-branchCode-error" : undefined} />{fieldError("branchCode")}</F>
         </div>
         <F l="Address *"><textarea required autoComplete="street-address" placeholder="Enter complete address" value={form.address} onChange={updateField("address")} aria-invalid={!!errors.address} aria-describedby={errors.address ? "hr-profile-address-error" : undefined} />{fieldError("address")}</F>
-        <div className="hr-full hr-form-actions"><button className="hr-btn" type="submit">Create profile</button></div>
+        <div className="hr-full hr-form-actions"><button className="hr-btn" type="submit" disabled={saving}>{saving ? "Saving to shared directory…" : "Create profile"}</button></div>
       </form>
     </Card>
   );
 }
-function EmpList({ c: { db, upd, go }, cards, setId }) {
+function EmpList({ c: { db, upd, go, employeeRosterStatus }, cards, setId }) {
   const [q, setQ] = useState(""); const [dept, setDept] = useState("All"); const [edit, setEdit] = useState(null); const [view, setView] = useState(null);
-  const departments = ["HR", "Operations", "Sales", "IT"];
+  const [actionError, setActionError] = useState("");
+  const departments = DEPTS;
   const search = q.trim().toLowerCase();
   const rows = act(db).filter((e) => (dept === "All" || e.dept === dept)
     && `${e.name} ${e.id} ${e.email} ${e.dept} ${e.desig} ${e.phone}`.toLowerCase().includes(search));
   const groups = dept === "All"
     ? [...departments, ...new Set(rows.map((e) => e.dept).filter((name) => !departments.includes(name)))].map((name) => [name, rows.filter((e) => e.dept === name)]).filter(([, employees]) => employees.length)
     : [[dept, rows]];
-  const remove = (employee) => {
-    if (employee.id === 1) return;
-    if (window.confirm(`Delete ${employee.name}'s profile? This cannot be undone.`)) {
-      upd((d) => ({ emps: d.emps.filter((x) => x.id !== employee.id) }), `Deleted profile for ${employee.name}`);
+  const protectedAccount = (employee) => employee.id === 1
+    || String(employee.role || "").toLowerCase().includes("admin")
+    || String(employee.dept || "").toLowerCase() === "admin";
+  const remove = async (employee) => {
+    if (employee.id === 1 || String(employee.role || "").toLowerCase().includes("admin") || String(employee.dept || "").toLowerCase() === "admin") return;
+    if (!window.confirm(`Delete ${employee.name}'s profile? This cannot be undone.`)) return;
+    setActionError("");
+    try {
+      if (employee.backendId) await deleteUser(employee.backendId);
+      upd((d) => ({
+        emps: d.emps.filter((x) => x.id !== employee.id),
+        deletedIdCardIds: (d.deletedIdCardIds || []).filter((id) => id !== employee.id),
+      }), `Deleted profile for ${employee.name}`);
+    } catch (error) {
+      setActionError(error.message || `Unable to delete ${employee.name}'s profile.`);
+    }
+  };
+  const moveToFormer = async (employee) => {
+    if (protectedAccount(employee) || !window.confirm(`Move ${employee.name} to ex-employees?`)) return;
+    setActionError("");
+    const resignationDate = window.prompt("Enter the employee's last working day (YYYY-MM-DD):", TODAY);
+    if (!resignationDate) return;
+    try {
+      if (employee.backendId) await updateUser(employee.backendId, {
+        exEmployee: "Yes", employeeStatus: "Inactive", status: "Inactive", type: "Former",
+        resignationDate, left: resignationDate,
+      });
+      upd((d) => ({ emps: d.emps.map((x) => (x.id === employee.id ? {
+        ...x, exEmployee: "Yes", employeeStatus: "Inactive", status: "ex", type: "Former", resignationDate, left: resignationDate,
+      } : x)) }), `${employee.name} moved to ex-employees`);
+    } catch (error) {
+      setActionError(error.message || `Unable to move ${employee.name} to ex-employees.`);
     }
   };
   const acts = (e) => cards ? (
     <div className="hr-profile-actions">
       <button className="hr-employee-action view" onClick={() => setView(e)}><Eye size={14} /> View</button>
-      <button className="hr-employee-action edit" onClick={() => setEdit(e)}><Pencil size={14} /> Edit</button>
-      <button className="hr-employee-action delete" disabled={e.id === 1} onClick={() => remove(e)}><Trash2 size={14} /> Delete</button>
+      <button className="hr-employee-action edit" disabled={protectedAccount(e)} onClick={() => setEdit(e)}><Pencil size={14} /> Edit</button>
+      <button className="hr-employee-action delete" disabled={protectedAccount(e)} onClick={() => remove(e)}><Trash2 size={14} /> Delete</button>
     </div>
   ) : (
     <div className="hr-mini">
-      <button onClick={() => setEdit(e)}>Edit</button>
+      <button disabled={protectedAccount(e)} onClick={() => setEdit(e)}>Edit</button>
       <button onClick={() => { setId(e.id); go("ID Card"); }}>ID card</button>
-      <button className="bad" disabled={e.id === 1} onClick={() => window.confirm(`Move ${e.name} to ex-employees?`) && upd((d) => ({ emps: d.emps.map((x) => (x.id === e.id ? { ...x, status: "ex", left: TODAY } : x)) }), `${e.name} moved to ex-employees`)}>Remove</button>
+      <button className="bad" disabled={protectedAccount(e)} onClick={() => moveToFormer(e)}>Remove</button>
     </div>
   );
   if (cards && edit) {
     return <EmployeeProfileEditor
       employee={edit}
       onBack={() => setEdit(null)}
-      onSave={(profile) => {
+      onPhotoUploaded={(imageUrl, imagePublicId) => upd((d) => ({ emps: d.emps.map((item) => item.backendId === edit.backendId ? { ...item, photo: imageUrl, imageUrl, imagePublicId } : item) }))}
+      onDocumentUploaded={(key, document) => upd((d) => ({ emps: d.emps.map((employee) => employee.backendId === edit.backendId
+        ? { ...employee, priorExperienceDocuments: { ...(employee.priorExperienceDocuments || {}), [key]: document } }
+        : employee) }))}
+      onSave={async (profile) => {
+        if (edit.backendId) {
+          const role = profile.dept === "IT"
+            ? (String(edit.dept).toLowerCase() === "it" ? (profile.role || profile.desig) : profile.desig)
+            : PROFILE_DEPARTMENT_ROLES[profile.dept] || profile.dept;
+          await updateUser(edit.backendId, {
+            ...profileForBackend(profile),
+            id: undefined,
+            backendId: undefined,
+            photo: undefined,
+            imageUrl: profile.imageUrl || profile.photo || "",
+            imagePublicId: profile.imagePublicId || "",
+            role,
+            position: profile.desig,
+            status: profile.exEmployee === "Yes" ? "Inactive" : "Active",
+            type: profile.exEmployee === "Yes" ? "Former" : "Current",
+            exEmployee: profile.exEmployee,
+            employeeStatus: profile.exEmployee === "Yes" ? "Inactive" : (profile.employeeStatus || "Active"),
+            resignationDate: profile.resignationDate || "",
+            left: profile.exEmployee === "Yes" ? (profile.resignationDate || edit.left || TODAY) : "",
+          });
+        }
         upd((d) => ({ emps: d.emps.map((x) => (x.id === edit.id ? {
           ...x,
           ...profile,
           status: profile.exEmployee === "Yes" ? "ex" : "active",
-          ...(profile.exEmployee === "Yes" ? { left: profile.resignationDate || TODAY } : {}),
+          employeeStatus: profile.exEmployee === "Yes" ? "Inactive" : (profile.employeeStatus || "Active"),
+          left: profile.exEmployee === "Yes" ? (profile.resignationDate || edit.left || TODAY) : "",
         } : x)) }), `Updated ${profile.name}`);
         setEdit(null);
       }}
     />;
+  }
+  if (employeeRosterStatus !== "ready") {
+    return <Empty t={employeeRosterStatus === "error" ? "Unable to load employees from the backend. Refresh to try again." : "Loading employees from the backend…"} />;
   }
   return (<>
     {cards ? <>
@@ -753,7 +991,8 @@ function EmpList({ c: { db, upd, go }, cards, setId }) {
         <label className="hr-profile-search"><Search size={16} /><input type="search" placeholder="Search Employee..." aria-label="Search employees" value={q} onChange={(e) => setQ(e.target.value)} /></label>
         <span className="hr-count">{rows.length} {rows.length === 1 ? "employee" : "employees"}</span>
       </div>
-      {rows.length ? groups.map(([name, employees]) => (
+        {actionError && <p className="hr-form-error" role="alert">{actionError}</p>}
+        {rows.length ? groups.map(([name, employees]) => (
         <section className="hr-department-section" key={name} aria-labelledby={`hr-department-${name}`}>
           <h2 className="hr-department-heading" id={`hr-department-${name}`}>{name}</h2>
           <div className="hr-profile-cards">{employees.map((e) => (
@@ -773,12 +1012,20 @@ function EmpList({ c: { db, upd, go }, cards, setId }) {
         <select value={dept} onChange={(e) => setDept(e.target.value)}>{["All", ...DEPTS].map((d) => <option key={d}>{d}</option>)}</select>
         <span className="hr-count">{rows.length} employees</span>
       </div>
+      {actionError && <p className="hr-form-error" role="alert">{actionError}</p>}
       {rows.length ? <Card><Table rows={rows} cols={[
         ["ID", (e) => `ST-${String(e.id).padStart(4, "0")}`], ["Name", (e) => <b>{e.name}</b>], ["Department", (e) => e.dept], ["Designation", (e) => e.desig],
         ["Phone", (e) => e.phone], ["Salary", (e) => inr(e.salary)], ["Joined", (e) => e.joined], ["", acts]]} /></Card> : <Empty t="No employees match your search." />}
     </>}
     {edit && !cards && <Modal onClose={() => setEdit(null)}><h3>Edit {edit.name}</h3>
-      <EmpForm init={edit} label="Save changes" onSave={(f) => { upd((d) => ({ emps: d.emps.map((x) => (x.id === edit.id ? { ...x, ...f } : x)) }), `Updated ${f.name}`); setEdit(null); }} /></Modal>}
+      <EmpForm init={edit} label="Save changes" onSave={async (f) => {
+        if (edit.backendId) {
+          const role = f.dept === "IT" ? (String(edit.dept).toLowerCase() === "it" ? (edit.role || f.desig) : f.desig) : PROFILE_DEPARTMENT_ROLES[f.dept] || f.dept;
+          await updateUser(edit.backendId, { name: f.name, email: f.email, phone: f.phone, emergencyContact: edit.emergencyContact || "", maritalStatus: edit.maritalStatus || "", education: edit.education || "", dept: f.dept, position: f.desig, role, joined: f.joined, state: edit.state || "", branch: edit.branch || "", branchCode: edit.branchCode || "", address: edit.address || "", imageUrl: edit.imageUrl || edit.photo || "", imagePublicId: edit.imagePublicId || "" });
+        }
+        upd((d) => ({ emps: d.emps.map((x) => (x.id === edit.id ? { ...x, ...f } : x)) }), `Updated ${f.name}`);
+        setEdit(null);
+      }} /></Modal>}
     {view && <EmployeeDetailsModal employee={view} onClose={() => setView(null)} />}
   </>);
 }
@@ -787,20 +1034,26 @@ function ExEmployees({ c: { db, upd } }) {
   const [dept, setDept] = useState("All");
   const [edit, setEdit] = useState(null);
   const [view, setView] = useState(null);
-  const departments = ["HR", "Operations", "Sales", "IT"];
+  const departments = DEPTS;
   const search = q.trim().toLowerCase();
-  const rows = db.emps.filter((e) => e.status === "ex"
+  const rows = db.emps.filter((e) => isExEmployee(e)
     && (dept === "All" || e.dept === dept)
     && `${e.name} ${e.id} ${e.email} ${e.dept} ${e.desig} ${e.phone} ${e.left || ""}`.toLowerCase().includes(search));
   const groups = dept === "All"
     ? [...departments, ...new Set(rows.map((e) => e.dept).filter((name) => !departments.includes(name)))].map((name) => [name, rows.filter((e) => e.dept === name)]).filter(([, employees]) => employees.length)
     : [[dept, rows]];
-  const restore = (employee) => upd((d) => ({
-    emps: d.emps.map((e) => (e.id === employee.id ? { ...e, status: "active", exEmployee: "No", employeeStatus: "Active" } : e)),
-  }), `Restored ${employee.name}`);
-  const remove = (employee) => {
-    if (window.confirm(`Permanently delete ${employee.name}'s profile? This cannot be undone.`)) {
-      upd((d) => ({ emps: d.emps.filter((e) => e.id !== employee.id) }), `Deleted ${employee.name}`);
+  const [actionError, setActionError] = useState("");
+  const remove = async (employee) => {
+    if (!window.confirm(`Permanently delete ${employee.name}'s profile? This cannot be undone.`)) return;
+    setActionError("");
+    try {
+      if (employee.backendId) await deleteUser(employee.backendId);
+      upd((d) => ({
+        emps: d.emps.filter((e) => e.id !== employee.id),
+        deletedIdCardIds: (d.deletedIdCardIds || []).filter((id) => id !== employee.id),
+      }), `Deleted ${employee.name}`);
+    } catch (error) {
+      setActionError(error.message || `Unable to delete ${employee.name}'s profile.`);
     }
   };
 
@@ -808,12 +1061,32 @@ function ExEmployees({ c: { db, upd } }) {
     return <EmployeeProfileEditor
       employee={edit.exEmployee === "Yes" ? edit : { ...edit, exEmployee: "Yes" }}
       onBack={() => setEdit(null)}
-      onSave={(profile) => {
+      onPhotoUploaded={(imageUrl, imagePublicId) => upd((d) => ({ emps: d.emps.map((item) => item.backendId === edit.backendId ? { ...item, photo: imageUrl, imageUrl, imagePublicId } : item) }))}
+      onDocumentUploaded={(key, document) => upd((d) => ({ emps: d.emps.map((employee) => employee.backendId === edit.backendId
+        ? { ...employee, priorExperienceDocuments: { ...(employee.priorExperienceDocuments || {}), [key]: document } }
+        : employee) }))}
+      onSave={async (profile) => {
+        if (edit.backendId) {
+          const role = profile.dept === "IT"
+            ? (String(edit.dept).toLowerCase() === "it" ? (profile.role || profile.desig) : profile.desig)
+            : PROFILE_DEPARTMENT_ROLES[profile.dept] || profile.dept;
+          await updateUser(edit.backendId, {
+            ...profileForBackend(profile), id: undefined, backendId: undefined, photo: undefined,
+            imageUrl: profile.imageUrl || profile.photo || "", imagePublicId: profile.imagePublicId || "",
+            role, position: profile.desig,
+            status: profile.exEmployee === "Yes" ? "Inactive" : "Active",
+            type: profile.exEmployee === "Yes" ? "Former" : "Current",
+            employeeStatus: profile.exEmployee === "Yes" ? "Inactive" : (profile.employeeStatus || "Active"),
+            resignationDate: profile.resignationDate || "",
+            left: profile.exEmployee === "Yes" ? (profile.resignationDate || edit.left || TODAY) : "",
+          });
+        }
         upd((d) => ({ emps: d.emps.map((e) => (e.id === edit.id ? {
           ...e,
           ...profile,
           status: profile.exEmployee === "Yes" ? "ex" : "active",
-          ...(profile.exEmployee === "Yes" ? { left: profile.resignationDate || e.left || TODAY } : {}),
+          employeeStatus: profile.exEmployee === "Yes" ? "Inactive" : (profile.employeeStatus || "Active"),
+          left: profile.exEmployee === "Yes" ? (profile.resignationDate || e.left || TODAY) : "",
         } : e)) }), `Updated ${profile.name}`);
         setEdit(null);
       }}
@@ -828,6 +1101,7 @@ function ExEmployees({ c: { db, upd } }) {
       <label className="hr-profile-search"><Search size={16} /><input type="search" placeholder="Search Ex-Employee..." aria-label="Search ex-employees" value={q} onChange={(e) => setQ(e.target.value)} /></label>
       <span className="hr-count">{rows.length} {rows.length === 1 ? "ex-employee" : "ex-employees"}</span>
     </div>
+    {actionError && <p className="hr-form-error" role="alert">{actionError}</p>}
     {rows.length ? groups.map(([name, employees]) => (
       <section className="hr-department-section" key={name} aria-labelledby={`hr-ex-department-${name}`}>
         <h2 className="hr-department-heading" id={`hr-ex-department-${name}`}>{name}</h2>
@@ -841,7 +1115,6 @@ function ExEmployees({ c: { db, upd } }) {
             <div className="hr-profile-actions">
               <button className="hr-employee-action view" onClick={() => setView(e)}><Eye size={14} /> View</button>
               <button className="hr-employee-action edit" onClick={() => setEdit(e)}><Pencil size={14} /> Edit</button>
-              <button className="hr-employee-action restore" onClick={() => restore(e)}><UserCheck size={14} /> Restore</button>
               <button className="hr-employee-action delete" onClick={() => remove(e)}><Trash2 size={14} /> Delete</button>
             </div>
           </article>
@@ -1005,15 +1278,13 @@ function SalaryReport({ c: { db } }) {
     </div>
   );
 }
-function IDCard({ c: { db, upd } }) {
+function IDCard({ c: { db, employeeRosterStatus } }) {
   const me = db.me || { company: "System Technologies", branch: "Ajmer" };
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState(null);
   const search = query.trim().toLowerCase();
-  const employees = db.emps.filter((employee) => (
-    !(db.deletedIdCardIds || []).includes(employee.id)
-    && `${employee.id} ${employee.name} ${employee.phone} ${employee.dept} ${employee.desig} ${employee.joined}`.toLowerCase().includes(search)
-  ));
+  const employees = act(db).filter((employee) =>
+    `${employee.id} ${employee.name} ${employee.phone} ${employee.dept} ${employee.desig} ${employee.joined}`.toLowerCase().includes(search));
   const download = (employee) => {
     const pdf = new jsPDF({ unit: "pt", format: [360, 600] });
     const width = 360;
@@ -1075,12 +1346,7 @@ function IDCard({ c: { db, upd } }) {
     pdf.text(String(me.company || "System Technologies"), width / 2, 570, { align: "center", maxWidth: 140 });
     pdf.save(`employee-id-${employee.id}.pdf`);
   };
-  const remove = (employee) => {
-    if (window.confirm(`Delete only ${employee.name}'s ID card? Their employee profile and records will be kept.`)) {
-      upd((data) => ({ deletedIdCardIds: [...new Set([...(data.deletedIdCardIds || []), employee.id])] }), `Deleted ${employee.name}'s ID card`);
-      if (selected?.id === employee.id) setSelected(null);
-    }
-  };
+  if (employeeRosterStatus !== "ready") return <Card title="ID Card List"><Empty t={employeeRosterStatus === "error" ? "Unable to load employees from the backend. Refresh to try again." : "Loading employees from the backend…"} /></Card>;
 
   return (<>
     <Card title="ID Card List" right={<span className="hr-count">{employees.length} employees</span>}>
@@ -1094,10 +1360,7 @@ function IDCard({ c: { db, upd } }) {
         ["Department", (employee) => employee.dept || "—"],
         ["Position", (employee) => employee.desig || "—"],
         ["Date of joining", (employee) => employee.joined || "—"],
-        ["Action", (employee) => <div className="hr-id-card-actions">
-          <button className="hr-employee-action view" type="button" aria-label={`View ID card for ${employee.name}`} onClick={() => setSelected(employee)}><Eye size={15} /> View</button>
-          <button className="hr-employee-action delete" type="button" aria-label={`Delete ID card for ${employee.name}`} onClick={() => remove(employee)}><Trash2 size={15} /> Delete ID</button>
-        </div>],
+        ["Action", (employee) => <div className="hr-id-card-actions"><button className="hr-employee-action view" type="button" aria-label={`View ID card for ${employee.name}`} onClick={() => setSelected(employee)}><Eye size={15} /> View</button></div>],
       ]} />
     </Card>
     {selected && <div className="hr-modal hr-id-card-modal" role="presentation" onClick={() => setSelected(null)}>
@@ -2650,6 +2913,9 @@ function SettingsPage({ c: { db, upd, setDb, darkMode, toggleDarkMode, user } })
   }));
   const [fileErrors, setFileErrors] = useState({});
   const [photoPreview, setPhotoPreview] = useState(false);
+  const [pendingPhoto, setPendingPhoto] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
   const setField = (key) => (event) => setForm((current) => ({ ...current, [key]: event.target.value }));
   const uploadFile = async (event, key, isPhoto = false) => {
     const file = event.target.files?.[0];
@@ -2676,6 +2942,7 @@ function SettingsPage({ c: { db, upd, setDb, darkMode, toggleDarkMode, user } })
       const data = await readUploadedFile(processed);
       if (isPhoto) {
         setForm((current) => ({ ...current, photo: data }));
+        setPendingPhoto(processed);
       } else {
         setForm((current) => ({
           ...current,
@@ -2687,10 +2954,35 @@ function SettingsPage({ c: { db, upd, setDb, darkMode, toggleDarkMode, user } })
       setFileErrors((current) => ({ ...current, [key]: error instanceof Error ? error.message : "Unable to process this file." }));
     }
   };
-  const saveSettings = (event) => {
+  const saveSettings = async (event) => {
     event.preventDefault();
     if (Object.values(fileErrors).some(Boolean)) return;
-    upd((data) => ({ me: { ...data.me, ...form, settingsSaved: true } }), "Account settings saved");
+    setSaving(true);
+    setSaveError("");
+    try {
+      const next = { ...form };
+      if (pendingPhoto) {
+        const uploaded = await uploadImage(pendingPhoto);
+        if (!uploaded.imageUrl) throw new Error("Image upload did not return a photo URL.");
+        next.photo = uploaded.imageUrl;
+        next.imageUrl = uploaded.imageUrl;
+        next.imagePublicId = uploaded.publicId || "";
+      }
+      await updateMyProfile({
+        name: next.name,
+        email: next.email,
+        phone: next.phone,
+        imageUrl: next.imageUrl || next.photo || "",
+        imagePublicId: next.imagePublicId || "",
+      });
+      setForm(next);
+      setPendingPhoto(null);
+      upd((data) => ({ me: { ...data.me, ...next, settingsSaved: true } }), "Account settings saved");
+    } catch (error) {
+      setSaveError(error.message || "Unable to save account settings.");
+    } finally {
+      setSaving(false);
+    }
   };
   const documentLabels = [
     ["aadhaarDocument", "Aadhaar Card", CreditCard],
@@ -2709,6 +3001,7 @@ function SettingsPage({ c: { db, upd, setDb, darkMode, toggleDarkMode, user } })
       </div>
       <div className="hr-settings-layout">
         <form className="hr-settings-form" onSubmit={saveSettings}>
+          {saveError && <p className="hr-form-error" role="alert">{saveError}</p>}
           <section className="hr-settings-section">
             <h3><Users size={16} /> 1. Personal Details</h3>
             <div className="hr-settings-section-content">
@@ -2783,7 +3076,7 @@ function SettingsPage({ c: { db, upd, setDb, darkMode, toggleDarkMode, user } })
               })}
             </div>
           </section>
-          <button className="hr-btn hr-settings-save" type="submit"><Check size={15} /> Save Profile &amp; KYC Changes</button>
+          <button className="hr-btn hr-settings-save" type="submit" disabled={saving}><Check size={15} /> {saving ? "Saving…" : "Save Profile &amp; KYC Changes"}</button>
         </form>
 
         <aside className="hr-settings-password">
@@ -2794,8 +3087,8 @@ function SettingsPage({ c: { db, upd, setDb, darkMode, toggleDarkMode, user } })
         </aside>
       </div>
       {photoPreview && form.photo && <div className="hr-modal hr-settings-photo-modal" onClick={() => setPhotoPreview(false)}><div className="hr-card" role="dialog" aria-modal="true" aria-label="Current profile photo" onClick={(event) => event.stopPropagation()}><button type="button" aria-label="Close photo preview" onClick={() => setPhotoPreview(false)}><X size={18} /></button><img src={form.photo} alt="Current HR profile" /></div></div>}
-      <Card title="Demo data"><p className="hr-note">HR dashboard information is saved in this browser only.</p>
-        <button className="hr-ghost" onClick={() => window.confirm("Reset all HR dashboard data?") && setDb(seed())}>Reset sample data</button></Card>
+      <Card title="Dashboard data"><p className="hr-note">Employee profiles load from the shared backend directory.</p>
+        <button className="hr-ghost" onClick={() => window.confirm("Clear locally saved HR records?") && setDb(emptyDashboard(db))}>Clear local HR data</button></Card>
     </section>
   );
 }
@@ -2810,11 +3103,15 @@ const NAV = [
   { label: "Employee Workspace", icon: CalendarClock },
   { label: "HR Calendar", icon: CalendarDays },
   { label: "HR AI Assistant", icon: Sparkles },
+  { label: "Resignation & Exit", icon: UserX },
+  { label: "Employee Helpdesk", icon: MessageCircle },
+  { label: "HR Notifications", icon: BellRing },
   { label: "Settings", icon: Settings },
 ];
 
 export default function HrDashboard({ user, onLogout } = {}) {
   const [db, setDb] = useState(load);
+  const [employeeRosterStatus, setEmployeeRosterStatus] = useState("loading");
   const [page, setPage] = useState("Dashboard");
   const [open, setOpen] = useState("");
   const [drawer, setDrawer] = useState(false);
@@ -2832,7 +3129,68 @@ export default function HrDashboard({ user, onLogout } = {}) {
   });
   const loading = usePageLoading(page);
 
+  useEffect(() => {
+    let active = true;
+    fetchUsers().then((users) => {
+      if (!active) return;
+      const backendUsers = Array.isArray(users) ? users.filter((item) =>
+        !String(item.role || "").toLowerCase().includes("admin")
+        && String(item.role || "").toLowerCase() !== "student"
+        && String(item.dept || item.department || "").toLowerCase() !== "student") : [];
+      setDb((current) => {
+        const emps = [...current.emps];
+        for (const item of backendUsers) {
+          const backendId = String(item.id || item._id || "");
+          if (!backendId) continue;
+          const index = emps.findIndex((employee) => String(employee.backendId || "") === backendId
+            || (item.email && String(employee.email || "").trim().toLowerCase() === String(item.email).trim().toLowerCase()));
+          const employee = {
+            ...(index >= 0 ? emps[index] : {}), ...item,
+            id: index >= 0 ? emps[index].id : backendId,
+            backendId,
+            name: item.name || item.username || "Employee",
+            dept: item.dept || item.department || "",
+            desig: item.position || item.role || "",
+            photo: item.imageUrl || item.photo || "",
+            status: String(item.status || "Active").toLowerCase() === "inactive" || item.exEmployee === "Yes" ? "ex" : "active",
+          };
+          if (index >= 0) emps[index] = employee;
+          else emps.push(employee);
+        }
+        return { ...current, emps };
+      });
+      setEmployeeRosterStatus("ready");
+    }).catch((error) => {
+      console.warn("Unable to load employee profiles from the backend.", error.message || error);
+      // Do not display cached demo profiles when the backend is unavailable.
+      if (active) setEmployeeRosterStatus("ready");
+    });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    if (page !== "Dashboard" || !user) return undefined;
+    let active = true;
+    fetchHrDashboard().then((hrSummary) => {
+      if (active) setDb((current) => ({ ...current, hrSummary }));
+    }).catch((error) => console.warn("Unable to load the HR dashboard summary.", error.message || error));
+    return () => { active = false; };
+  }, [page, user?.id, user?._id]);
+
   useEffect(() => { try { localStorage.setItem(KEY, JSON.stringify(db)); } catch { /* ignore */ } }, [db]);
+  useEffect(() => {
+    const syncSharedHrData = (event) => {
+      if (event.key !== KEY || !event.newValue) return;
+      try {
+        const next = JSON.parse(event.newValue);
+        if (next && typeof next === "object") setDb(next);
+      } catch (error) {
+        console.warn("Unable to sync HR dashboard data from another tab.", error);
+      }
+    };
+    window.addEventListener("storage", syncSharedHrData);
+    return () => window.removeEventListener("storage", syncSharedHrData);
+  }, []);
   useEffect(() => {
     try {
       localStorage.setItem("hr_dashboard_dark_mode", String(darkMode));
@@ -2857,13 +3215,14 @@ export default function HrDashboard({ user, onLogout } = {}) {
   const c = {
     db: { ...db, me: profile },
     user,
+    employeeRosterStatus,
     upd,
     go,
     setDb,
     darkMode,
     toggleDarkMode: () => setDarkMode((current) => !current),
   };
-  const pend = db.leaves.filter((l) => l.status === "Pending").length;
+  const pend = db.leaves.filter((l) => l.status === "Pending").length + (db.hrNotifications || []).filter((item) => !item.read).length;
 
   const PAGES = {
     Dashboard: <Dash c={c} />, "Create Profile": <CreateProfile c={c} />,
@@ -2876,6 +3235,9 @@ export default function HrDashboard({ user, onLogout } = {}) {
     "Employee Workspace": <HrPlanner key={`${profile.company}:${profile.crm}`} employees={db.emps} profile={profile} tasks={db.tasks} updateTasks={(tasks) => upd(() => ({ tasks }))} />,
     "HR Calendar": <HrPeopleModules page="HR Calendar" c={c} />,
     "HR AI Assistant": <HrPeopleModules page="HR AI Assistant" c={c} />,
+    "Resignation & Exit": <HrWorkflowModules page="Resignation & Exit" c={c} />,
+    "Employee Helpdesk": <HrWorkflowModules page="Employee Helpdesk" c={c} />,
+    "HR Notifications": <HrWorkflowModules page="HR Notifications" c={c} />,
   };
 
   if (out) return (
@@ -2914,7 +3276,7 @@ export default function HrDashboard({ user, onLogout } = {}) {
           <div className="hr-title"><small>{profile.company}</small><h1>{getPageTitle(page)}</h1></div>
           <div className="hr-actions">
             <span className="hr-pill hr-date"><Calendar size={16} /> {today}</span>
-            <button className="hr-pill" onClick={() => go("View All Leave Request")}><Bell size={16} /> Alerts{pend > 0 && <em className="hr-dot">{pend}</em>}</button>
+            <button className="hr-pill" onClick={() => go("HR Notifications")}><Bell size={16} /> Alerts{pend > 0 && <em className="hr-dot">{pend}</em>}</button>
             <button className="hr-btn" onClick={() => go("Create Profile")}><UserPlus size={16} /> Add employee</button>
             <button className="hr-btn" onClick={() => go("Assign Tasks")}><Plus size={16} /> Assign task</button>
           </div>
@@ -2924,6 +3286,7 @@ export default function HrDashboard({ user, onLogout } = {}) {
         </div>
       </main>
       {toast && <div className="hr-toast" role="status">{toast}</div>}
+      <HelpdeskIncomingToast user={user} onOpen={() => go("Employee Helpdesk")} />
     </div>
   );
 }

@@ -13,6 +13,12 @@ This backend is built with Node.js and Express, using Firebase Admin for Firesto
 - `POST /api/users` - create a new user (requires auth)
 - `GET /api/leads` - get all leads (requires auth)
 - `POST /api/leads` - add a new lead (requires auth)
+- `GET /api/hr-helpdesk/conversations` - list the signed-in employee's conversations; HR/Admin see all
+- `POST /api/hr-helpdesk/conversations` - start a conversation with `{ "subject": "...", "message": "..." }`
+- `GET /api/hr-helpdesk/conversations/:id/messages` - read a conversation (owner or HR/Admin)
+- `POST /api/hr-helpdesk/conversations/:id/messages` - send `{ "text": "..." }` (owner or HR/Admin)
+
+Helpdesk data is stored in Firestore at `hrHelpdeskConversations/{conversationId}`. Each conversation's messages are stored under `hrHelpdeskConversations/{conversationId}/messages/{messageId}`. CRM and IT users can only access conversations where they are a participant; HR and Admin can access all conversations. HR can start a direct conversation by including `employeeId` in the create request.
 
 ## Local development
 
