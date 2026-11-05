@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import { isMongoConnected } from "../config/db.js";
-import { addCourseLesson, createCourse, deleteCourse, deleteCourseLesson, ensureStudentEnrollment, getCourse, getStudentCourseProgress, gradeCourseTask, listCourses, listStudentTaskSubmissions, saveStudentLessonProgress, saveStudentTaskSubmission, updateCourse, updateCourseLesson } from "../config/firestoreCourseModel.js";
+import { addCourseLesson, createCourse, deleteCourse, deleteCourseLesson, ensureStudentEnrollment, getCourse, getStudentCourseProgress, gradeCourseTask, listCourses, listStudentCourseCatalog, listStudentCourseSummaries, listStudentTaskSubmissions, saveStudentLessonProgress, saveStudentTaskSubmission, updateCourse, updateCourseLesson } from "../config/firestoreCourseModel.js";
 import { notifyEnrolledStudents, notifyStudent } from "../config/firestoreNotificationModel.js";
 import { isAdmin } from "../utils/roles.js";
 
@@ -11,6 +11,11 @@ function unavailable(res) {
 function normalizeStudentIds(value) {
   if (!Array.isArray(value)) return [];
   return [...new Set(value.map((studentId) => String(studentId).trim()).filter(Boolean))];
+}
+
+function withoutStudentCoursePricing(course) {
+  const { fees, fee, price, courseFee, courseFees, ...visibleCourse } = course;
+  return visibleCourse;
 }
 
 function progressKey(item) {
@@ -42,16 +47,14 @@ export async function getCourses(req, res) {
     const isStudent = String(req.user?.role || "").toLowerCase() === "student";
     const studentId = req.user.id || req.user._id;
     const summaryOnly = isStudent && req.query.summary === "1";
+    if (summaryOnly && req.query.scope === "enrolled") {
+      return res.json((await listStudentCourseSummaries(studentId)).map(withoutStudentCoursePricing));
+    }
+    if (summaryOnly) {
+      return res.json((await listStudentCourseCatalog(studentId)).map(withoutStudentCoursePricing));
+    }
     const courses = await listCourses(isStudent ? studentId : "", !summaryOnly);
     if (!isStudent) return res.json(courses);
-    if (summaryOnly) {
-      return res.json(courses.map((course) => ({
-        ...course,
-        enrolled: normalizeStudentIds(course.studentIds).includes(String(studentId)),
-        progress: 0,
-        completed: false,
-      })));
-    }
     const assignedCourses = courses.filter((course) => normalizeStudentIds(course.studentIds).includes(String(studentId)));
     await Promise.all(assignedCourses.map((course) => ensureStudentEnrollment(studentId, course).catch((error) => {
       console.warn(`Could not initialize enrollment ${studentId}/${course.id}:`, error.message || error);
@@ -63,7 +66,7 @@ export async function getCourses(req, res) {
       console.error(`Could not load student progress for ${studentId}:`, error);
     }
     const byLesson = new Map(progress.map((item) => [progressKey(item), item]));
-    return res.json(courses.map((course) => ({
+    return res.json(courses.map((course) => withoutStudentCoursePricing({
       ...course,
       enrolled: isStudent && normalizeStudentIds(course.studentIds).includes(String(studentId)),
       progress: course.lessons.length
@@ -126,7 +129,7 @@ export async function getCourseById(req, res) {
 
     const studentId = String(req.user.id || req.user._id || "");
     const enrolled = normalizeStudentIds(course.studentIds).includes(studentId);
-    if (!enrolled) return res.json({ ...course, enrolled: false, progress: 0, completed: false, lessons: [] });
+    if (!enrolled) return res.json(withoutStudentCoursePricing({ ...course, enrolled: false, progress: 0, completed: false, lessons: [] }));
 
     const progress = await getStudentCourseProgress(studentId, [course], course.id);
     const byLesson = new Map(progress.map((item) => [progressKey(item), item]));
@@ -137,13 +140,13 @@ export async function getCourseById(req, res) {
     const progressPercent = lessons.length
       ? Math.round((lessons.reduce((sum, lesson) => sum + lessonProgressRatio(lesson, lesson.studentProgress || {}), 0) / lessons.length) * 100)
       : 0;
-    return res.json({
+    return res.json(withoutStudentCoursePricing({
       ...course,
       enrolled: true,
       progress: progressPercent,
       completed: lessons.length > 0 && lessons.every((lesson) => lesson.studentProgress?.completed === true),
       lessons,
-    });
+    }));
   } catch (err) { return res.status(500).json({ error: err.message }); }
 }
 
@@ -259,6 +262,47 @@ export async function submitCourseTask(req, res) {
       stack: err.stack,
     });
     return res.status(500).json({ error: err.message || "Student task submission failed." });
+  }
+}
+
+export async function uploadCourseTaskPdf(req, res) {
+  if (!isMongoConnected) return unavailable(res);
+  const studentId = String(req.user?.id || req.user?._id || "");
+  const file = req.file;
+  if (!studentId) return res.status(401).json({ error: "Please log in to submit your work." });
+  if (!file?.buffer?.length || !/\.pdf$/i.test(file.originalname || "") || file.buffer.subarray(0, 5).toString() !== "%PDF-") {
+    return res.status(400).json({ error: "Choose a valid PDF file." });
+  }
+  const privateKey = process.env.IMAGEKIT_PRIVATE_KEY;
+  if (!privateKey) return res.status(503).json({ error: "PDF uploads are not configured. Please contact support." });
+
+  try {
+    const course = await getCourse(req.params.courseId);
+    if (!course) return res.status(404).json({ error: "Course not found." });
+    if (!normalizeStudentIds(course.studentIds).includes(studentId)) return res.status(403).json({ error: "You are not enrolled in this course." });
+    const lesson = course.lessons?.find((item) => String(item.id) === String(req.params.lessonId)
+      && (!req.body.section || String(item.section || "General").trim().toLowerCase() === String(req.body.section).trim().toLowerCase()));
+    if (!lesson?.tasks?.some((task) => String(task.id) === String(req.params.taskId))) return res.status(404).json({ error: "Assignment not found." });
+
+    const form = new FormData();
+    form.append("file", new Blob([file.buffer], { type: "application/pdf" }), file.originalname);
+    form.append("fileName", file.originalname);
+    form.append("folder", "/student-assignments");
+    form.append("useUniqueFileName", "true");
+    const upload = await fetch("https://upload.imagekit.io/api/v1/files/upload", {
+      method: "POST",
+      headers: { Authorization: `Basic ${Buffer.from(`${privateKey}:`).toString("base64")}` },
+      body: form,
+      signal: AbortSignal.timeout(60000),
+    });
+    const uploaded = await upload.json().catch(() => null);
+    if (!upload.ok || !uploaded?.url) return res.status(502).json({ error: uploaded?.message || "PDF upload failed. Please try again." });
+
+    const submission = await saveStudentTaskSubmission(req.params.courseId, req.params.lessonId, req.params.taskId, studentId, "taskUrl", uploaded.url, req.body.section || "");
+    return submission ? res.json(submission) : res.status(404).json({ error: "Assignment not found." });
+  } catch (error) {
+    console.error("Student PDF submission failed:", error);
+    return res.status(error?.name === "TimeoutError" ? 504 : 500).json({ error: error?.name === "TimeoutError" ? "PDF upload timed out. Please try again." : "Could not submit the PDF. Please try again." });
   }
 }
 

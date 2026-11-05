@@ -1,14 +1,23 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { isCallLead, callLeadForm } from "./callLeads.js";
+import { isCallLead, callLeadForm, callLeadProgram } from "./callLeads.js";
 
 test("only interested follow-up and completed calls appear, regardless of review status", () => {
   for (const callStatus of ["Select Status", "Pending", "Follow Up", "Completed"]) {
     for (const interestStatus of ["Select Status", "Interested", "Not Interested"]) {
-      assert.equal(isCallLead({ callStatus, interestStatus, callLeadStatus: "Approved" }),
+      assert.equal(isCallLead({ program: "Back End Development", callStatus, interestStatus, callLeadStatus: "Approved" }),
         interestStatus === "Interested" && ["Follow Up", "Completed"].includes(callStatus));
     }
   }
+});
+
+test("a selected course is required and common saved status variants qualify", () => {
+  for (const callStatus of ["Follow Up", "follow-up", "Follow-up Required", "Completed", "completed"]) {
+    assert.equal(isCallLead({ program: "Back End Development", callStatus, interestStatus: "interested" }), true);
+    assert.equal(isCallLead({ program: "", callStatus, interestStatus: "Interested" }), false);
+    assert.equal(isCallLead({ program: "IT Training", callStatus, interestStatus: "Interested" }), false);
+  }
+  assert.equal(callLeadProgram({ program: "IT Training", courseInterest: "Full Stack Development" }), "Full Stack Development");
 });
 
 test("prefill copies matching values but never record IDs, call ownership or review state", () => {

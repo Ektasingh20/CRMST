@@ -1,7 +1,7 @@
 import { IT_ROLES, defaultProjectEligibility, canReceiveProject } from "./src/itUserRoles.js";
 import CallLeadsPanel from "./CallLeadsPanel.jsx";
 import RemarkField from "./RemarkField.jsx";
-import { callLeadForm, isCallLead } from "./callLeads.js";
+import { callLeadForm, callLeadProgram, isCallLead } from "./callLeads.js";
 import {
   fetchProjects,
   fetchUsers as fetchUsersForMonitor,
@@ -203,7 +203,7 @@ const SERVICES_STORAGE_KEY = "crmst-services.txt";
 const TRAININGS_STORAGE_KEY = "crmst-trainings.txt";
 const STIP_PROGRAMS_STORAGE_KEY = "crmst-stip-programs.txt";
 const STIP_APPLICATIONS_STORAGE_KEY = "crmst-stip-applications.txt";
-const STUDENT_COURSES_STORAGE_KEY = "crmst-student-courses-v2.txt";
+const STUDENT_COURSES_STORAGE_KEY = "crmst-student-courses-v3.txt";
 const STUDENT_COURSES_CACHE_TTL_MS = 5 * 60 * 1000;
 const STUDENT_NOTIFICATIONS_STORAGE_KEY = "crmst-student-notifications-v2.txt";
 const STUDENT_NOTIFICATIONS_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -1550,7 +1550,7 @@ function App() {
         if (String(session.role || "").trim().toLowerCase() === "student") {
           const cachedCourses = readStudentCoursesFromStorage(session);
           if (cachedCourses.courses.length) setCourseRows(cachedCourses.courses);
-          const remoteCourses = await loadCourses(false, true);
+          const remoteCourses = await loadCourses(false, true, "enrolled");
           if (Array.isArray(remoteCourses) && remoteCourses.length) {
             setCourseRows(remoteCourses);
             writeStudentCoursesToStorage(session, remoteCourses);
@@ -1817,7 +1817,7 @@ function App() {
       knownNotificationIds = new Set(items.map((item) => String(item.id || "")));
       if (!hasNewCourseNotification) return;
       invalidateCoursesCache();
-      const refreshedCourses = await loadCourses(true, true);
+      const refreshedCourses = await loadCourses(true, true, "enrolled");
       if (active && refreshedCourses.length) {
         setCourseRows(refreshedCourses);
         writeStudentCoursesToStorage(currentUser, refreshedCourses);
@@ -2015,7 +2015,8 @@ function App() {
     const refreshCourses = async () => {
       if (document.visibilityState !== "visible") return;
       try {
-        const refreshed = await loadCourses();
+        const isStudent = String(currentUser.role || "").toLowerCase() === "student";
+        const refreshed = await loadCourses(isStudent, isStudent, isStudent ? "enrolled" : "catalog");
         if (!active || !Array.isArray(refreshed)) return;
         setCourseRows(refreshed);
         if (String(currentUser.role || "").toLowerCase() === "student") {
@@ -2212,8 +2213,14 @@ function App() {
   const processedEnrollmentRequests = filteredEnrollmentRequests.filter((request) => ["approved", "rejected", "completed"].includes(request.status));
 
   const displayTrainingRows = useMemo(() => {
-    return courseRows.map((course) => normalizeCourseToTraining(course));
-  }, [courseRows]);
+    const studentView = String(currentUser?.role || "").toLowerCase() === "student";
+    return courseRows.map((course) => {
+      const row = normalizeCourseToTraining(course);
+      if (!studentView) return row;
+      const { fees, fee, price, courseFee, courseFees, ...visibleRow } = row;
+      return visibleRow;
+    });
+  }, [courseRows, currentUser?.role]);
 
   const lessonSectionOptions = useMemo(() => {
     const courseId = String(trainingModal?.item?.courseId || "");
@@ -4527,6 +4534,7 @@ function App() {
         <StudentDashboard
           user={currentUser}
           onLogout={logout}
+          onProfileUpdated={(updatedProfile) => setCurrentUser((current) => ({ ...current, ...updatedProfile }))}
           courses={displayTrainingRows}
           notifications={notifications}
           enrollmentRequests={studentEnrollmentRequests}
@@ -4545,7 +4553,7 @@ function App() {
                 writeStudentNotificationsToStorage(currentUser, result);
                 if (hasNewCourseNotification) {
                   invalidateCoursesCache();
-                  const refreshedCourses = await loadCourses(true);
+                  const refreshedCourses = await loadCourses(true, true, "enrolled");
                   if (refreshedCourses.length) {
                     setCourseRows(refreshedCourses);
                     writeStudentCoursesToStorage(currentUser, refreshedCourses);
@@ -4560,15 +4568,8 @@ function App() {
           onReadAllNotifications={handleReadAllNotifications}
           uploadStudentResource={uploadStudentCourseResource}
           saveLessonProgress={saveStudentLessonProgress}
-          loadCourse={async (courseId) => {
-            const loaded = await loadCourse(courseId);
-            if (loaded) {
-              setCourseRows((current) => current.map((course) => (
-                String(course.id || course._id) === String(courseId) ? { ...course, ...loaded } : course
-              )));
-            }
-            return loaded;
-          }}
+          onLoadCourseCatalog={() => loadCourses(false, true, "catalog")}
+          loadCourse={loadCourse}
           onRequestCourseEnrollment={handleRequestCourseEnrollment}
         />
         {toast ? <div className="toast">{toast}</div> : null}
@@ -7545,8 +7546,8 @@ function CrmUploadDataPage({ rows, setRows, users, currentUser, isAdmin, onCallL
   const updateRow = (id, patch) => {
     const currentRow = rows.find((item) => item.id === id);
     if (!currentRow || Object.entries(patch).every(([key, value]) => String(currentRow[key] ?? "") === String(value ?? ""))) return;
-    if (patch.callStatus === "Completed" && !normalizeCallProgram(currentRow?.program)) {
-      setUploadError(`Please select a ${currentRow?.listType === "training" ? "program" : "service"} before marking this contact Completed.`);
+    if (["Follow Up", "Completed"].includes(patch.callStatus) && !callLeadProgram(currentRow)) {
+      setUploadError(`Please select a ${currentRow?.listType === "training" ? "program" : "service"} before marking this contact ${patch.callStatus}.`);
       return;
     }
     setRows((currentRows) => currentRows.map((row) => (row.id === id ? { ...row, ...patch } : row)));

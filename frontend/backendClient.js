@@ -37,7 +37,7 @@ import {
   updateCourseLesson as updateCourseLessonApi,
   gradeCourseAssignment as gradeCourseAssignmentApi,
   fetchStudentTaskSubmissions,
-  submitCourseTask as submitCourseTaskApi,
+  uploadCourseTaskPdf as uploadCourseTaskPdfApi,
   saveCourseLessonProgress as saveCourseLessonProgressApi,
   fetchCourseUploadAuth,
   fetchCallListData,
@@ -449,17 +449,17 @@ export async function loadTrainings() {
   }
 }
 
-export async function loadCourses(force = false, summary = false) {
+export async function loadCourses(force = false, summary = false, courseScope = "catalog") {
   try {
-    const scope = getSavedUser()?.id || getSavedUser()?._id || "global";
-    const cacheScope = `${scope}:${summary ? "summary" : "details"}`;
+    const userScope = getSavedUser()?.id || getSavedUser()?._id || "global";
+    const cacheScope = `${userScope}:${summary ? `summary:${courseScope}` : "details"}`;
     const cached = readCoursesCache(cacheScope);
     const cacheTtl = summary ? COURSES_SUMMARY_CACHE_TTL_MS : COURSES_CACHE_TTL_MS;
     if (!force && Array.isArray(cached.items) && cached.items.length && Date.now() - cached.fetchedAt < cacheTtl) {
       return normalizeCollection(cached.items).map(normalizeCourseDurations);
     }
 
-    const result = normalizeCollection(await fetchCourses(summary)).map(normalizeCourseDurations);
+    const result = normalizeCollection(await fetchCourses(summary, courseScope)).map(normalizeCourseDurations);
     writeCoursesCache(result, cacheScope);
     return result;
   } catch (err) {
@@ -582,24 +582,25 @@ export async function gradeCourseAssignment(courseId, lessonId, taskId, grade) {
 }
 
 export async function uploadStudentCourseResource(file, courseId, lessonId, taskId, kind, studentId, section) {
-  const auth = await fetchCourseUploadAuth();
-  const form = new FormData();
-  form.append("file", file);
-  form.append("fileName", file.name);
-  form.append("publicKey", auth.publicKey);
-  form.append("signature", auth.signature);
-  form.append("expire", String(auth.expire));
-  form.append("token", auth.token);
-  form.append("useUniqueFileName", "true");
-  const response = await fetch("https://upload.imagekit.io/api/v1/files/upload", { method: "POST", body: form });
-  if (!response.ok) throw new Error("Student PDF upload failed.");
-  const uploaded = await response.json();
-  return submitCourseTaskApi(courseId, lessonId, taskId, { studentId, kind, section, url: uploaded.url });
+  if (!(file instanceof File) || !/\.pdf$/i.test(file.name)) throw new Error("Choose a PDF file to submit.");
+  if (file.size > 10 * 1024 * 1024) throw new Error("PDF files must be 10 MB or smaller.");
+  if (kind !== "assignment") throw new Error("Only assignment PDFs can be submitted here.");
+  let saved;
+  try {
+    saved = await uploadCourseTaskPdfApi(courseId, lessonId, taskId, file, section);
+  } catch (error) {
+    if (error?.name === "TimeoutError" || error?.name === "AbortError") throw new Error("The PDF upload timed out. Please try again.");
+    throw error;
+  }
+  invalidateCoursesCache();
+  return saved;
 }
 
 export async function saveStudentLessonProgress(courseId, lessonId, progress, studentId, section) {
   const patch = typeof progress === "boolean" ? { videoCompleted: progress } : progress || {};
-  return saveCourseLessonProgressApi(courseId, lessonId, { studentId, ...patch, section });
+  const saved = await saveCourseLessonProgressApi(courseId, lessonId, { studentId, ...patch, section });
+  invalidateCoursesCache();
+  return saved;
 }
 
 export async function loadCallListData(type = "", force = false) {

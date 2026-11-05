@@ -2,8 +2,7 @@ import { useEffect, useState } from "react";
 import { FileText, Plus, Search, Trash2 } from "lucide-react";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
-import { isCallLead } from "./callLeads.js";
-import { normalizeCallProgram } from "./callListConfig.js";
+import { callLeadProgram, isCallLead } from "./callLeads.js";
 import RemarkField from "./RemarkField.jsx";
 import WhatsAppModal from "./WhatsAppModal.jsx";
 import { useMessageTemplates } from "./useMessageTemplates.js";
@@ -18,10 +17,10 @@ const ContactWhatsappIcon = () => <ContactIcon><path d="M20 11.5a8 8 0 0 1-11.8 
 export default function CallLeadsPanel({
   rows, users = [], onSave, onApprove, onDelete, onAdd, canDelete = false,
   canEditCallData = true, showAssignee = true, lockCreatedLead = false,
-  title = "Call Leads Data", subtitle = "Contacts marked Follow Up or Completed and Interested",
+  title = "Call Leads Data", subtitle = "Selected course or service, Follow Up or Completed, and Interested",
   assignedTo = "", showActions = true, highlightAssigned = false, allowReturnToOwner = false,
   showSourceOwner = false, onUploadLead, showAllRows = false, showContactActions = true,
-  currentUser,
+  currentUser, largeText = false,
 }) {
   const { templates, loading: templatesLoading, error: templatesError } = useMessageTemplates();
   const [whatsAppLead, setWhatsAppLead] = useState(null);
@@ -56,7 +55,7 @@ export default function CallLeadsPanel({
   const qualified = (showAllRows ? rows : rows.filter(isCallLead)).filter((row) => !assignedTo || String(row.callLeadAssignedTo || "") === String(assignedTo));
   const typeRows = showAllRows || selectedTypes.length !== 1 ? qualified : qualified.filter((row) => row.listType === selectedTypes[0]);
   const selectedCatalog = selectedTypes.length === 1 ? selectedTypes[0] : "";
-  const programOptions = [...new Set([...templates.filter((template) => !selectedCatalog || template.type === (selectedCatalog === "training" ? "training" : "service")).map((template) => template.title), ...typeRows.map((row) => normalizeCallProgram(row.program)).filter(Boolean)])];
+  const programOptions = [...new Set([...templates.filter((template) => !selectedCatalog || template.type === (selectedCatalog === "training" ? "training" : "service")).map((template) => template.title), ...typeRows.map(callLeadProgram).filter(Boolean)])];
   const toggleType = (type) => {
     setSelectedTypes((current) => current.includes(type) ? current.filter((item) => item !== type) : [...current, type]);
     setProgram("All");
@@ -76,7 +75,7 @@ export default function CallLeadsPanel({
       setError("Approval is unavailable here.");
       return;
     }
-    if (patch.callStatus === "Completed" && !String(row.program || "").trim()) {
+    if (patch.callStatus === "Completed" && !callLeadProgram(row)) {
       setError(`Please select a ${row.listType === "training" ? "training" : "service"} before marking this lead Completed.`);
       return;
     }
@@ -92,7 +91,7 @@ export default function CallLeadsPanel({
   // keep the original date visible.
   const rowDate = (row) => String(row.lastWorkedAt || row.createdLeadDate || row.createdAt || row.date || "").slice(0, 10);
   const filtered = typeRows.filter((row) => `${row.name} ${row.contact || row.phone || ""}`.toLowerCase().includes(search.toLowerCase())
-    && (!status || leadStatus(row) === status) && (program === "All" || normalizeCallProgram(row.program) === program)
+    && (!status || leadStatus(row) === status) && (program === "All" || callLeadProgram(row) === program)
     && (!fromDate || rowDate(row) >= fromDate) && (!toDate || rowDate(row) <= toDate));
   const sortedRows = [...filtered].sort((left, right) => {
     const valueFor = (row) => ({
@@ -120,7 +119,7 @@ export default function CallLeadsPanel({
     autoTable(pdf, {
       startY: 25,
       head: [["S. No.", "Date", "Service / Training", "Type", "Name", "Contact", "Call Status", "Interest", "Remark", "Lead Status", ...(showSourceOwner ? ["CRM Executive"] : []), ...(showAssignee ? ["Assigned To"] : [])]],
-      body: filtered.map((row, index) => [index + 1, rowDate(row) || "-", normalizeCallProgram(row.program) || "-", row.listType === "training" ? "Training" : "Service", row.name || "-", row.contact || row.phone || "-", row.callStatus || "-", row.interestStatus || "-", row.remark || "-", leadStatus(row), ...(showSourceOwner ? [sourceOwnerName(row)] : []), ...(showAssignee ? [assigneeUsers.find((user) => String(user.id || user._id) === String(row.callLeadAssignedTo))?.name || row.callLeadAssignedTo || "Unassigned"] : [])]),
+      body: filtered.map((row, index) => [index + 1, rowDate(row) || "-", callLeadProgram(row) || "-", row.listType === "training" ? "Training" : "Service", row.name || "-", row.contact || row.phone || "-", row.callStatus || "-", row.interestStatus || "-", row.remark || "-", leadStatus(row), ...(showSourceOwner ? [sourceOwnerName(row)] : []), ...(showAssignee ? [assigneeUsers.find((user) => String(user.id || user._id) === String(row.callLeadAssignedTo))?.name || row.callLeadAssignedTo || "Unassigned"] : [])]),
       styles: { fontSize: 7, cellPadding: 2, overflow: "linebreak" }, headStyles: { fillColor: [127, 78, 43] },
     });
     pdf.save(`call-leads-${new Date().toISOString().slice(0, 10)}.pdf`);
@@ -155,7 +154,7 @@ export default function CallLeadsPanel({
         const originalOwner = users.find((user) => String(user.id || user._id) === originalOwnerId);
         const originalOwnerName = row.assignedToName || originalOwner?.name || originalOwner?.username || originalOwnerId;
         const returnValue = originalOwnerId ? `return:${originalOwnerId}` : "";
-        const selectedProgram = normalizeCallProgram(row.program);
+        const selectedProgram = callLeadProgram(row);
         const rowType = row.listType === "training" ? "training" : "service";
         const rowTemplates = templates.filter((template) => template.type === rowType);
         const selectedTemplate = resolveLeadTemplate(row, rowType, rowTemplates);
@@ -166,7 +165,7 @@ export default function CallLeadsPanel({
             {selectedProgram && !selectedTemplate && <option value={`legacy:${selectedProgram}`}>{selectedProgram} (previous selection)</option>}
             {rowTemplates.map((template) => <option key={template.id} value={template.id}>{template.title}</option>)}
           </select> : (selectedProgram || "-")}</td><td><span className="lead-type-label">{row.listType === "training" ? "Training" : "Service"}</span></td><td><div className="call-leads-name"><strong title={row.name}>{row.name}</strong></div></td><td>{row.callStatus || "-"}</td><td>{row.interestStatus}</td>
-          <td><RemarkField value={drafts[key] ?? row.remark ?? ""} readOnly={!canEditCallData || locked || assignedReadOnly} label={`Remark for ${row.name}`} onChange={(value) => setDrafts((current) => ({ ...current, [key]: value }))} onCommit={async (value) => { await save(row, { remark: value }); setDrafts((current) => { const next = { ...current }; delete next[key]; return next; }); }} /></td>
+          <td><RemarkField largeText={largeText} value={drafts[key] ?? row.remark ?? ""} readOnly={!canEditCallData || locked || assignedReadOnly} label={`Remark for ${row.name}`} onChange={(value) => setDrafts((current) => ({ ...current, [key]: value }))} onCommit={async (value) => { await save(row, { remark: value }); setDrafts((current) => { const next = { ...current }; delete next[key]; return next; }); }} /></td>
           <td>{canEditCallData ? <select className={`inline-select lead-status-select ${leadStatus(row).toLowerCase()}`} aria-label={`Status for ${row.name}`} disabled={locked || assignedReadOnly} value={leadStatus(row)} onChange={(e) => save(row, { callLeadStatus: e.target.value })}>{["Pending", "Approved", "Rejected"].map((item) => <option key={item}>{item}</option>)}</select> : leadStatus(row)}</td>
           {showSourceOwner && <td><strong>{sourceOwnerName(row)}</strong></td>}
           {showActions && <td><div className="row-actions"><button type="button" className="row-icon-btn call-lead-add-button" title={leadExists || locked ? "Lead approved" : row.leadDraft ? "Lead form already saved" : assignedReadOnly ? "Lead assigned and locked" : "Add Lead"} aria-label={leadExists || locked ? `Lead approved for ${row.name}` : row.leadDraft ? `Lead form already saved for ${row.name}` : assignedReadOnly ? `Assigned lead locked for ${row.name}` : `Add lead for ${row.name}`} disabled={leadExists || locked || Boolean(row.leadDraft) || assignedReadOnly} onClick={() => onAdd?.(row)}><svg className="call-lead-form-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 3h9l5 5v13H5a2 2 0 0 1 2-2V5a2 2 0 0 1-2-2Z" /><path d="M14 3v6h6" /><path d="m9 17 7.5-7.5a2.1 2.1 0 0 1 3 3L12 20l-4 1 1-4Z" /><path d="M7 8h4M7 12h4" /></svg></button>{canDelete && <button type="button" className="row-icon-btn delete" title={locked || assignedReadOnly ? "Lead locked" : "Delete"} aria-label={`Delete ${row.name}`} disabled={locked || assignedReadOnly} onClick={() => remove(row)}><Trash2 size={15} /></button>}</div></td>}

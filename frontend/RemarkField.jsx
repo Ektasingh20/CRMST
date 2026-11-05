@@ -5,7 +5,7 @@ import "./remarkField.css";
 
 export default function RemarkField({
   value = "", onChange, onCommit, placeholder = "Add remark", label = "Remark",
-  readOnly = false, disabled = false, className = "crm-remark-input",
+  readOnly = false, disabled = false, className = "crm-remark-input", largeText = false,
 }) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState("");
@@ -43,7 +43,7 @@ export default function RemarkField({
       onBlur={(event) => commit(event.target.value).catch(() => {})}
       onDoubleClick={openModal} />
     {open && createPortal(
-      <div className="remark-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setOpen(false); }}>
+      <div className={`remark-modal-backdrop${largeText ? " crm-remark-modal" : ""}`} role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setOpen(false); }}>
         <section className="remark-modal" role="dialog" aria-modal="true" aria-labelledby="remark-modal-title">
           <div className="remark-modal-head">
             <div><small>FULL TEXT</small><h3 id="remark-modal-title">{label}</h3></div>

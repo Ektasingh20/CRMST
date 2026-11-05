@@ -57,6 +57,14 @@ test("legacy statuses display as Pending and Not Interested in both lists", () =
   }
 });
 
+test("saved status variants retain Follow Up and Interested when read back", () => {
+  assert.equal(normalizeCallStatus("follow-up"), "Follow Up");
+  assert.equal(normalizeCallStatus("Follow-up Required"), "Follow Up");
+  assert.equal(normalizeCallStatus("completed"), "Completed");
+  assert.equal(normalizeInterestStatus("interested"), "Interested");
+  assert.equal(normalizeCallProgram("Select Training"), "");
+});
+
 test("both catalogs contain every specific option and exclude generic IT options", () => {
   assert.equal(callListPrograms("services").length, 18);
   assert.equal(callListPrograms("training").length, 14);

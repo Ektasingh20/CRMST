@@ -3,7 +3,7 @@ import WhatsAppModal from "../../WhatsAppModal.jsx";
 import { useMessageTemplates } from "../../useMessageTemplates.js";
 import { resolveLeadTemplate, templateSelectionPatch } from "../../whatsAppMessage.js";
 import RemarkField from "../../RemarkField.jsx";
-import { callLeadForm } from "../../callLeads.js";
+import { callLeadForm, callLeadProgram, isCallLead } from "../../callLeads.js";
 import { createTask as createTaskApi, fetchTasks, updateTask as updateTaskApi, fetchAttendance, createAttendance, updateAttendance, fetchLeaves, createLeave, updateMyProfile, fetchAppNotifications, markAppNotificationRead } from "../../backendApi.js";
 import PasswordResetLink from "../PasswordResetLink.jsx";
 import HelpdeskChat, { HelpdeskIncomingToast } from "../shared/HelpdeskChat.jsx";
@@ -580,7 +580,7 @@ function DashboardTab({ contacts, leads, tasks, leaveRequests, onNavigate }) {
                 <span className="dot" />
                 <div>
                   <strong style={{ display: "block" }}>{c.name}</strong>
-                  <span style={{ color: "var(--text-soft)", fontSize: "0.84rem" }}>
+                  <span style={{ color: "var(--text-soft)", fontSize: "16px" }}>
                     {[c.program, c.contact, normalizeCallStatus(c.callStatus)].filter(Boolean).join(" · ")}
                   </span>
                 </div>
@@ -864,8 +864,8 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
     const activityRecorded = activityFields.some((key) => Object.prototype.hasOwnProperty.call(patch, key));
     const unchanged = Object.entries(patch).every(([key, value]) => String(existing?.[key] ?? "") === String(value ?? ""));
     if (!existing || (unchanged && !activityRecorded)) return;
-    if (patch.callStatus === "Completed" && !normalizeCallProgram(existing?.program)) {
-      showToast(`Please select a ${category === "Training" ? "training" : "service"} before marking this contact Completed.`);
+    if (["Follow Up", "Completed"].includes(patch.callStatus) && !callLeadProgram(existing)) {
+      showToast(`Please select a ${category === "Training" ? "training" : "service"} before marking this contact ${patch.callStatus}.`);
       return;
     }
     setContacts((prev) => prev.map((c) => {
@@ -1044,14 +1044,15 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
             {pageRows.length === 0 && <EmptyRow colSpan={10} text={`No ${category.toLowerCase()} contacts match the selected filters.`} />}
             {pageRows.map((c, idx) => {
               const locked = isConvertedToLead(c);
-              return <tr key={c.id} className={locked ? "call-list-locked" : ""}>
+              const statusClass = `call-list-status-${normalizeCallStatus(c.callStatus).toLowerCase().replace(/\s+/g, "-")}`;
+              return <tr key={c.id} className={clsx(statusClass, locked && "call-list-locked")}>
                 <td>{(page - 1) * CONTACT_PAGE_SIZE + idx + 1}</td>
                 <td>{formatDisplayDate(contactDate(c))}</td>
                 <td>
                   <div className="person-cell">
                     <div>
                       <strong style={{ display: "block" }}>{c.name}</strong>
-                      {isSnoozed(c) && <span className="badge warning" style={{ height: 20, fontSize: "0.7rem" }}>Snoozed till {formatDisplayDate(c.snoozeUntil)}</span>}
+                      {isSnoozed(c) && <span className="badge warning" style={{ height: 20, fontSize: "16px" }}>Snoozed till {formatDisplayDate(c.snoozeUntil)}</span>}
                     </div>
                   </div>
                 </td>
@@ -1114,7 +1115,7 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
                 </td>
                 <td>
                     <div className="remark-cell">
-                    <RemarkField readOnly={locked} value={c.remark || ""} onChange={(value) => updateContact(c.id, { remark: value }, false)} onCommit={(value) => updateContact(c.id, { remark: value })} label={`Remark for ${c.name || "contact"}`} />
+                    <RemarkField largeText readOnly={locked} value={c.remark || ""} onChange={(value) => updateContact(c.id, { remark: value }, false)} onCommit={(value) => updateContact(c.id, { remark: value })} label={`Remark for ${c.name || "contact"}`} />
                   </div>
                 </td>
                 <td>
@@ -1277,6 +1278,7 @@ function AssignedLeadsTab({ leads, callLeadRows, currentUser }) {
       </div>
       <CallLeadsPanel
         rows={callLeadRows}
+        largeText
         currentUser={currentUser}
         assignedTo={currentUserId}
         showAssignee={false}
@@ -1460,7 +1462,7 @@ function LeadsTab({ rows, users, currentUser, onSave, onApprove, onDelete, onCre
     finally { setSaving(false); }
   };
   return <>
-    <CallLeadsPanel rows={rows} users={users} currentUser={currentUser} onSave={onSave} onApprove={onApprove} onDelete={onDelete} onAdd={(row) => setInitial({ record: row, form: { ...callLeadForm(row), ...row.leadDraft } })} onUploadLead={() => setInitial({ record: null, form: callLeadForm({ listType: "services" }) })} showAssignee={false} lockCreatedLead />
+    <CallLeadsPanel rows={rows} users={users} currentUser={currentUser} largeText onSave={onSave} onApprove={onApprove} onDelete={onDelete} onAdd={(row) => setInitial({ record: row, form: { ...callLeadForm(row), ...row.leadDraft } })} onUploadLead={() => setInitial({ record: null, form: callLeadForm({ listType: "services" }) })} showAssignee={false} lockCreatedLead />
     {initial && <LeadFormModal initial={initial.form} users={users} currentUser={currentUser} saving={saving} onClose={() => setInitial(null)} onSave={create} hideAssignment draftSaved={Boolean(initial.record?.leadDraft)} saveLabel={initial.record ? "Save lead form" : "Save lead"} />}
   </>;
 }
@@ -1493,6 +1495,7 @@ function ApprovedLeadsTab({ leads, sourceContacts, currentUser }) {
     });
   return <CallLeadsPanel
     rows={rows}
+    largeText
     showAllRows
     showActions={false}
     showAssignee={false}
@@ -2325,7 +2328,7 @@ const TAB_TITLES = {
   dashboard: ["Dashboard", "Overview of your CRM performance"],
   servicecalllist: ["Service Call List", "Daily contacts for IT services"],
   trainingcalllist: ["Training Call List", "Daily contacts for training programs"],
-  leads: ["Call Leads", "Interested contacts marked Follow Up or Completed"],
+  leads: ["Call Leads", "Interested contacts with a selected course or service, marked Follow Up or Completed"],
   approvedleads: ["Approved Leads", "Read-only list of leads you created"],
   salesreports: ["Sales Report", "Simple sales performance overview"],
   tasks: ["Tasks", "Create, assign and track work"],
@@ -2428,7 +2431,7 @@ function normalizeSourceContact(row) {
     callStatus: normalizeCallStatus(row.callStatus),
     interactionType: row.interactionType || "Call",
     interestStatus: normalizeInterestStatus(row.interestStatus),
-    program: normalizeCallProgram(row.program),
+    program: callLeadProgram(row),
     remark: row.remark || "",
     active: row.active !== false && !row.snoozed,
     snoozeUntil: row.snoozeUntil || null,
@@ -2443,12 +2446,7 @@ function normalizeSourceContact(row) {
 }
 
 function isLeadContact(contact) {
-  const isCreatedLead = Boolean(contact.leadCreated || contact.createdLeadId || contact.callLeadStatus === "Approved");
-  const isCompletedInterested = normalizeInterestStatus(contact.interestStatus) === "Interested"
-    && normalizeCallStatus(contact.callStatus) === "Completed";
-  // A created/approved lead is highlighted immediately. A completed,
-  // interested call is also ready to highlight even before lead creation.
-  return isCreatedLead || isCompletedInterested;
+  return isCallLead(contact);
 }
 
 function leadTypeLabel(lead) {
@@ -2671,8 +2669,8 @@ export default function CrmExecutiveDashboard({
                   <div className="avatar">{(profile.name || "?").charAt(0)}</div>
                 )}
                 <div>
-                  <strong style={{ display: "block", fontSize: "0.88rem" }}>{profile.name}</strong>
-                  <span style={{ fontSize: "0.78rem", color: "var(--text-soft)" }}>{profile.role}</span>
+                  <strong style={{ display: "block", fontSize: "16px" }}>{profile.name}</strong>
+                  <span style={{ fontSize: "16px", color: "var(--text-soft)" }}>{profile.role}</span>
                 </div>
               </button>
               {topMenu === "profile" && <div className="topbar-menu profile-menu"><div className="profile-menu-identity"><div className="avatar">{(profile.name || "?").charAt(0)}</div><div><strong>{profile.name}</strong><span>{profile.role}</span></div></div><div className="profile-menu-data"><span>Email <b>{profile.email || "-"}</b></span><span>Phone <b>{profile.phone || "-"}</b></span></div><button className="topbar-menu-link" onClick={() => { setTopMenu(""); handleNavigate("settings"); }}>View settings</button></div>}
@@ -2719,7 +2717,7 @@ export default function CrmExecutiveDashboard({
                 onCreateContact={onCreateCallListContact}
               />
             )}
-            {activeTab === "leads" && <LeadsTab rows={sourceContacts} users={users} showToast={showToast} currentUser={currentUser} onSave={onUpdateCallListContact} onApprove={onApproveCallLead} onDelete={onDeleteCallContact} onCreateLead={onCreateLead} />}
+            {activeTab === "leads" && <LeadsTab rows={contacts} users={users} showToast={showToast} currentUser={currentUser} onSave={onUpdateCallListContact} onApprove={onApproveCallLead} onDelete={onDeleteCallContact} onCreateLead={onCreateLead} />}
             {activeTab === "approvedleads" && <ApprovedLeadsTab leads={externalLeads} sourceContacts={sourceContacts} currentUser={currentUser} />}
             {activeTab === "salesreports" && <SalesReportsTab contacts={contacts} showToast={showToast} />}
             {activeTab === "notifications" && <NotificationsTab notifications={appNotifications} onRead={markNotificationRead} onMarkAll={markAllNotificationsRead} />}

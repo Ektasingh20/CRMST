@@ -52,6 +52,9 @@
   font-weight: 600;
   cursor: pointer;
 }
+:where(.crm-root) .panel.shared-call-leads .call-leads-type-tabs button {
+  font-size: max(16px, 13px);
+}
 .panel.shared-call-leads .call-leads-type-tabs button + button { border-left: 1px solid #eee6dc; }
 .panel.shared-call-leads .call-leads-type-tabs button.active { background: #7f4e2b; color: #fff; }
 .panel.shared-call-leads,
@@ -64,6 +67,9 @@
   color: #1f1a16;
 }
 .panel.shared-call-leads .panel-subtitle { margin: 6px 0 0; font-size: 13px; line-height: 1.5; }
+:where(.crm-root) .panel.shared-call-leads .panel-subtitle {
+  font-size: max(16px, 13px);
+}
 .panel.shared-call-leads .call-leads-error {
   position: fixed;
   right: 24px;
@@ -79,9 +85,12 @@
   line-height: 1.35;
   box-shadow: 0 14px 30px rgba(23, 20, 18, .22);
 }
+:where(.crm-root) .panel.shared-call-leads .call-leads-error {
+  font-size: max(16px, 14px);
+}
 .panel.shared-call-leads .call-leads-toolbar {
   display: grid;
-  grid-template-columns: minmax(240px, 1fr) 135px minmax(170px, 220px) 145px 145px 70px;
+  grid-template-columns: minmax(260px, 1fr) 165px minmax(200px, 220px) 200px 200px 76px;
   align-items: center;
   gap: 10px;
   margin: 0;
@@ -115,6 +124,9 @@
   font-size: 13px;
   color: #302923;
 }
+:where(.crm-root) .panel.shared-call-leads .call-leads-search input {
+  font-size: max(16px, 13px);
+}
 .panel.shared-call-leads .call-leads-search button {
   flex-shrink: 0;
   height: 32px;
@@ -127,6 +139,9 @@
   font-size: 14px;
   cursor: pointer;
   box-shadow: 0 3px 8px #70452620;
+}
+:where(.crm-root) .panel.shared-call-leads .call-leads-search button {
+  font-size: max(16px, 14px);
 }
 .panel.shared-call-leads .call-leads-toolbar > select,
 .panel.shared-call-leads .call-leads-toolbar > input,
@@ -144,7 +159,55 @@
   cursor: pointer;
   box-sizing: border-box;
 }
+:where(.crm-root) .panel.shared-call-leads .call-leads-toolbar > select, :where(.crm-root) .panel.shared-call-leads .call-leads-toolbar > input, :where(.crm-root) .panel.shared-call-leads .call-leads-reset {
+  font-size: max(16px, 13px);
+}
+.panel.shared-call-leads .call-leads-toolbar .table-date-filter {
+  width: 100%;
+  min-width: 0;
+  height: 40px;
+  gap: 10px;
+  padding: 0 12px;
+  box-sizing: border-box;
+  font-size: 16px;
+  white-space: nowrap;
+}
+.panel.shared-call-leads .call-leads-toolbar .table-date-filter span {
+  flex: 0 0 auto;
+}
+.panel.shared-call-leads .call-leads-toolbar .table-date-filter input {
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  font-size: 16px;
+  font-weight: 400;
+  color-scheme: light;
+}
+.panel.shared-call-leads .call-leads-toolbar .table-date-filter input::-webkit-calendar-picker-indicator {
+  width: 17px;
+  height: 17px;
+  margin-left: 4px;
+  cursor: pointer;
+}
+.panel.shared-call-leads .call-leads-toolbar > select,
+.panel.shared-call-leads .crm-call-leads-table td select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%236b5543' stroke-width='2.25' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 11px center;
+  background-size: 16px 16px;
+  padding-right: 34px;
+}
+.panel.shared-call-leads .crm-call-leads-table td select {
+  background-position: right 8px center;
+  background-size: 14px 14px;
+  padding-right: 28px;
+}
 .call-leads-pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; border-top: 1px solid #eee6dc; color: #756a60; font-size: 13px; }
+:where(.crm-root) .call-leads-pagination {
+  font-size: max(16px, 13px);
+}
 .call-leads-pagination > div { display: flex; align-items: center; gap: 10px; }
 .call-leads-pagination button { min-height: 36px; padding: 0 14px; border: 1px solid #e5d8cb; border-radius: 9px; background: #fff; color: #403832; cursor: pointer; }
 .call-leads-pagination button:disabled { opacity: .45; cursor: not-allowed; }
@@ -166,6 +229,9 @@
   line-height: 1.35;
   text-align: left;
 }
+:where(.crm-root) .panel.shared-call-leads .crm-call-leads-table-wrap .crm-call-leads-table th {
+  font-size: max(16px, 10px);
+}
 .panel.shared-call-leads .crm-call-leads-table-wrap .crm-call-leads-table td {
   height: 54px;
   padding: 7px 6px;
@@ -174,6 +240,9 @@
   border-bottom: 1px solid #eee6dc;
   vertical-align: middle;
   box-sizing: border-box;
+}
+:where(.crm-root) .panel.shared-call-leads .crm-call-leads-table-wrap .crm-call-leads-table td {
+  font-size: max(16px, 12px);
 }
 .panel.shared-call-leads .crm-call-leads-table tbody tr:last-child td { border-bottom: 0; }
 .panel.shared-call-leads .crm-call-leads-table tbody tr:hover { background: #f8f3ed; }
@@ -200,7 +269,7 @@
 .panel.shared-call-leads .crm-call-leads-table td select {
   height: 36px;
   min-height: 36px;
-  padding: 0 9px;
+  padding: 0 28px 0 9px;
   border: 1px solid #eee5dc;
   border-radius: 8px;
   background-color: #fff;
@@ -208,6 +277,9 @@
   font-size: 12px;
   color: #403832;
   box-sizing: border-box;
+}
+:where(.crm-root) .panel.shared-call-leads .crm-call-leads-table td input, :where(.crm-root) .panel.shared-call-leads .crm-call-leads-table td select {
+  font-size: max(16px, 12px);
 }
 
 /* Use the same high-contrast text treatment as the service and training tables. */
@@ -281,6 +353,9 @@
   font-size: 12px;
   font-weight: 700;
 }
+:where(.crm-root) .panel.shared-call-leads .call-leads-avatar {
+  font-size: max(16px, 12px);
+}
 .panel.shared-call-leads .row-actions { display: flex; align-items: center; flex-wrap: nowrap; gap: 5px; }
 .panel.shared-call-leads .row-icon-btn {
   display: inline-flex;
@@ -295,21 +370,21 @@
 }
 .panel.shared-call-leads .row-icon-btn.call-lead-add-button { color: #366aa4; border: 1px solid #c9d9ed; }
 .panel.shared-call-leads .row-icon-btn .call-lead-form-icon { width: 18px; height: 18px; }
-.panel.shared-call-leads .crm-call-leads-table td .lead-status-select.approved { background: #d9eee6; color: #12624b; border-color: #a2cdbd; }
-.panel.shared-call-leads .crm-call-leads-table td .lead-status-select.rejected { background: #fbe6e3; color: #a73324; }
+.panel.shared-call-leads .crm-call-leads-table td .lead-status-select.approved { background-color: #d9eee6; color: #12624b; border-color: #a2cdbd; }
+.panel.shared-call-leads .crm-call-leads-table td .lead-status-select.rejected { background-color: #fbe6e3; color: #a73324; }
 .panel.shared-call-leads .crm-call-leads-table tbody tr.call-lead-locked select.call-lead-program-select:disabled {
-  background: #fff;
+  background-color: #fff;
   border-color: #eee5dc;
   color: #1f1a16 !important;
 }
 .panel.shared-call-leads .crm-call-leads-table td .lead-status-select.approved:disabled {
-  background: #d9eee6 !important;
+  background-color: #d9eee6 !important;
   color: #12624b !important;
   border-color: #a2cdbd !important;
   opacity: 1 !important;
 }
 .panel.shared-call-leads .crm-call-leads-table td .lead-status-select.pending:disabled {
-  background: #fff !important;
+  background-color: #fff !important;
   color: #1f1a16 !important;
   border-color: #eee5dc !important;
   opacity: 1 !important;
@@ -325,7 +400,19 @@
   transform: none;
   box-shadow: none;
 }
-@media (max-width: 1000px) {
-  .panel.shared-call-leads .call-leads-toolbar { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 70px; }
+@media (max-width: 1370px) {
+  .panel.shared-call-leads .call-leads-toolbar {
+    grid-template-columns: minmax(160px, 1fr) minmax(200px, 1.25fr) minmax(200px, 1fr) minmax(200px, 1fr) 76px;
+  }
   .panel.shared-call-leads .call-leads-search { grid-column: 1 / -1; }
+}
+@media (max-width: 1250px) {
+  .panel.shared-call-leads .call-leads-toolbar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .panel.shared-call-leads .call-leads-reset { justify-self: start; max-width: 100px; }
+}
+@media (max-width: 600px) {
+  .panel.shared-call-leads .call-leads-toolbar { grid-template-columns: minmax(0, 1fr); }
+  .panel.shared-call-leads .call-leads-search { grid-column: 1; }
 }

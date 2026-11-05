@@ -11,4 +11,10 @@
 .remark-modal-error { margin: 10px 0 0; color: #b42318; font-size: .8rem; }
 .remark-modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
 .crm-remark-input { text-overflow: ellipsis; }
+.crm-remark-modal .remark-modal { font-size: 16px; }
+.crm-remark-modal .remark-modal-head small { font-size: max(16px, .68rem); }
+.crm-remark-modal .remark-modal-meta { font-size: max(16px, .72rem); }
+.crm-remark-modal .remark-modal-error { font-size: max(16px, .8rem); }
+.crm-remark-modal .remark-modal-actions .ghost-button,
+.crm-remark-modal .remark-modal-actions .primary-button { font-size: 16px; }
 @media (max-width: 600px) { .remark-modal { padding: 17px; } .remark-modal textarea { min-height: 200px; } .remark-modal-actions { flex-direction: column-reverse; } .remark-modal-actions button { width: 100%; } }

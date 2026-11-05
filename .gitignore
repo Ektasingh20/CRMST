@@ -6,7 +6,8 @@ dist/
 
 
 
-
+package-lock.json
+package.json
 
 # Local backups before project cleanup
-/backups/projects/
+/backups/projects/  

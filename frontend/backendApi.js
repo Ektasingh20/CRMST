@@ -384,8 +384,11 @@ export async function deleteTraining(id) {
   });
 }
 
-export async function fetchCourses(summary = false) {
-  return request(summary ? "/courses?summary=1" : "/courses");
+export async function fetchCourses(summary = false, scope = "catalog") {
+  if (!summary) return request("/courses");
+  const params = new URLSearchParams({ summary: "1" });
+  if (scope) params.set("scope", scope);
+  return request(`/courses?${params.toString()}`);
 }
 
 export async function fetchCourse(id) {
@@ -463,6 +466,15 @@ export async function fetchStudentTaskSubmissions() {
 
 export async function submitCourseTask(courseId, lessonId, taskId, submission) {
   return request(`/courses/${encodeURIComponent(courseId)}/lessons/${encodeURIComponent(lessonId)}/tasks/${encodeURIComponent(taskId)}/submission`, { method: "POST", body: JSON.stringify(submission) });
+}
+
+export async function uploadCourseTaskPdf(courseId, lessonId, taskId, file, section = "") {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("section", section);
+  return request(`/courses/${encodeURIComponent(courseId)}/lessons/${encodeURIComponent(lessonId)}/tasks/${encodeURIComponent(taskId)}/upload`, {
+    method: "POST", contentType: null, body: form, signal: AbortSignal.timeout(90000),
+  });
 }
 
 export async function saveCourseLessonProgress(courseId, lessonId, progress) {

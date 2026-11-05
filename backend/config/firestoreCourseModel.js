@@ -49,6 +49,10 @@ function invalidateCoursesCache() {
   taskSubmissionsCachePromise = null;
 }
 
+function countCourseAssignments(lessons = []) {
+  return lessons.reduce((total, lesson) => total + (Array.isArray(lesson.tasks) ? lesson.tasks.length : 0), 0);
+}
+
 function sectionDocumentId(sectionName) {
   const value = String(sectionName || "General").trim() || "General";
   return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "general";
@@ -111,25 +115,29 @@ function normalizeTaskGrade(value) {
   return value;
 }
 
-async function readCourseLessons(courseRef) {
-  const lessons = [];
+async function readCourseLessons(courseRef, sectionSnapshot = null) {
   const sectionNames = new Map();
-  const sections = await courseRef.collection("sections").get();
+  const [sections, directLessons] = await Promise.all([
+    sectionSnapshot || courseRef.collection("sections").get(),
+    courseRef.collection("lessons").get(),
+  ]);
   sections.forEach((section) => {
     const name = String(section.data().name || section.id || "General").trim() || "General";
     sectionNames.set(name.toLowerCase(), name);
   });
-  const directLessons = await courseRef.collection("lessons").get();
-  for (const lesson of directLessons.docs) {
-    lessons.push({ id: lesson.id, ...lesson.data(), tasks: await readTasks(lesson.ref) });
-  }
-  for (const section of sections.docs) {
-    const sectionData = section.data();
-    const sectionLessons = await section.ref.collection("lessons").get();
-    for (const lesson of sectionLessons.docs) {
-      lessons.push({ id: lesson.id, section: lesson.data().section || sectionData.name || "General", ...lesson.data(), tasks: await readTasks(lesson.ref) });
-    }
-  }
+  const [directRows, sectionRows] = await Promise.all([
+    Promise.all(directLessons.docs.map(async (lesson) => ({ id: lesson.id, ...lesson.data(), tasks: await readTasks(lesson.ref) }))),
+    Promise.all(sections.docs.map(async (section) => {
+      const sectionLessons = await section.ref.collection("lessons").get();
+      return Promise.all(sectionLessons.docs.map(async (lesson) => ({
+        id: lesson.id,
+        section: lesson.data().section || section.data().name || "General",
+        ...lesson.data(),
+        tasks: await readTasks(lesson.ref),
+      })));
+    })),
+  ]);
+  const lessons = [...directRows, ...sectionRows.flat()];
   const uniqueLessons = new Map();
   lessons.forEach((lesson) => {
     const sectionName = String(lesson.section || "General").trim() || "General";
@@ -151,8 +159,8 @@ async function readCourseLessons(courseRef) {
     });
 }
 
-async function readCourseSections(courseRef) {
-  const snapshot = await courseRef.collection("sections").get();
+async function readCourseSections(courseRef, sectionSnapshot = null) {
+  const snapshot = await (sectionSnapshot || courseRef.collection("sections").get());
   return snapshot.docs
     .map((section) => ({ id: section.id, name: String(section.data().name || section.id || "General").trim() || "General" }))
     .sort((left, right) => left.name.localeCompare(right.name));
@@ -266,8 +274,8 @@ export async function listCourses(studentId = "", includeDetails = true) {
       if (!includeDetails || (studentId && !isAssigned)) {
         return { id: courseDoc.id, ...data, sections: [], lessons: [] };
       }
-      const lessons = await readCourseLessons(courseDoc.ref);
-      const sections = await readCourseSections(courseDoc.ref);
+      const sectionSnapshot = courseDoc.ref.collection("sections").get();
+      const [lessons, sections] = await Promise.all([readCourseLessons(courseDoc.ref, sectionSnapshot), readCourseSections(courseDoc.ref, sectionSnapshot)]);
       return { id: courseDoc.id, ...data, sections, lessons };
     }))).then((items) => {
       coursesCache.set(cacheKey, { items, fetchedAt: Date.now() });
@@ -276,6 +284,80 @@ export async function listCourses(studentId = "", includeDetails = true) {
     coursesCachePromises.set(cacheKey, promise);
   }
   return coursesCachePromises.get(cacheKey);
+}
+
+export async function listStudentCourseSummaries(studentId) {
+  const id = String(studentId || "").trim();
+  if (!id) return [];
+
+  const db = getFirestore();
+  const [assignedSnapshot, enrollmentSnapshot] = await Promise.all([
+    db.collection("courses")
+      .where("studentIds", "array-contains", id)
+      .select("title", "syllabus", "duration", "mode", "tools", "thumbnail", "thumbnailName", "status", "totalLessons", "totalAssignments", "createdAt", "updatedAt")
+      .get(),
+    db.collection("students").doc(id).collection("enrolledCourses").get(),
+  ]);
+
+  const enrollmentByCourse = new Map(enrollmentSnapshot.docs.map((doc) => [doc.id, doc.data()]));
+  const summaries = new Map();
+  assignedSnapshot.docs.forEach((doc) => {
+    const course = doc.data();
+    const enrollment = enrollmentByCourse.get(doc.id) || {};
+    const enrollmentProgress = enrollment.progress ?? course.progress;
+    summaries.set(doc.id, {
+      ...enrollment,
+      ...course,
+      id: doc.id,
+      enrolled: true,
+      totalLessons: Number(course.totalLessons ?? enrollment.totalLessons ?? 0),
+      progress: enrollmentProgress == null ? null : Number(enrollmentProgress),
+      completedLessons: Number(enrollment.completedLessons ?? 0),
+      completed: enrollment.completed === true || Number(enrollmentProgress || 0) >= 100,
+      totalAssignments: (course.totalAssignments ?? enrollment.totalAssignments) != null && Number.isFinite(Number(course.totalAssignments ?? enrollment.totalAssignments)) ? Number(course.totalAssignments ?? enrollment.totalAssignments) : null,
+      pendingAssignments: enrollment.pendingAssignments != null && Number.isFinite(Number(enrollment.pendingAssignments)) ? Number(enrollment.pendingAssignments) : null,
+      lessons: [],
+      sections: [],
+    });
+  });
+
+  enrollmentSnapshot.docs.forEach((doc) => {
+    if (summaries.has(doc.id)) return;
+    const enrollment = doc.data();
+    const enrollmentProgress = enrollment.progress;
+    summaries.set(doc.id, {
+      ...enrollment,
+      id: doc.id,
+      enrolled: true,
+      totalLessons: Number(enrollment.totalLessons || 0),
+      progress: enrollmentProgress == null ? null : Number(enrollmentProgress),
+      completedLessons: Number(enrollment.completedLessons || 0),
+      completed: enrollment.completed === true || Number(enrollmentProgress || 0) >= 100,
+      totalAssignments: enrollment.totalAssignments != null && Number.isFinite(Number(enrollment.totalAssignments)) ? Number(enrollment.totalAssignments) : null,
+      pendingAssignments: enrollment.pendingAssignments != null && Number.isFinite(Number(enrollment.pendingAssignments)) ? Number(enrollment.pendingAssignments) : null,
+      lessons: [],
+      sections: [],
+    });
+  });
+
+  return [...summaries.values()].sort((left, right) => String(left.title || "").localeCompare(String(right.title || "")));
+}
+
+export async function listStudentCourseCatalog(studentId) {
+  const snapshot = await getFirestore().collection("courses")
+    .select("title", "syllabus", "duration", "mode", "tools", "thumbnail", "thumbnailName", "status", "studentIds", "totalLessons", "totalAssignments", "createdAt", "updatedAt")
+    .get();
+  return snapshot.docs.map((doc) => {
+    const data = doc.data();
+    const { studentIds, ...courseData } = data;
+    return {
+      id: doc.id,
+      ...courseData,
+      enrolled: Array.isArray(studentIds) && studentIds.map(String).includes(String(studentId)),
+      lessons: [],
+      sections: [],
+    };
+  });
 }
 
 export async function createCourse(data) {
@@ -288,6 +370,7 @@ export async function createCourse(data) {
     ...courseData,
     id: courseId,
     totalLessons: lessons.length,
+    totalAssignments: countCourseAssignments(lessons),
     status: courseData.status || "active",
     createdAt: courseData.createdAt || new Date().toISOString(),
   });
@@ -347,7 +430,7 @@ export async function updateCourse(courseId, data) {
         await lessonRef.collection("tasks").doc(taskId).set({ ...task, id: taskId, order: task.order || taskIndex + 1 });
       }
     }
-    await ref.set({ totalLessons: lessons.length }, { merge: true });
+    await ref.set({ totalLessons: lessons.length, totalAssignments: countCourseAssignments(lessons) }, { merge: true });
   }
   invalidateCoursesCache();
   return getCourse(courseId);
@@ -371,7 +454,8 @@ export async function addCourseLesson(courseId, lesson) {
     const taskId = String(task.id || `task-${taskIndex + 1}`);
     await lessonRef.collection("tasks").doc(taskId).set({ ...task, id: taskId, order: taskIndex + 1 });
   }
-  await courseRef.set({ totalLessons: (await readCourseLessons(courseRef)).length, updatedAt: new Date().toISOString() }, { merge: true });
+  const allLessons = await readCourseLessons(courseRef);
+  await courseRef.set({ totalLessons: allLessons.length, totalAssignments: countCourseAssignments(allLessons), updatedAt: new Date().toISOString() }, { merge: true });
   invalidateCoursesCache();
   return getCourse(courseId);
 }
@@ -387,7 +471,7 @@ export async function deleteCourseLesson(courseId, lessonId) {
   await lessonRef.delete();
 
   const remainingLessons = await readCourseLessons(courseRef);
-  await courseRef.set({ totalLessons: remainingLessons.length, updatedAt: new Date().toISOString() }, { merge: true });
+  await courseRef.set({ totalLessons: remainingLessons.length, totalAssignments: countCourseAssignments(remainingLessons), updatedAt: new Date().toISOString() }, { merge: true });
   invalidateCoursesCache();
   return getCourse(courseId);
 }
@@ -413,6 +497,9 @@ export async function updateCourseLesson(courseId, lessonId, lesson) {
     await lessonRef.collection("tasks").doc(taskId).set({ ...task, id: taskId, order: task.order || taskIndex + 1 });
   }
   if (existingLessonRef.path !== lessonRef.path) await existingLessonRef.delete();
+
+  const allLessons = await readCourseLessons(courseRef);
+  await courseRef.set({ totalLessons: allLessons.length, totalAssignments: countCourseAssignments(allLessons), updatedAt: new Date().toISOString() }, { merge: true });
 
   invalidateCoursesCache();
   return getCourse(courseId);
@@ -499,6 +586,8 @@ async function updateEnrollmentSummary(enrolledCourseRef, courseRef, studentId, 
     lessons.docs.forEach((lesson) => progressDocs.push({ ...lesson.data(), section: lesson.data().section || section.data().name || section.id }));
   }
   const completedLessons = progressDocs.filter((lesson) => lesson.completed === true).length;
+  const totalAssignments = countCourseAssignments(courseLessons);
+  const submittedAssignments = progressDocs.reduce((total, lesson) => total + Object.values(lesson.taskSubmissions || {}).filter((task) => task?.submitted === true).length, 0);
   const getLessonProgress = (lesson) => {
     const taskCount = Array.isArray(lesson.tasks) ? lesson.tasks.length : 0;
     const taskDone = Object.values(lesson.taskSubmissions || {}).filter((task) => task?.submitted === true).length;
@@ -535,6 +624,8 @@ async function updateEnrollmentSummary(enrolledCourseRef, courseRef, studentId, 
     courseId: String(courseId),
     totalLessons: courseLessons.length,
     completedLessons,
+    totalAssignments,
+    pendingAssignments: Math.max(0, totalAssignments - submittedAssignments),
     totalProgressUnits: courseProgress.total,
     completedProgressUnits: courseProgress.done,
     progress,
@@ -674,13 +765,18 @@ export async function getStudentCourseProgress(studentId, courses = [], onlyCour
       });
       merged.set(key, next);
     };
-    const legacySnapshot = await courseDoc.ref.collection("lessons").get();
+    const [legacySnapshot, sectionsSnapshot] = await Promise.all([
+      courseDoc.ref.collection("lessons").get(),
+      courseDoc.ref.collection("sections").get(),
+    ]);
     legacySnapshot.docs.forEach((doc) => addProgress(doc));
-    const sectionsSnapshot = await courseDoc.ref.collection("sections").get();
-    for (const sectionDoc of sectionsSnapshot.docs) {
-      const lessonsSnapshot = await sectionDoc.ref.collection("lessons").get();
+    const sectionLessons = await Promise.all(sectionsSnapshot.docs.map(async (sectionDoc) => ({
+      sectionDoc,
+      lessonsSnapshot: await sectionDoc.ref.collection("lessons").get(),
+    })));
+    sectionLessons.forEach(({ sectionDoc, lessonsSnapshot }) => {
       lessonsSnapshot.docs.forEach((doc) => addProgress(doc, sectionDoc.data().name || sectionDoc.id));
-    }
+    });
     progress.push(...merged.values());
   }
   return progress;
@@ -729,17 +825,28 @@ export async function listStudentTaskSubmissions() {
 }
 
 export async function getCourse(courseId) {
-  const ref = getFirestore().collection("courses").doc(String(courseId));
-  const snapshot = await ref.get();
-  if (!snapshot.exists) return null;
-  const [course] = await listCoursesByRefs([{ ref, data: snapshot.data() }]);
-  return course;
+  const id = String(courseId);
+  const cacheKey = `detail:${id}`;
+  const cached = coursesCache.get(cacheKey);
+  if (cached && Date.now() - cached.fetchedAt < COURSES_CACHE_TTL_MS) return cached.items;
+  if (!coursesCachePromises.has(cacheKey)) {
+    const promise = (async () => {
+      const ref = getFirestore().collection("courses").doc(id);
+      const snapshot = await ref.get();
+      if (!snapshot.exists) return null;
+      const [course] = await listCoursesByRefs([{ ref, data: snapshot.data() }]);
+      coursesCache.set(cacheKey, { items: course, fetchedAt: Date.now() });
+      return course;
+    })().finally(() => coursesCachePromises.delete(cacheKey));
+    coursesCachePromises.set(cacheKey, promise);
+  }
+  return coursesCachePromises.get(cacheKey);
 }
 
 async function listCoursesByRefs(rows) {
   return Promise.all(rows.map(async ({ ref, data }) => {
-    const lessons = await readCourseLessons(ref);
-    const sections = await readCourseSections(ref);
+    const sectionSnapshot = ref.collection("sections").get();
+    const [lessons, sections] = await Promise.all([readCourseLessons(ref, sectionSnapshot), readCourseSections(ref, sectionSnapshot)]);
     return { id: ref.id, ...data, sections, lessons };
   }));
 }

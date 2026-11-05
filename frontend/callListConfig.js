@@ -45,9 +45,14 @@ export const SERVICE_CALL_LIST_SERVICES = [
 ];
 export const CALL_STATUS_OPTIONS = ["Pending", "Follow Up", "Completed"];
 export const CALL_LIST_INTEREST_STATUS_OPTIONS = ["Not Interested", "Interested"];
-export const normalizeCallStatus = (value) => CALL_STATUS_OPTIONS.includes(value) ? value : "Pending";
-export const normalizeInterestStatus = (value) => CALL_LIST_INTEREST_STATUS_OPTIONS.includes(value) ? value : "Not Interested";
-export const normalizeCallProgram = (value) => /^(it services?|it training|-)$/i.test(String(value || "").trim()) ? "" : String(value || "").trim();
+export const normalizeCallStatus = (value) => {
+  const status = String(value || "").trim().toLowerCase().replace(/[-_]+/g, " ").replace(/\s+/g, " ");
+  if (["follow up", "followup", "follow up required"].includes(status)) return "Follow Up";
+  if (["completed", "complete"].includes(status)) return "Completed";
+  return "Pending";
+};
+export const normalizeInterestStatus = (value) => ["interested", "interest"].includes(String(value || "").trim().toLowerCase()) ? "Interested" : "Not Interested";
+export const normalizeCallProgram = (value) => /^(?:it services?|it training|-|select (?:a )?(?:course|training|service|program)|not selected)$/i.test(String(value || "").trim()) ? "" : String(value || "").trim();
 export const callListPrograms = (type) => type === "training" ? TRAINING_CALL_LIST_PROGRAMS : type === "services" ? SERVICE_CALL_LIST_SERVICES : [...new Set([...SERVICE_CALL_LIST_SERVICES, ...TRAINING_CALL_LIST_PROGRAMS])];
 export function matchesCallListFilters(row, { search = "", program = "All", callStatus = "All", interest = "All", date = "", employee = "All", listType = "All" } = {}) {
   const query = search.trim().toLowerCase();

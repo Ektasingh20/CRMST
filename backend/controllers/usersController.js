@@ -20,6 +20,81 @@ function normalizeStudentFields(payload) {
   return { ...payload, role: "Student", dept: "Student", position: "Student" };
 }
 
+function studentProfileFields(payload = {}) {
+  const fields = {};
+  const textFields = { name: 120, education: 160, address: 500 };
+  for (const [field, limit] of Object.entries(textFields)) {
+    if (payload[field] === undefined) continue;
+    const value = String(payload[field] || "").trim();
+    if (field === "name" && !value) throw new Error("Full name is required.");
+    if (value.length > limit) throw new Error(`${field} must be ${limit} characters or fewer.`);
+    fields[field] = value;
+  }
+  if (payload.phone !== undefined) {
+    const phone = String(payload.phone || "").trim();
+    if (!validatePhone(phone)) throw new Error("Mobile number must be 10 digits and start with 6, 7, 8, or 9.");
+    fields.phone = phone;
+  }
+  if (payload.emergencyContact !== undefined) {
+    const phone = String(payload.emergencyContact || "").trim();
+    if (phone && !validatePhone(phone)) throw new Error("Emergency contact must be a valid 10-digit mobile number.");
+    fields.emergencyContact = phone;
+  }
+  if (payload.personalEmail !== undefined) {
+    const email = String(payload.personalEmail || "").trim().toLowerCase();
+    if (email && (!validateEmail(email) || email.length > 254)) throw new Error("Enter a valid personal email address.");
+    fields.personalEmail = email;
+  }
+  if (payload.dob !== undefined) {
+    const dob = String(payload.dob || "").trim();
+    const date = dob ? new Date(`${dob}T00:00:00Z`) : null;
+    if (dob && (!/^\d{4}-\d{2}-\d{2}$/.test(dob) || Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== dob || date > new Date())) {
+      throw new Error("Enter a valid date of birth.");
+    }
+    fields.dob = dob;
+  }
+  if (payload.gender !== undefined) {
+    const gender = String(payload.gender || "").trim();
+    if (!["", "Male", "Female", "Other", "Prefer not to say"].includes(gender)) throw new Error("Select a valid gender option.");
+    fields.gender = gender;
+  }
+  if (payload.imageUrl !== undefined) {
+    const imageUrl = String(payload.imageUrl || "").trim();
+    if (imageUrl && (!/^https:\/\//i.test(imageUrl) || imageUrl.length > 2000)) throw new Error("Profile photo URL must be secure.");
+    fields.imageUrl = imageUrl;
+  }
+  if (payload.imagePublicId !== undefined) {
+    const imagePublicId = String(payload.imagePublicId || "").trim();
+    if (imagePublicId.length > 200) throw new Error("Profile photo ID is too long.");
+    fields.imagePublicId = imagePublicId;
+  }
+  return fields;
+}
+
+export async function updateMyProfile(req, res) {
+  if (!isMongoConnected) return mongoUnavailable(res);
+  try {
+    const currentUserId = String(req.user?.id || req.user?._id || "");
+    const user = await User.findOne({ id: currentUserId }) || await User.findOne({ _id: currentUserId });
+    if (!user) return res.status(404).json({ error: "User not found." });
+    const payload = req.body || {};
+    if (String(user.role || "").trim().toLowerCase() === "student") {
+      Object.assign(user, studentProfileFields(payload));
+    } else {
+      if (payload.name !== undefined) user.name = String(payload.name).trim();
+      if (payload.email !== undefined) user.email = String(payload.email).trim().toLowerCase();
+      if (payload.phone !== undefined) user.phone = String(payload.phone).trim();
+      if (payload.imageUrl !== undefined) user.imageUrl = String(payload.imageUrl).trim();
+      if (payload.imagePublicId !== undefined) user.imagePublicId = String(payload.imagePublicId).trim();
+      if (payload.notificationPreferences !== undefined) user.notificationPreferences = payload.notificationPreferences;
+    }
+    user.updatedAt = new Date().toISOString();
+    await user.save();
+    const { password: _password, ...safeUser } = user.toObject();
+    return res.json({ id: safeUser.id || String(user._id), ...safeUser });
+  } catch (error) { return res.status(400).json({ error: error.message || "Unable to update profile." }); }
+}
+
 export async function createUser(req, res) {
   if (!isMongoConnected) return mongoUnavailable(res);
   try {

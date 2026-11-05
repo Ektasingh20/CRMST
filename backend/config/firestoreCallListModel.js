@@ -5,6 +5,7 @@ import User from "../models/User.js";
 import { LEAD_INTERESTS } from "./leadCatalog.js";
 import { leadCollection, normalizeLeadData } from "./firestoreLeadModel.js";
 import { whatsappMessageRef } from "./firestoreWhatsAppModel.js";
+import { isCallLead } from "../../frontend/callLeads.js";
 
 const validTypes = new Set(["services", "training"]);
 export function normalizeListType(value) {
@@ -384,7 +385,7 @@ export async function approveCallRecord(type, id, actor, assignedTo = "", admin 
     if (data.leadCreated || data.callLeadStatus === "Approved") {
       throw callListError("This lead has already been approved.", 409);
     }
-    if (clean(data.interestStatus).toLowerCase() !== "interested" || !["follow up", "completed"].includes(clean(data.callStatus).toLowerCase())) {
+    if (!isCallLead(data)) {
       throw callListError("This contact no longer qualifies as a call lead.", 409);
     }
     const currentDraft = normalizeCallLeadDraft(data.leadDraft);
