@@ -183,6 +183,9 @@ import ITDashboard from "./src/It- dashboard/ITDashboard";
 import HrDashboard from "./src/final_hr_dashboard/HrDashboard";
 import CreateProjectForm from "./src/admin/CreateProjectForm";
 import ITAdminModule from "./src/admin/ITAdminModule";
+import DepartmentManagement from "./src/admin/DepartmentManagement.jsx";
+import UserManagementPage from "./src/admin/UserManagementPage.jsx";
+import CrmPerformanceReport from "./src/admin/CrmPerformanceReport.jsx";
 import {
   compressImageFile,
   createPreviewUrl,
@@ -452,9 +455,11 @@ const sidebarSections = [
         icon: Users,
         children: [
           { id: "user-create", label: "Create Profile", icon: UserPlus },
+          { id: "user-view", label: "Active & inactive", icon: UserRoundCheck },
           { id: "employee-profiles", label: "Employee Profiles", icon: Users },
           { id: "ex-employee-profiles", label: "Ex Employee Profiles", icon: UserX },
           { id: "all-employees", label: "View All Employee", icon: ContactRound },
+          { id: "department-management", label: "Department Management", icon: Blocks },
           { id: "salary-report", label: "Salary Report", icon: FileText },
           { id: "employee-id-cards", label: "ID Card", icon: IdCard },
           { id: "payroll-system", label: "Payroll System", icon: Wallet },
@@ -2063,7 +2068,7 @@ function App() {
       .flatMap((section) => section.items.flatMap((item) => item.children || [item]))
       .find((item) => item.id === activePage)?.label
     || (activePage === "project-create" ? "Create Project" : "Dashboard");
-  const employeeManagementPageIds = ["employee-profiles", "ex-employee-profiles", "all-employees", "salary-report", "employee-id-cards", "payroll-system"];
+  const employeeManagementPageIds = ["user-view", "employee-profiles", "ex-employee-profiles", "all-employees", "salary-report", "employee-id-cards", "payroll-system"];
   const hrManagementPageIds = ["hr-assign", "hr-assigned-tasks", "hr-tasks", "hr-leaves", "hr-attendance", "hr-ex-emp"];
 
   useEffect(() => {
@@ -4794,6 +4799,9 @@ function App() {
               onNavigate={setActivePage}
             />
           )}
+          {activePage === "department-management" && (
+            <DepartmentManagement users={hrEmployeeDirectoryRows} />
+          )}
           {activePage === "dashboard" && (
             <>
               <section className="hero-grid">
@@ -5542,9 +5550,7 @@ function App() {
           )}
 
           {activePage === "user-view" && (
-            <Panel title={`All users (${visibleUsers.length})`}>
-              <UsersTable users={visibleUsers} onEdit={editUser} />
-            </Panel>
+            <UserManagementPage users={visibleUsers} onUsersChange={setUsers} />
           )}
 
           {activePage === "sales-add" && (
@@ -5756,7 +5762,7 @@ function App() {
             </>
           )}
 
-          {["sales-report", "crm-reports"].includes(activePage) && (
+          {activePage === "sales-report" && (
             <>
               <section className="stats-grid compact">
                 <StatCard tone="blue" icon={Users} label="Total Leads" value={leads.length} note="Across sales modules" />
@@ -5843,6 +5849,10 @@ function App() {
                 </div>
               </Panel>
             </>
+          )}
+
+          {activePage === "crm-reports" && (
+            <CrmPerformanceReport rows={crmUploadRows} users={activeUsers} onSaveCall={saveCallContact} />
           )}
 
           {activePage === "co-approved" && (

@@ -271,7 +271,7 @@ export async function createCallRecord(type, input, actor) {
 }
 
 export async function updateCallRecord(type, id, patch, assignedTo = "", requiredAssignedTo = "") {
-  const allowed = ["leadCreated", "createdLeadId", "createdLeadDate", "callLeadStatus", "callLeadAssignedTo", "callLeadAssignedDate", "callStatus", "interactionType", "interestStatus", "program", "programId", "serviceId", "remark", "leadDraft", "leadDraftSavedBy", "leadDraftSavedByName", "callClicked", "whatsappClicked", "active", "name", "contact", "date", "assignedTo", "assignedToName"];
+  const allowed = ["leadCreated", "createdLeadId", "createdLeadDate", "callLeadStatus", "callLeadAssignedTo", "callLeadAssignedDate", "callStatus", "callAt", "interactionType", "interestStatus", "program", "programId", "serviceId", "remark", "leadDraft", "leadDraftSavedBy", "leadDraftSavedByName", "callClicked", "whatsappClicked", "active", "name", "contact", "date", "assignedTo", "assignedToName"];
   const payload = Object.fromEntries(allowed.filter((key) => patch[key] !== undefined).map((key) => [key, patch[key]]));
   const templateField = normalizeListType(type) === "training" ? "programId" : "serviceId";
   const otherTemplateField = templateField === "programId" ? "serviceId" : "programId";
@@ -309,7 +309,7 @@ export async function updateCallRecord(type, id, patch, assignedTo = "", require
     const now = new Date().toISOString();
     const changes = { ...payload, updatedAt: now };
     // Only actual CRM work changes the activity date; assignment and draft edits do not.
-    const workFields = ["callStatus", "callLeadStatus", "interestStatus", "remark", "callClicked", "whatsappClicked"];
+    const workFields = ["callStatus", "callAt", "callLeadStatus", "interestStatus", "remark", "callClicked", "whatsappClicked"];
     if (patch.activityRecorded || workFields.some((key) => Object.prototype.hasOwnProperty.call(payload, key)
       && !isDeepStrictEqual(data[key], payload[key]))) changes.lastWorkedAt = now;
     const assigneeChanged = Object.prototype.hasOwnProperty.call(payload, "callLeadAssignedTo")

@@ -3113,6 +3113,7 @@ export default function HrDashboard({ user, onLogout } = {}) {
   const [db, setDb] = useState(load);
   const [employeeRosterStatus, setEmployeeRosterStatus] = useState("loading");
   const [page, setPage] = useState("Dashboard");
+  const pageScrollRef = useRef(null);
   const [open, setOpen] = useState("");
   const [drawer, setDrawer] = useState(false);
   const [out, setOut] = useState(false);
@@ -3205,6 +3206,9 @@ export default function HrDashboard({ user, onLogout } = {}) {
     if (msg) setToast(msg);
   };
   const go = (target) => { const p = ["Assign Tasks", "HR Planner"].includes(target) ? "Employee Workspace" : target; setPage(p); setDrawer(false); const g = NAV.find((n) => n.kids?.some((k) => k[0] === p)); if (g) setOpen(g.label); };
+  useEffect(() => {
+    pageScrollRef.current?.scrollTo({ top: 0, behavior: "auto" });
+  }, [page]);
   const profile = user ? {
     ...db.me,
     name: db.me.settingsSaved ? db.me.name : user.name || user.username || db.me.name || "HR",
@@ -3281,7 +3285,7 @@ export default function HrDashboard({ user, onLogout } = {}) {
             <button className="hr-btn" onClick={() => go("Assign Tasks")}><Plus size={16} /> Assign task</button>
           </div>
         </header>
-        <div className="hr-scroll">
+        <div className="hr-scroll" ref={pageScrollRef}>
           {loading ? <div className="hr-loading" aria-busy="true" aria-label="Loading"><i /><i /><i /></div> : PAGES[page]}
         </div>
       </main>
