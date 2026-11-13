@@ -5,7 +5,7 @@ function normalizedLabel(value) {
 function assignmentPriority(assignment) {
   if (assignment.status === "Graded") return 4;
   if (assignment.submitted || assignment.status === "Submitted") return 3;
-  if (assignment.status === "Ready") return 2;
+  if (assignment.status === "Pending") return 2;
   return 1;
 }
 

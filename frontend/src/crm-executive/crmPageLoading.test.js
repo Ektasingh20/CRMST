@@ -15,7 +15,7 @@ test("CRM pages show a loader for the data they need", () => {
 });
 
 test("loaded pages do not show a loader", () => {
-  for (const tab of ["dashboard", "servicecalllist", "trainingcalllist", "leads", "approvedleads", "salesreports", "tasks", "markattendance", "attendancereport", "leaverequest", "notifications", "settings"]) {
+  for (const tab of ["dashboard", "servicecalllist", "trainingcalllist", "leads", "approvedleads", "salesreports", "salesanalysis", "tasks", "markattendance", "attendancereport", "leaverequest", "notifications", "settings"]) {
     assert.equal(isCrmPageLoading(tab, ready), false, tab);
   }
 });

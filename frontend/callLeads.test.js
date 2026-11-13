@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { isCallLead, callLeadForm, callLeadProgram } from "./callLeads.js";
+import { isCallLead, callLeadForm, callLeadProgram, callLeadReviewStatus } from "./callLeads.js";
 
 test("only interested follow-up and completed calls appear, regardless of review status", () => {
   for (const callStatus of ["Select Status", "Pending", "Follow Up", "Completed"]) {
@@ -36,4 +36,12 @@ test("prefill copies matching values but never record IDs, call ownership or rev
 test("a call without a selected program leaves interest blank", () => {
   assert.equal(callLeadForm({ listType: "services" }).interest, "");
   assert.equal(callLeadForm({ listType: "services" }).type, "Service");
+});
+
+test("call lead review status defaults to Choose but keeps explicitly selected statuses", () => {
+  assert.equal(callLeadReviewStatus({}), "");
+  assert.equal(callLeadReviewStatus({ callLeadStatus: "Pending" }), "");
+  assert.equal(callLeadReviewStatus({ callLeadStatus: "Pending", callLeadStatusSelected: true }), "Pending");
+  assert.equal(callLeadReviewStatus({ callLeadStatus: "Approved" }), "Approved");
+  assert.equal(callLeadReviewStatus({ callLeadStatus: "Rejected" }), "Rejected");
 });

@@ -32,5 +32,5 @@
 .student-profile-account dl > div { padding: 13px 0; border-top: 1px solid #eee8dc; }
 .student-profile-account dt { color: #675d55; margin-bottom: 4px; }
 .student-profile-account dd { margin: 0; color: #1f1a17; font-weight: 700; overflow-wrap: anywhere; }
-@media (max-width: 1180px) { .student-profile-page { grid-template-columns: 1fr; } }
+@media (max-width: 980px) { .student-profile-page { grid-template-columns: 1fr; } }
 @media (max-width: 640px) { .student-profile-card { padding: 18px; } .student-profile-form-grid { grid-template-columns: 1fr; gap: 16px; } .student-profile-wide { grid-column: auto; } .student-profile-heading { align-items: flex-start; } }

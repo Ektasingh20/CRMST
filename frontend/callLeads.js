@@ -13,6 +13,13 @@ export function isCallLead(record) {
     && ["Follow Up", "Completed"].includes(status);
 }
 
+export function callLeadReviewStatus(record) {
+  const status = ["Pending", "Approved", "Rejected"].includes(record?.callLeadStatus)
+    ? record.callLeadStatus
+    : "";
+  return status === "Pending" && record.callLeadStatusSelected !== true ? "" : status;
+}
+
 // Explicit allowlist: call metadata and IDs must never become a created lead.
 export function callLeadForm(record) {
   return {

@@ -10,7 +10,7 @@ function formFromUser(user = {}) {
     phone: user.phone || "",
     dob: user.dob || "",
     gender: user.gender || "",
-    personalEmail: user.personalEmail || "",
+    personalEmail: user.email || "",
     emergencyContact: user.emergencyContact || "",
     education: user.education || "",
     address: user.address || "",
@@ -133,7 +133,7 @@ export default function StudentProfileEditor({ user, enrolledCount, onSaved }) {
             <label>Mobile number <span>*</span><input name="phone" autoComplete="tel" inputMode="numeric" required pattern="[6-9][0-9]{9}" maxLength={10} value={form.phone} onChange={(event) => setField("phone", event.target.value.replace(/\D/g, "").slice(0, 10))} /></label>
             <label>Date of birth<input name="dob" type="date" value={form.dob} onChange={(event) => setField("dob", event.target.value)} /></label>
             <label>Gender<select name="gender" value={form.gender} onChange={(event) => setField("gender", event.target.value)}><option value="">Select</option><option>Male</option><option>Female</option><option>Other</option><option>Prefer not to say</option></select></label>
-            <label>Personal email<input name="personalEmail" type="email" autoComplete="email" maxLength={254} placeholder="name@example.com" value={form.personalEmail} onChange={(event) => setField("personalEmail", event.target.value)} /></label>
+            <label>Personal email <span>*</span><input name="personalEmail" type="email" autoComplete="email" required maxLength={254} value={form.personalEmail} onChange={(event) => setField("personalEmail", event.target.value)} /></label>
             <label>Emergency contact<input name="emergencyContact" inputMode="numeric" pattern="[6-9][0-9]{9}" maxLength={10} placeholder="10-digit mobile number" value={form.emergencyContact} onChange={(event) => setField("emergencyContact", event.target.value.replace(/\D/g, "").slice(0, 10))} /></label>
             <label className="student-profile-wide">Education / qualification<input name="education" maxLength={160} value={form.education} onChange={(event) => setField("education", event.target.value)} /></label>
             <label className="student-profile-wide">Residential address<textarea name="address" rows={3} maxLength={500} value={form.address} onChange={(event) => setField("address", event.target.value)} /></label>
@@ -146,7 +146,7 @@ export default function StudentProfileEditor({ user, enrolledCount, onSaved }) {
 
       <aside className="student-profile-card student-profile-account">
         <h3>Student account</h3>
-        <p>These details are maintained by your institute.</p>
+        <p>Your student ID and enrollment details are maintained by your institute.</p>
         <dl>{accountDetails.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
       </aside>
     </div>

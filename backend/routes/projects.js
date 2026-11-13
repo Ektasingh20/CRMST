@@ -8,6 +8,10 @@ import { isAdmin } from '../utils/roles.js';
 import { canReceiveProject } from '../../frontend/src/itUserRoles.js';
 import { employeeKey, isIT, storedProject, projectResponse, projectFields, scopeKeys, userId, validatePdf } from '../utils/projectData.js';
 import { applyProjectStatus } from '../../frontend/src/It- dashboard/projectStatus.js';
+import { isDeepStrictEqual } from 'node:util';
+import { ReadCache } from '../itDashboard/src/cache.js';
+
+const projectReads = new ReadCache(30000, 250);
 
 const router = express.Router();
 router.use(authenticate);
@@ -42,6 +46,7 @@ router.post('/pdf', async (req, res) => {
 
 router.get('/', async (req, res) => {
   try {
+    const rows = await projectReads.get(`${isAdmin(req.user) ? 'admin' : 'employee'}:${userId(req.user)}`, async () => {
     const employees = await (isAdmin(req.user) ? root() : root().where('assignedEmployeeId', '==', userId(req.user))).get();
     const groups = await Promise.all(employees.docs.map(async employee => {
       const collections = await employee.ref.listCollections();
@@ -50,7 +55,9 @@ router.get('/', async (req, res) => {
         return snapshot.exists ? projectResponse(snapshot.data(), employee.data(), employee.ref.id, collection.id) : null;
       }));
     }));
-    res.json(groups.flat().filter(Boolean).sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || ''))));
+      return groups.flat().filter(Boolean).sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+    });
+    res.json(rows);
   } catch { res.status(500).json({ error: 'Unable to load projects.' }); }
 });
 
@@ -73,6 +80,7 @@ router.post('/', async (req, res) => {
     batch.set(employeeRef, { assignedEmployeeId: userId(employee), assignedEmployeeName: project.assignedEmployeeName }, { merge: true });
     batch.create(employeeRef.collection(projectId).doc('Project Data'), storedProject(project));
     await batch.commit();
+    projectReads.clear();
     res.status(201).json(project);
   } catch (error) { res.status(400).json({ error: error.message || 'Unable to save project.' }); }
 });
@@ -97,10 +105,12 @@ router.patch('/:employeeKey/:id', async (req, res) => {
         if (!['Active', 'Completed'].includes(project.status)) throw new Error('Accept the project before updating progress.');
         next = applyProjectStatus(project, { status: update.status, progress: update.progress, remarks: String(update.remarks || '').slice(0, 5000), completionDate: update.completionDate || '', allTasksCompleted: update.allTasksCompleted === true, files: filesFromReceipts(update.files || [], req.user) });
       }
+      if (isDeepStrictEqual(storedProject(next), storedProject(project))) return project;
       next.updatedAt = new Date().toISOString();
       transaction.set(ref, storedProject(next));
       return next;
     });
+    projectReads.clear();
     res.json(saved);
   } catch (error) { res.status(400).json({ error: error.message || 'Unable to update project.' }); }
 });

@@ -29,9 +29,16 @@ async function nextTaskId() {
   return `${prefix}${String(highestSequence + 1).padStart(3, "0")}`;
 }
 
-async function resolveCrmExecutive(id) {
+function isAssignableEmployee(user) {
+  const role = String(user?.role || "").trim().toLowerCase();
+  const department = String(user?.dept || user?.department || "").trim().toLowerCase();
+  return role !== "student"
+    && !["student", "students"].includes(department);
+}
+
+async function resolveEmployee(id) {
   const user = await User.findOne({ id: String(id) }) || await User.findOne({ _id: String(id) });
-  return user && isCrmExecutive(user.toObject()) ? user.toObject() : null;
+  return user && isAssignableEmployee(user.toObject()) ? user.toObject() : null;
 }
 
 router.get("/", async (req, res) => {
@@ -45,8 +52,8 @@ router.post("/", async (req, res) => {
   try {
     const payload = { ...(req.body || {}) };
     if (!String(payload.title || "").trim()) return res.status(400).json({ error: "Task title is required." });
-    const assignee = isAdmin(req.user) ? await resolveCrmExecutive(payload.assigneeId) : isCrmExecutive(req.user) ? req.user : null;
-    if (!assignee) return res.status(403).json({ error: isAdmin(req.user) ? "Choose a CRM Executive assignee." : "Only CRM Executives can create personal tasks." });
+    const assignee = isAdmin(req.user) ? await resolveEmployee(payload.assigneeId) : isCrmExecutive(req.user) ? req.user : null;
+    if (!assignee) return res.status(isAdmin(req.user) ? 400 : 403).json({ error: isAdmin(req.user) ? "Choose an active employee assignee." : "Only CRM Executives can create personal tasks." });
     const now = new Date().toISOString();
     const task = await Task.create({ id: await nextTaskId(), title: String(payload.title).trim(), description: String(payload.description || "").trim(), priority: payload.priority || "Medium", status: payload.status || "To Do", dueDate: payload.dueDate || "", assigneeId: userId(assignee), assignee: assignee.name || assignee.username || "CRM Executive", createdById: userId(req.user), createdBy: req.user.name || req.user.username || "Admin", createdAt: now, updatedAt: now });
     await notifyUser(task.assigneeId, { type: "task_assigned", message: `You were assigned a task: ${task.title}.` });
@@ -62,9 +69,9 @@ router.put("/:id", async (req, res) => {
     const payload = { ...(req.body || {}) };
     if (!isAdmin(req.user)) { delete payload.assigneeId; delete payload.assignee; delete payload.createdById; delete payload.createdBy; }
     if (isAdmin(req.user) && payload.assigneeId && String(payload.assigneeId) !== String(task.assigneeId || "")) {
-      const assignee = await resolveCrmExecutive(payload.assigneeId);
-      if (!assignee) return res.status(400).json({ error: "Tasks can only be assigned to CRM Executives." });
-      payload.assigneeId = userId(assignee); payload.assignee = assignee.name || assignee.username || "CRM Executive";
+      const assignee = await resolveEmployee(payload.assigneeId);
+      if (!assignee) return res.status(400).json({ error: "Choose an active employee assignee." });
+      payload.assigneeId = userId(assignee); payload.assignee = assignee.name || assignee.username || "Employee";
     }
     const wasCompleted = String(task.status || "") === "Done";
     Object.assign(task, payload, { updatedAt: new Date().toISOString() }); await task.save();

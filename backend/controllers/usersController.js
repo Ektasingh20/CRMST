@@ -1,4 +1,5 @@
 import bcrypt from "bcryptjs";
+import { getAuth } from "firebase-admin/auth";
 import User from "../models/User.js";
 import { isMongoConnected } from "../config/db.js";
 import { normalizeEmployment } from "../utils/itUserRoles.js";
@@ -15,9 +16,35 @@ function validateEmail(value) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || "").trim());
 }
 
+async function saveWithSyncedAuthEmail(user, email, save) {
+  if (!user.firebaseAuthManaged || !user.firebaseAuthUid) return save();
+  const auth = getAuth();
+  const authUser = await auth.getUser(user.firebaseAuthUid);
+  const previousEmail = String(authUser.email || "").trim().toLowerCase();
+  if (previousEmail === email) return save();
+  await auth.updateUser(user.firebaseAuthUid, { email });
+  try {
+    return await save();
+  } catch (error) {
+    try { await auth.updateUser(user.firebaseAuthUid, { email: previousEmail }); }
+    catch (rollbackError) { console.error("Could not restore Firebase Auth email after profile save failed:", rollbackError); }
+    throw error;
+  }
+}
+
+function emailUpdateError(error) {
+  return error?.code === "auth/email-already-exists"
+    ? { status: 409, message: "Email already exists" }
+    : null;
+}
+
 function normalizeStudentFields(payload) {
   if (String(payload.role || "").trim().toLowerCase() !== "student") return payload;
-  return { ...payload, role: "Student", dept: "Student", position: "Student" };
+  return {
+    ...payload,
+    role: "Student", dept: "Student", position: "Student",
+    ...(payload.email !== undefined ? { personalEmail: String(payload.email || "").trim().toLowerCase() } : {}),
+  };
 }
 
 function studentProfileFields(payload = {}) {
@@ -39,11 +66,6 @@ function studentProfileFields(payload = {}) {
     const phone = String(payload.emergencyContact || "").trim();
     if (phone && !validatePhone(phone)) throw new Error("Emergency contact must be a valid 10-digit mobile number.");
     fields.emergencyContact = phone;
-  }
-  if (payload.personalEmail !== undefined) {
-    const email = String(payload.personalEmail || "").trim().toLowerCase();
-    if (email && (!validateEmail(email) || email.length > 254)) throw new Error("Enter a valid personal email address.");
-    fields.personalEmail = email;
   }
   if (payload.dob !== undefined) {
     const dob = String(payload.dob || "").trim();
@@ -78,21 +100,37 @@ export async function updateMyProfile(req, res) {
     const user = await User.findOne({ id: currentUserId }) || await User.findOne({ _id: currentUserId });
     if (!user) return res.status(404).json({ error: "User not found." });
     const payload = req.body || {};
+    const changes = {};
     if (String(user.role || "").trim().toLowerCase() === "student") {
-      Object.assign(user, studentProfileFields(payload));
+      const fields = studentProfileFields(payload);
+      const currentEmail = String(user.email || "").trim().toLowerCase();
+      const email = payload.personalEmail === undefined ? currentEmail : String(payload.personalEmail || "").trim().toLowerCase();
+      if (!validateEmail(email) || email.length > 254) throw new Error("Enter a valid personal email address.");
+      if (email !== currentEmail) {
+        const existingEmail = await User.findOne({ email });
+        if (existingEmail && String(existingEmail._id) !== String(user._id)) {
+          return res.status(409).json({ error: "Email already exists" });
+        }
+      }
+      Object.assign(changes, fields, { email, personalEmail: email });
     } else {
-      if (payload.name !== undefined) user.name = String(payload.name).trim();
-      if (payload.email !== undefined) user.email = String(payload.email).trim().toLowerCase();
-      if (payload.phone !== undefined) user.phone = String(payload.phone).trim();
-      if (payload.imageUrl !== undefined) user.imageUrl = String(payload.imageUrl).trim();
-      if (payload.imagePublicId !== undefined) user.imagePublicId = String(payload.imagePublicId).trim();
-      if (payload.notificationPreferences !== undefined) user.notificationPreferences = payload.notificationPreferences;
+      if (payload.name !== undefined) changes.name = String(payload.name).trim();
+      if (payload.email !== undefined) changes.email = String(payload.email).trim().toLowerCase();
+      if (payload.phone !== undefined) changes.phone = String(payload.phone).trim();
+      if (payload.imageUrl !== undefined) changes.imageUrl = String(payload.imageUrl).trim();
+      if (payload.imagePublicId !== undefined) changes.imagePublicId = String(payload.imagePublicId).trim();
+      if (payload.notificationPreferences !== undefined) changes.notificationPreferences = payload.notificationPreferences;
     }
-    user.updatedAt = new Date().toISOString();
-    await user.save();
+    await saveWithSyncedAuthEmail(user, String(changes.email ?? user.email ?? "").trim().toLowerCase(), async () => {
+      Object.assign(user, changes, { updatedAt: new Date().toISOString() });
+      await user.save();
+    });
     const { password: _password, ...safeUser } = user.toObject();
     return res.json({ id: safeUser.id || String(user._id), ...safeUser });
-  } catch (error) { return res.status(400).json({ error: error.message || "Unable to update profile." }); }
+  } catch (error) {
+    const authError = emailUpdateError(error);
+    return res.status(authError?.status || 400).json({ error: authError?.message || error.message || "Unable to update profile." });
+  }
 }
 
 export async function createUser(req, res) {
@@ -224,15 +262,20 @@ export async function updateUser(req, res) {
       payload.email = emailLower;
     }
 
-    const item = await User.findOneAndUpdate(
-      { _id: targetId },
-      payload,
-      { new: true, upsert: true }
+    if (String(payload.role || existing.role || "").trim().toLowerCase() === "student") {
+      payload.personalEmail = String(payload.email || existing.email || "").trim().toLowerCase();
+    }
+
+    const item = await saveWithSyncedAuthEmail(
+      existing,
+      String(payload.email || existing.email || "").trim().toLowerCase(),
+      () => User.findOneAndUpdate({ _id: targetId }, payload, { new: true, upsert: true }),
     );
     const { password: _password, ...safeUser } = item.toObject();
     return res.json({ id: item.id || String(item._id), ...safeUser });
   } catch (err) {
-    return res.status(400).json({ error: err.message });
+    const authError = emailUpdateError(err);
+    return res.status(authError?.status || 400).json({ error: authError?.message || err.message });
   }
 }
 

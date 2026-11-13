@@ -1,10 +1,16 @@
 import express from "express";
 import { randomUUID } from "node:crypto";
-import { getFirestore } from "firebase-admin/firestore";
+import { FieldValue, getFirestore } from "firebase-admin/firestore";
 import { authenticate } from "../middleware/auth.js";
 import { isAdmin, isHrUser } from "../utils/roles.js";
 import User from "../models/User.js";
 import { isITDepartment } from "../../frontend/src/itUserRoles.js";
+import { ReadCache } from "../itDashboard/src/cache.js";
+
+// Polling still checks access and the conversation version on every request.
+// Unchanged histories need not reread hundreds of message documents.
+const messageCache = new ReadCache(60000, 250);
+const conversationCache = new ReadCache(3000, 250);
 
 const router = express.Router();
 const collection = () => getFirestore().collection("hrHelpdeskConversations");
@@ -39,6 +45,11 @@ async function accessibleConversation(req, res) {
     return null;
   }
   const conversation = safeConversation(snapshot);
+  const hiddenFor = Array.isArray(conversation.hiddenFor) ? conversation.hiddenFor.map(String) : [];
+  if (hiddenFor.includes(userId(req.user))) {
+    res.status(404).json({ error: "Helpdesk conversation not found." });
+    return null;
+  }
   const participants = Array.isArray(conversation.participantIds) ? conversation.participantIds.map(String) : [];
   if (!isHelpdeskStaff(req.user) && conversation.createdById !== userId(req.user) && !participants.includes(userId(req.user))) {
     res.status(403).json({ error: "You can only access your own helpdesk conversations." });
@@ -52,6 +63,7 @@ router.use((req, res, next) => requireHelpdeskUser(req, res) ? next() : undefine
 
 router.get("/conversations", async (req, res) => {
   try {
+    const items = await conversationCache.get(`${isHelpdeskStaff(req.user) ? "staff" : "employee"}:${userId(req.user)}`, async () => {
     const snapshots = isHelpdeskStaff(req.user)
       ? [await collection().orderBy("updatedAt", "desc").limit(200).get()]
       : await Promise.all([
@@ -60,7 +72,9 @@ router.get("/conversations", async (req, res) => {
       ]);
     const unique = new Map(snapshots.flatMap((snapshot) => snapshot.docs.map((doc) => [doc.id, safeConversation(doc)])));
     const items = [...unique.values()].sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
-    return res.json(items);
+    return items;
+    });
+    return res.json(items.filter((item) => !(Array.isArray(item.hiddenFor) && item.hiddenFor.map(String).includes(userId(req.user)))));
   } catch (error) {
     return res.status(500).json({ error: error.message || "Unable to load helpdesk conversations." });
   }
@@ -113,6 +127,7 @@ router.post("/conversations", async (req, res) => {
       transaction.create(conversationRef, conversation);
       transaction.create(messageRef, message);
     });
+    conversationCache.clear();
     return res.status(201).json({ id, ...conversation, messages: [message] });
   } catch (error) {
     return res.status(400).json({ error: error.message || "Unable to start a helpdesk conversation." });
@@ -123,8 +138,12 @@ router.get("/conversations/:id/messages", async (req, res) => {
   try {
     const access = await accessibleConversation(req, res);
     if (!access) return;
-    const snapshot = await access.ref.collection("messages").orderBy("createdAt", "asc").limit(500).get();
-    return res.json(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
+    const version = access.conversation.lastMessageAt || access.conversation.updatedAt || "";
+    const messages = await messageCache.get(`${access.ref.path}:${version}`, async () => {
+      const snapshot = await access.ref.collection("messages").orderBy("createdAt", "asc").limit(500).get();
+      return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+    });
+    return res.json(messages);
   } catch (error) {
     return res.status(500).json({ error: error.message || "Unable to load conversation messages." });
   }
@@ -155,9 +174,24 @@ router.post("/conversations/:id/messages", async (req, res) => {
         lastSenderName: senderName,
       });
     });
+    conversationCache.clear();
+    messageCache.clear();
     return res.status(201).json({ id: messageRef.id, ...message });
   } catch (error) {
     return res.status(Number(error.status) || 400).json({ error: error.message || "Unable to send helpdesk message." });
+  }
+});
+
+router.delete("/conversations/:id", async (req, res) => {
+  try {
+    const access = await accessibleConversation(req, res);
+    if (!access) return;
+    await access.ref.update({ hiddenFor: FieldValue.arrayUnion(userId(req.user)) });
+    conversationCache.clear();
+    messageCache.clear();
+    return res.json({ ok: true });
+  } catch (error) {
+    return res.status(500).json({ error: error.message || "Unable to delete this chat." });
   }
 });
 

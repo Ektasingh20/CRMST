@@ -1,8 +1,22 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { fetchPaymentLink, fetchWhatsAppConfig } from "./backendApi.js";
 import { buildMessage, isLocalPaymentUrl, resolveLeadTemplate, resolvePaymentUrl, sendWhatsApp } from "./whatsAppMessage.js";
 import { useMessageTemplates } from "./useMessageTemplates.js";
 import "./whatsAppModal.css";
+
+function MessageTextarea({ value, ...props }) {
+  const textareaRef = useRef(null);
+
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.style.height = "auto";
+    textarea.style.height = `${textarea.scrollHeight}px`;
+  }, [value]);
+
+  return <textarea ref={textareaRef} value={value} {...props} />;
+}
 
 export default function WhatsAppModal({ lead, leadType, currentUser, onClose, onSelectTemplate, onSent }) {
   const { templates, loading, error: templatesError } = useMessageTemplates(leadType);
@@ -89,6 +103,21 @@ export default function WhatsAppModal({ lead, leadType, currentUser, onClose, on
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [onClose]);
 
+  useEffect(() => {
+    const page = document.querySelector(".crm-root .call-list-content");
+    const previousPageOverflow = page?.style.overflow;
+    const previousBodyOverflow = document.body.style.overflow;
+    const previousHtmlOverflow = document.documentElement.style.overflow;
+    if (page) page.style.overflow = "hidden";
+    document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
+    return () => {
+      if (page) page.style.overflow = previousPageOverflow || "";
+      document.body.style.overflow = previousBodyOverflow;
+      document.documentElement.style.overflow = previousHtmlOverflow;
+    };
+  }, []);
+
   const chooseTemplate = async (id) => {
     setTemplateId(id);
     setError("");
@@ -129,16 +158,18 @@ export default function WhatsAppModal({ lead, leadType, currentUser, onClose, on
     } catch { setError("Could not copy the message. Select the preview text and copy it manually."); }
   };
 
-  return <div className="modal-surface whatsapp-modal-surface" role="dialog" aria-modal="true" aria-label="WhatsApp message">
+  return createPortal(<div className="modal-surface whatsapp-modal-surface" role="dialog" aria-modal="true" aria-label="WhatsApp message">
     <div className="modal-backdrop" onClick={onClose} />
     <div className="modal-shell whatsapp-modal-shell">
-      <div className="modal-head"><strong>Send WhatsApp to {lead.name || "contact"}</strong><button className="whatsapp-modal-close" type="button" onClick={onClose} aria-label="Close WhatsApp modal">×</button></div>
-      <div className="modal-body whatsapp-modal-body" ref={bodyRef}>
+      <div className="modal-head"><strong>Send WhatsApp to {lead.name || "contact"}</strong><button className="whatsapp-modal-close" type="button" onClick={onClose} aria-label="Close WhatsApp modal"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M5 5 19 19M19 5 5 19" /></svg></button></div>
+      <div className="whatsapp-modal-tabs-wrap">
         <div className="whatsapp-kind-tabs" role="group" aria-label="Message type">
           <button type="button" className={kind === "intro" ? "active" : ""} aria-pressed={kind === "intro"} onClick={() => chooseKind("intro")}>Greeting</button>
           <button type="button" className={kind === "course" ? "active" : ""} aria-pressed={kind === "course"} onClick={() => chooseKind("course")}>{leadType === "training" ? "Training Details" : "Service Details"}</button>
           <button type="button" className={kind === "payment" ? "active" : ""} aria-pressed={kind === "payment"} onClick={() => chooseKind("payment")}>Payment Link</button>
         </div>
+      </div>
+      <div className="modal-body whatsapp-modal-body" ref={bodyRef}>
         {kind !== "course" && configLoading && <p className="whatsapp-modal-note" role="status">Loading WhatsApp message settings…</p>}
         {kind !== "course" && configError && <p className="whatsapp-modal-error" role="alert">{configError}</p>}
         {kind !== "intro" && loading && <p className="whatsapp-modal-note" role="status">Loading message templates…</p>}
@@ -151,20 +182,20 @@ export default function WhatsAppModal({ lead, leadType, currentUser, onClose, on
         {paymentError && <p className="whatsapp-modal-error" role="alert">{paymentError}</p>}
         {kind === "payment" && selectedPaymentLink?.demo && <p className="whatsapp-modal-note">Demo amount: {paymentAmount}. No money can be collected. <a href={demoQrPreviewUrl} target="_blank" rel="noopener noreferrer">Open local QR preview</a></p>}
         {kind === "payment" && localPaymentUrl && <p className="whatsapp-modal-error" role="alert">This demo link points to localhost, so the customer cannot open it. You can preview the QR page here, but set a public CRM URL or public payment link before sharing.</p>}
-        {kind === "intro" && <label className="whatsapp-modal-field"><span>Greeting message (editable)</span><textarea rows={5} value={introMessage} onChange={(event) => { setIntroMessage(event.target.value); setCopied(false); }} /></label>}
-        {kind === "course" && <label className="whatsapp-modal-field"><span>{leadType === "training" ? "Training" : "Service"} details (editable)</span><textarea rows={8} value={detailsMessage} onChange={(event) => { setDetailsMessage(event.target.value); setCopied(false); }} placeholder="Choose a template to preview the details" /></label>}
-        {kind === "payment" && <label className="whatsapp-modal-field"><span>Payment message (editable)</span><textarea rows={8} value={paymentMessage} onChange={(event) => { setPaymentMessage(event.target.value); setCopied(false); }} placeholder="Choose a template to preview the payment message" /></label>}
+        {kind === "intro" && <label className="whatsapp-modal-field"><span>Greeting message (editable)</span><MessageTextarea rows={4} value={introMessage} onChange={(event) => { setIntroMessage(event.target.value); setCopied(false); }} /></label>}
+        {kind === "course" && <label className="whatsapp-modal-field"><span>{leadType === "training" ? "Training" : "Service"} details (editable)</span><MessageTextarea rows={4} value={detailsMessage} onChange={(event) => { setDetailsMessage(event.target.value); setCopied(false); }} placeholder="Choose a template to preview the details" /></label>}
+        {kind === "payment" && <label className="whatsapp-modal-field"><span>Payment message (editable)</span><MessageTextarea rows={4} value={paymentMessage} onChange={(event) => { setPaymentMessage(event.target.value); setCopied(false); }} placeholder="Choose a template to preview the payment message" /></label>}
         <p className="whatsapp-modal-note">If WhatsApp shows broken emoji, use Copy message and paste it into the chat.</p>
         <p className="whatsapp-modal-note">Sending as {currentUser?.name || currentUser?.username || "your account"} to {lead.contact || lead.phone || "no phone number"}.</p>
         {error && <p className="whatsapp-modal-error" role="alert">{error}</p>}
-        <div className="modal-actions">
+      </div>
+      <div className="modal-actions whatsapp-modal-actions">
           <button type="button" className="whatsapp-modal-cancel" onClick={onClose}>Cancel</button>
           <button type="button" className="whatsapp-modal-copy" onClick={copyMessage} disabled={!activeMessage.trim()}>{copied ? "Copied!" : "Copy message"}</button>
           <button type="button" className="whatsapp-modal-send" onClick={send} disabled={sending || (kind !== "course" && (configLoading || Boolean(configError))) || (kind !== "intro" && (loading || Boolean(templatesError) || !template)) || (kind === "payment" && (paymentLoading || Boolean(paymentError) || !selectedPaymentLink || localPaymentUrl)) || !activeMessage.trim()}>
             {sending ? "Opening…" : kind === "intro" ? "Open greeting" : kind === "course" ? "Open details" : "Open payment message"}
           </button>
-        </div>
       </div>
     </div>
-  </div>;
+  </div>, document.querySelector(".crm-root") || document.body);
 }

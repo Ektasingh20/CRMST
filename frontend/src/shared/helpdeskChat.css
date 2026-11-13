@@ -91,3 +91,271 @@
 @keyframes eh-toast-enter{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)}}
 @media(max-width:760px){.eh-chat-app{grid-template-columns:minmax(0,1fr);height:auto;min-height:650px}.eh-inbox{max-height:255px;border-right:0;border-bottom:1px solid var(--eh-line)}.eh-thread{min-height:390px}}
 @media(max-width:600px){.eh-messages{padding:13px 9px}.eh-bubble{max-width:90%}.eh-message-composer{padding:9px}}
+
+.eh-thread-delete{display:grid;place-items:center;flex:0 0 32px;width:32px;height:32px;padding:0;border:1px solid #e8ddd2;border-radius:8px;background:#fff;color:#806b5b;cursor:pointer}
+.eh-thread-delete:hover:not(:disabled){border-color:#d7bda7;background:#f3ede6;color:#704522}
+.eh-thread-delete:focus-visible{outline:2px solid #b8875e;outline-offset:2px}
+.eh-thread-delete:disabled{opacity:.45;cursor:wait}
+
+.crm-root .eh-helpdesk {
+  gap: 12px;
+  min-height: 0;
+  color: #2d2722;
+}
+
+.crm-root .eh-page-heading {
+  display: none;
+}
+
+.crm-root .eh-chat-app {
+  height: min(820px, calc(100vh - 60px));
+  min-height: 520px;
+  border-color: #e8ddd2;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(62, 43, 28, .04);
+}
+
+.crm-root .eh-inbox {
+  border-color: #e8ddd2;
+}
+
+.crm-root .eh-inbox-heading {
+  min-height: 62px;
+  padding: 12px 16px;
+  border-color: #eee5dc;
+}
+
+.crm-root .eh-inbox-heading h3 {
+  color: #2d2722;
+  font-size: 15px;
+}
+
+.crm-root .eh-inbox-heading small {
+  color: #776b60;
+  font-size: 13px;
+}
+
+.crm-root .eh-inbox-heading button,
+.crm-root .eh-no-selection button {
+  min-height: 34px;
+  padding: 0 11px;
+  border-color: #895832;
+  border-radius: 9px;
+  background: #895832;
+  color: #fff;
+  font-size: 13px;
+  transition: background-color .15s ease, box-shadow .15s ease;
+}
+
+.crm-root .eh-inbox-heading button:hover,
+.crm-root .eh-no-selection button:hover {
+  background: #704522;
+}
+
+.crm-root .eh-inbox-heading button:focus-visible,
+.crm-root .eh-no-selection button:focus-visible,
+.crm-root .eh-conversation:focus-visible,
+.crm-root .eh-message-composer > button:focus-visible,
+.crm-root .eh-compose-new form > button:focus-visible {
+  outline: 2px solid #b8875e;
+  outline-offset: 2px;
+}
+
+.crm-root .eh-search {
+  min-height: 38px;
+  margin: 10px 12px;
+  padding: 0 11px;
+  border-color: #e8ddd2;
+  border-radius: 9px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(62, 43, 28, .04);
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+
+.crm-root .eh-search:focus-within {
+  border-color: #b8875e;
+  box-shadow: 0 0 0 3px rgba(184, 135, 94, .13);
+}
+
+.crm-root .eh-search input {
+  font-size: 14px;
+}
+
+.crm-root .eh-conversation-list {
+  padding: 0 8px 10px;
+}
+
+.crm-root .eh-conversation {
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  gap: 9px;
+  padding: 10px 8px;
+}
+
+.crm-root .eh-conversation:hover {
+  background: #faf6f1;
+}
+
+.crm-root .eh-conversation.is-active {
+  background: #f3ede6;
+  box-shadow: inset 2px 0 #9a6a44;
+}
+
+.crm-root .eh-conversation-copy strong {
+  font-size: 14px;
+}
+
+.crm-root .eh-conversation-copy small {
+  font-size: 13px;
+}
+
+.crm-root .eh-conversation time {
+  font-size: 12px;
+}
+
+.crm-root .eh-empty-inbox,
+.crm-root .eh-loading {
+  color: #776b60;
+  font-size: 13px;
+}
+
+.crm-root .eh-thread {
+  background: #fffdfb;
+}
+
+.crm-root .eh-thread-header {
+  min-height: 62px;
+  padding: 10px 16px;
+  border-color: #eee5dc;
+}
+
+.crm-root .eh-thread-header strong {
+  color: #2d2722;
+  font-size: 14px;
+}
+
+.crm-root .eh-thread-header > div small,
+.crm-root .eh-thread-header > small {
+  color: #776b60;
+  font-size: 13px;
+}
+
+.crm-root .eh-thread-delete {
+  border-color: #eee5dc;
+  color: #806b5b;
+}
+
+.crm-root .eh-thread-delete:hover:not(:disabled) {
+  border-color: #d7bda7;
+  background: #f3ede6;
+  color: #704522;
+}
+
+.crm-root .eh-messages {
+  gap: 14px;
+  padding: 18px;
+}
+
+.crm-root .eh-bubble {
+  padding: 10px 13px;
+  border-color: #e8ddd2;
+  border-radius: 12px 12px 12px 4px;
+  box-shadow: 0 1px 2px rgba(62, 43, 28, .04);
+}
+
+.crm-root .eh-message-row.is-mine .eh-bubble {
+  border-color: #e5d6c9;
+  border-radius: 12px 12px 4px 12px;
+  background: #f7f1eb;
+}
+
+.crm-root .eh-bubble > small {
+  color: #776b60;
+  font-size: 12px;
+}
+
+.crm-root .eh-bubble > p {
+  font-size: 14px;
+}
+
+.crm-root .eh-message-composer {
+  grid-template-columns: minmax(0, 1fr) 40px;
+  gap: 8px;
+  padding: 10px 12px;
+  border-color: #eee5dc;
+}
+
+.crm-root .eh-message-composer textarea,
+.crm-root .eh-compose-new input,
+.crm-root .eh-compose-new textarea {
+  padding: 9px 11px;
+  border-color: #e8ddd2;
+  border-radius: 9px;
+  background: #fff;
+  font-size: 14px;
+}
+
+.crm-root .eh-message-composer textarea:focus,
+.crm-root .eh-compose-new input:focus,
+.crm-root .eh-compose-new textarea:focus,
+.crm-root .eh-compose-new select:focus {
+  border-color: #b8875e;
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(184, 135, 94, .13);
+}
+
+.crm-root .eh-message-composer > button,
+.crm-root .eh-compose-new form > button {
+  min-height: 40px;
+  border-radius: 9px;
+  background: #895832;
+}
+
+.crm-root .eh-message-composer > button:hover:not(:disabled),
+.crm-root .eh-compose-new form > button:hover:not(:disabled) {
+  background: #704522;
+}
+
+.crm-root .eh-message-composer > small {
+  color: #776b60;
+  font-size: 12px;
+}
+
+.crm-root .eh-compose-new h3,
+.crm-root .eh-no-selection h3 {
+  color: #2d2722;
+  font-size: 16px;
+}
+
+.crm-root .eh-compose-new > p,
+.crm-root .eh-no-selection > p {
+  color: #776b60;
+  font-size: 14px;
+}
+
+.crm-root .eh-compose-new form label {
+  font-size: 14px;
+}
+
+.crm-root .eh-compose-new form select {
+  min-height: 40px;
+  padding: 8px 11px;
+  border: 1px solid #e8ddd2;
+  border-radius: 9px;
+  background: #fff;
+  color: #2d2722;
+  font: inherit;
+}
+
+.crm-root .eh-compose-new form > button {
+  min-height: 38px;
+  padding: 0 14px;
+  font-size: 14px;
+}
+
+@media (max-width: 760px) {
+  .crm-root .eh-chat-app {
+    height: auto;
+    min-height: 650px;
+  }
+}

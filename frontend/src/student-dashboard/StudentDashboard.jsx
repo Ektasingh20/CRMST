@@ -104,6 +104,9 @@ const Icon = {
   chevronRight: (p) => (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" {...p}><path d="M9 6l6 6-6 6" /></svg>
   ),
+  arrowLeft: (p) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" {...p}><path d="m12 19-7-7 7-7" /><path d="M5 12h14" /></svg>
+  ),
   chevronDown: (p) => (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" {...p}><path d="M6 9l6 6 6-6" /></svg>
   ),
@@ -199,6 +202,9 @@ function Badge({ children, tone = "neutral" }) {
     neutral: { bg: C.pillBg, color: C.textSecondary, border: C.pillBorder },
     green: { bg: C.greenBg, color: C.green, border: "transparent" },
     amber: { bg: C.amberBg, color: C.amber, border: "transparent" },
+    blue: { bg: "#e7f1fb", color: "#245b8f", border: "#d3e5f6" },
+    purple: { bg: "#f1eafa", color: "#6843a0", border: "#e5d8f4" },
+    slate: { bg: "#edf0f3", color: "#4e5968", border: "#dfe4e9" },
   };
   const t = tones[tone];
   return (
@@ -525,13 +531,36 @@ function ResourceModal({ resource, onClose, onUpload }) {
   const [file, setFile] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState("");
+  const [downloading, setDownloading] = useState(false);
   useEffect(() => {
     setFile(null);
     setUploading(false);
     setUploadError("");
+    setDownloading(false);
   }, [resource?.courseId, resource?.lessonId, resource?.taskId]);
   if (!resource) return null;
   const chooseFile = (event) => { setFile(event.target.files?.[0] || null); setUploadError(""); };
+  const downloadPdf = async () => {
+    if (!resource.adminUrl || downloading) return;
+    setDownloading(true);
+    setUploadError("");
+    try {
+      const response = await fetch(resource.adminUrl);
+      if (!response.ok) throw new Error("PDF download failed.");
+      const blobUrl = URL.createObjectURL(await response.blob());
+      const link = document.createElement("a");
+      link.href = blobUrl;
+      link.download = resource.fileName || `${resource.title || "assignment"}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+    } catch {
+      setUploadError("Could not download the PDF directly. Use View PDF to open it and save it from your browser.");
+    } finally {
+      setDownloading(false);
+    }
+  };
   const submitPdf = async () => {
     if (!file || uploading) return;
     setUploading(true);
@@ -547,22 +576,24 @@ function ResourceModal({ resource, onClose, onUpload }) {
   };
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(33,28,46,0.62)", zIndex: 220, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-      <div onClick={(event) => event.stopPropagation()} style={{ background: C.card, borderRadius: 20, maxWidth: 480, width: "100%", padding: 24, boxShadow: "0 20px 60px rgba(0,0,0,0.28)" }}>
+      <div role="dialog" aria-modal="true" aria-label={resource.title} onClick={(event) => event.stopPropagation()} style={{ background: C.card, borderRadius: 20, maxWidth: resource.kind === "assignment" ? 760 : 480, maxHeight: "90vh", overflowY: "auto", width: "100%", padding: 24, boxShadow: "0 20px 60px rgba(0,0,0,0.28)" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 18 }}>
           <div><h3 style={{ margin: 0, fontSize: 17 }}>{resource.title}</h3><p style={{ margin: "4px 0 0", color: C.textSecondary, fontSize: 16 }}>{resource.courseTitle}</p></div>
           <button onClick={onClose} aria-label="Close" style={{ background: C.pillBg, border: `1px solid ${C.pillBorder}`, borderRadius: 9, width: 32, height: 32, cursor: "pointer" }}><Icon.x style={{ width: 15, height: 15 }} /></button>
         </div>
-        {resource.adminUrl ? <Btn variant="outline" style={{ width: "100%", marginBottom: 12 }} onClick={() => window.open(resource.adminUrl, "_blank", "noopener,noreferrer")}>View PDF</Btn> : <p style={{ fontSize: 16, color: C.textMuted }}>Admin PDF is not available yet.</p>}
+        {resource.adminUrl ? <div style={{ display: "flex", gap: 10, marginBottom: 12 }}><Btn variant="outline" style={{ flex: 1 }} onClick={() => window.open(resource.adminUrl, "_blank", "noopener,noreferrer")}>View PDF</Btn><Btn variant="outline" style={{ flex: 1 }} disabled={downloading} onClick={downloadPdf}>{downloading ? "Downloading..." : "Download PDF"}</Btn></div> : <p style={{ fontSize: 16, color: C.textMuted }}>Admin PDF is not available yet.</p>}
+        {resource.kind === "assignment" && resource.adminUrl && <iframe title={`${resource.title} PDF`} src={resource.adminUrl} style={{ display: "block", width: "100%", height: "min(42vh, 400px)", marginBottom: 14, border: `1px solid ${C.border}`, borderRadius: 10 }} />}
         {resource.kind === "assignment" ? (
           <>
+            {resource.studentUrl && <a href={resource.studentUrl} target="_blank" rel="noopener noreferrer" style={{ display: "inline-block", marginBottom: 12, color: C.accent, fontWeight: 700 }}>View your submitted PDF</a>}
             <label style={{ display: "block", padding: 14, border: `1px dashed ${C.pillBorder}`, borderRadius: 12, fontSize: 16, color: C.textSecondary, cursor: "pointer" }}>
-              Upload your PDF
+              {resource.studentUrl ? "Upload an updated PDF" : "Upload your PDF"}
               <input type="file" accept=".pdf,application/pdf" onChange={chooseFile} disabled={uploading} style={{ display: "block", marginTop: 8, width: "100%" }} />
             </label>
             {uploadError && <p role="alert" style={{ margin: "12px 0 0", color: "#b54730", fontSize: 16 }}>{uploadError}</p>}
-            <Btn variant="primary" disabled={!file || uploading} style={{ width: "100%", marginTop: 14 }} onClick={submitPdf}>{uploading ? "Uploading and saving..." : "Submit PDF"}</Btn>
+            <Btn variant="primary" disabled={!file || uploading} style={{ width: "100%", marginTop: 14 }} onClick={submitPdf}>{uploading ? "Uploading and saving..." : resource.studentUrl ? "Update PDF" : "Submit PDF"}</Btn>
           </>
-        ) : null}
+        ) : uploadError && <p role="alert" style={{ margin: "12px 0 0", color: "#b54730", fontSize: 16 }}>{uploadError}</p>}
       </div>
     </div>
   );
@@ -571,7 +602,7 @@ function ResourceModal({ resource, onClose, onUpload }) {
 /* ============================================================
    COURSE PLAYER — Udemy / YouTube style playlist layout
    ============================================================ */
-function CoursePlayer({ course, lessonProgress, activeLessonUID, activeTab, onSelectLesson, onSetTab, onMarkWatched, onMarkProgress, onStudySeconds, onOpenResource, onBack }) {
+function CoursePlayer({ course, lessonProgress, activeLessonUID, activeTab, onSelectLesson, onSetTab, onMarkWatched, onMarkProgress, onStudySeconds, onOpenResource, onBack, backLabel }) {
   const groups = useMemo(() => getCourseSectionGroups(course, lessonProgress), [course, lessonProgress]);
   const flatLessons = useMemo(() => groups.flatMap((g) => g.lessons), [groups]);
   const currentLesson = flatLessons.find((l) => getLessonUID(l) === activeLessonUID) || flatLessons[0] || null;
@@ -678,7 +709,7 @@ function CoursePlayer({ course, lessonProgress, activeLessonUID, activeTab, onSe
       {/* LEFT RAIL — dark, matches the app's sidebar palette */}
       <div className="cp-rail" style={{ background: `linear-gradient(180deg, ${C.sidebarBg}, #0c0c0e)`, borderRight: "1px solid rgba(178,147,118,0.14)", display: "flex", flexDirection: "column", height: "100%", minHeight: "100%" }}>
         <button onClick={onBack} style={{ display: "flex", alignItems: "center", gap: 8, background: "none", border: "none", color: "rgba(255,255,255,0.7)", fontSize: 16, fontWeight: 700, padding: "18px 18px 4px", cursor: "pointer", fontFamily: "inherit" }}>
-          <Icon.chevronRight style={{ width: 13, height: 13, transform: "rotate(180deg)" }} /> Back to My Courses
+          <Icon.arrowLeft style={{ width: 17, height: 17, flexShrink: 0 }} /> <span>Back to {backLabel}</span>
         </button>
 
         <div style={{ display: "flex", gap: 12, alignItems: "flex-start", padding: "14px 18px 16px", borderBottom: "1px solid rgba(178,147,118,0.14)" }}>
@@ -902,7 +933,8 @@ function TaskDropdownList({ lesson, course, onOpenResource }) {
                     variant="primary"
                     disabled={!lesson.videoCompleted}
                     onClick={() => onOpenResource({
-                      title: task.title || lesson.title, courseTitle: course.title, adminUrl: task.pdfUrl, kind: "assignment",
+                      title: task.title || lesson.title, courseTitle: course.title, adminUrl: task.pdfUrl, fileName: task.fileName || "",
+                      studentUrl: taskSubmission?.taskStudentPdfUpload || "", kind: "assignment",
                       progressKey: getLessonProgressKey(course.id, lesson), courseId: course.id, lessonId: lesson.id, taskId, section: lesson.section,
                     })}
                   >
@@ -978,21 +1010,22 @@ function SectionHead({ title, right }) {
 }
 
 function AssignmentsTable({ rows, onOpen }) {
-  const badgeTone = { Pending: "amber", Locked: "neutral", Open: "amber", "Open after video": "neutral", Ready: "green", Completed: "green", Submitted: "neutral", Evaluated: "green", Graded: "green" };
+  const badgeTone = { Pending: "blue", Locked: "slate", Open: "blue", "Open after video": "slate", Completed: "green", Submitted: "amber", Evaluated: "purple", Graded: "purple" };
   return (
-    <div style={{ overflowX: "auto" }}>
-      <table style={{ width: "100%", minWidth: 840, borderCollapse: "collapse" }}>
-        <thead><tr>{["Assignment", "Course", "Due Date", "Status", "Marks", "Action"].map((heading) => (
-          <th key={heading} style={{ textAlign: "left", textTransform: "uppercase", letterSpacing: "0.05em", color: C.textMuted, padding: "12px 20px", background: C.pillBg, borderBottom: `1px solid ${C.border}`, fontWeight: 700 }}>{heading}</th>
+    <div className="student-assignment-table-wrap">
+      <table className="student-assignment-table" style={{ width: "100%", minWidth: 840, borderCollapse: "collapse" }}>
+        <thead><tr>{["Sr No", "Assignment", "Course", "Due Date", "Status", "Marks", "Action"].map((heading) => (
+          <th key={heading} scope="col" style={{ textAlign: "left", textTransform: "uppercase", letterSpacing: "0.05em", color: C.textMuted, padding: heading === "Sr No" ? "12px 10px 12px 20px" : "12px 20px", width: heading === "Sr No" ? 76 : undefined, whiteSpace: heading === "Sr No" ? "nowrap" : undefined, background: C.pillBg, borderBottom: `1px solid ${C.border}`, fontWeight: 700 }}>{heading}</th>
         ))}</tr></thead>
         <tbody>{rows.map((assignment, index) => (
           <tr key={`${assignment.courseId || "course"}:${String(assignment.section || "General").trim().toLowerCase()}:${assignment.lessonId || "lesson"}:${assignment.id || index}`}>
+            <td style={{ ...cellStyle(index, rows.length), padding: "12px 10px 12px 20px" }}><span className="student-assignment-serial">{index + 1}</span></td>
             <td style={cellStyle(index, rows.length)}><div style={{ fontWeight: 700 }}>{assignment.name}</div></td>
             <td style={cellStyle(index, rows.length)}>{assignment.course}</td>
             <td style={cellStyle(index, rows.length)}>{assignment.due || "No due date"}</td>
             <td style={cellStyle(index, rows.length)}><Badge tone={badgeTone[assignment.status] || "neutral"}>{assignment.status}</Badge></td>
-            <td style={{ ...cellStyle(index, rows.length), fontWeight: assignment.status === "Graded" ? 700 : 400, color: assignment.status === "Graded" ? C.green : C.textMuted, whiteSpace: "nowrap" }}>{formatAssignmentMarks(assignment)}</td>
-            <td style={cellStyle(index, rows.length)}><button type="button" onClick={() => onOpen?.(assignment)} style={{ border: 0, background: "none", padding: 0, font: "inherit", fontWeight: 700, color: C.accent, cursor: "pointer" }}>Open</button></td>
+            <td style={{ ...cellStyle(index, rows.length), fontWeight: assignment.status === "Graded" ? 700 : 400, color: assignment.status === "Graded" ? "#6843a0" : C.textMuted, whiteSpace: "nowrap" }}>{formatAssignmentMarks(assignment)}</td>
+            <td style={cellStyle(index, rows.length)}><button type="button" className="student-assignment-open" onClick={() => onOpen?.(assignment)}>Open <Icon.chevronRight style={{ width: 14, height: 14 }} /></button></td>
           </tr>
         ))}</tbody>
       </table>
@@ -1099,12 +1132,15 @@ function initials(name) {
 export default function StudentDashboard({ user, onLogout, onProfileUpdated, courses = [], notifications = [], enrollmentRequests = [], onRefreshNotifications, onReadNotification, onReadAllNotifications, uploadStudentResource, saveLessonProgress, loadCourse, onLoadCourseCatalog, onRequestCourseEnrollment }) {
   const recentCourseStorageKey = `crmst-recent-course-${user?.id || user?._id || "student"}`;
   const [activeNav, setActiveNav] = useState("dashboard");
+  const [assignmentsReturnNav, setAssignmentsReturnNav] = useState("dashboard");
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [navSearch, setNavSearch] = useState("");
   const [query, setQuery] = useState("");
   const [openCourse, setOpenCourse] = useState(null);
   const [playerCourseId, setPlayerCourseId] = useState(null);
   const [playerLessonUID, setPlayerLessonUID] = useState(null);
   const [playerTab, setPlayerTab] = useState("about");
+  const [playerReturnNav, setPlayerReturnNav] = useState("my-courses");
   const [recentCourseId, setRecentCourseId] = useState(() => {
     try { return window.localStorage.getItem(recentCourseStorageKey) || ""; } catch { return ""; }
   });
@@ -1319,7 +1355,7 @@ export default function StudentDashboard({ user, onLogout, onProfileUpdated, cou
       taskCompleted: lesson.assignmentCompleted,
       completed: lesson.completed,
       submitted,
-      status: graded ? "Graded" : submitted ? "Submitted" : lesson.videoCompleted ? "Ready" : "Locked",
+      status: graded ? "Graded" : submitted ? "Submitted" : lesson.videoCompleted ? "Pending" : "Locked",
       submission,
       dueValue: task.dueDate || task.dueAt || task.deadline || task.due || "",
     };
@@ -1427,7 +1463,7 @@ export default function StudentDashboard({ user, onLogout, onProfileUpdated, cou
     return getLessonUID(next || flat[0] || {});
   };
 
-  const openCoursePlayer = async (course, lessonUID) => {
+  const openCoursePlayer = async (course, lessonUID, returnNav = activeNav) => {
     if (!course) return;
     setOpenCourse(null);
     let playableCourse = course;
@@ -1452,8 +1488,28 @@ export default function StudentDashboard({ user, onLogout, onProfileUpdated, cou
     setPlayerCourseId(course.id);
     setPlayerLessonUID(lessonUID || pickDefaultLessonUID(playableCourse));
     setPlayerTab("about");
+    setPlayerReturnNav(returnNav === "course-player" ? "my-courses" : returnNav);
     setActiveNav("course-player");
     setMobileOpen(false);
+  };
+  const openAssignment = (assignment) => {
+    if (assignment.status === "Locked") {
+      openCoursePlayer(enrolledCourses.find((course) => course.id === assignment.courseId), assignment.lessonUID, "assignments");
+      return;
+    }
+    setOpenResource({
+      title: assignment.title || assignment.lessonTitle || "Assignment",
+      courseTitle: assignment.courseTitle,
+      adminUrl: assignment.pdfUrl || "",
+      fileName: assignment.fileName || "",
+      studentUrl: assignment.submission?.taskStudentPdfUpload || "",
+      kind: "assignment",
+      progressKey: getLessonProgressKey(assignment.courseId, assignment.lesson),
+      courseId: assignment.courseId,
+      lessonId: assignment.lessonId,
+      taskId: assignment.taskId,
+      section: assignment.section,
+    });
   };
   const playerCourse = catalogCourses.find((c) => c.id === playerCourseId) || null;
   const activePlayerLesson = useMemo(() => {
@@ -1498,6 +1554,9 @@ export default function StudentDashboard({ user, onLogout, onProfileUpdated, cou
       }
       return;
     }
+    if (id === "assignments" && activeNav !== "assignments" && activeNav !== "course-player") {
+      setAssignmentsReturnNav(activeNav);
+    }
     setActiveNav(id);
     setMobileOpen(false);
   };
@@ -1516,11 +1575,15 @@ export default function StudentDashboard({ user, onLogout, onProfileUpdated, cou
       <style>{`
         .sd-student-root, .sd-student-root * { box-sizing: border-box; }
         .sd-student-root button, .sd-student-root input, .sd-student-root select, .sd-student-root textarea { font-family: inherit; font-size: 16px; }
+        .student-assignment-open { display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 7px 12px; min-height: 36px; border: 1px solid #8d5e38; border-radius: 9px; background: #8d5e38; color: #fff; font-weight: 700; cursor: pointer; transition: background .15s ease, box-shadow .15s ease; }
+        .student-assignment-open:hover { background: #643e23; box-shadow: 0 3px 9px rgba(100, 62, 35, .2); }
+        .student-assignment-open:focus-visible { outline: 3px solid #e7b586; outline-offset: 2px; }
+        .student-assignment-serial { display: inline; min-width: 0; min-height: 0; padding: 0; border-radius: 0; background: transparent; color: #1f1a17; font-weight: 400; }
         @keyframes course-load-spin { to { transform: rotate(360deg); } }
-        @media (max-width: 1650px) {
+        @media (max-width: 1320px) {
           .courses-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
         }
-        @media (max-width: 1180px) {
+        @media (max-width: 980px) {
           .summary-grid { grid-template-columns: repeat(2, 1fr) !important; }
           .two-col { grid-template-columns: 1fr !important; }
         }
@@ -1545,9 +1608,9 @@ export default function StudentDashboard({ user, onLogout, onProfileUpdated, cou
           height: 100vh;
           min-height: 0;
           display: grid !important;
-          grid-template-columns: 320px 1fr;
-          padding: 16px;
-          gap: 16px;
+          grid-template-columns: 300px minmax(0, 1fr);
+          padding: 10px;
+          gap: 12px;
           overflow: hidden;
         }
         .sd-sidebar {
@@ -1555,22 +1618,48 @@ export default function StudentDashboard({ user, onLogout, onProfileUpdated, cou
           width: auto !important;
           height: calc(100vh - 32px);
           min-height: 0;
-          border-radius: 30px !important;
-          padding: 18px 14px 14px !important;
+          border-radius: 24px !important;
+          padding: 12px 10px 10px !important;
           box-shadow: 0 24px 50px rgba(8, 9, 10, 0.22) !important;
           overflow: hidden;
           scrollbar-width: none;
         }
         .sd-sidebar::-webkit-scrollbar,
-        .sd-sidebar nav::-webkit-scrollbar,
         .sd-content::-webkit-scrollbar {
           display: none;
           width: 0;
           height: 0;
         }
-        .sd-sidebar nav {
-          scrollbar-width: none;
-        }
+        .sd-sidebar-nav { scrollbar-width: thin; scrollbar-color: #666 #171719; }
+        .sd-sidebar-nav::-webkit-scrollbar { width: 6px; }
+        .sd-sidebar-nav::-webkit-scrollbar-thumb { background: #666; border-radius: 999px; }
+        .sd-sidebar-brand { display: flex; align-items: center; gap: 8px; padding: 2px 5px 12px; border-bottom: 1px solid rgba(178,147,118,.12); }
+        .sd-sidebar-brand-name { color: #fff; font-size: 16px; font-weight: 700; white-space: nowrap; }
+        .sd-sidebar-brand-subtitle { margin-top: 1px; color: rgba(255,255,255,.66); font-size: 16px; }
+        .sd-sidebar-profile { display: flex; flex-direction: column; align-items: center; gap: 12px; width: calc(100% - 24px); max-width: 288px; margin: 14px auto 0; padding: 16px 12px 18px; color: #fff; text-align: center; }
+        .sd-sidebar-avatar { display: grid; place-items: center; flex: 0 0 150px; width: 150px; height: 150px; overflow: hidden; border: 3px solid rgba(255,255,255,.8); border-radius: 8px; background: linear-gradient(135deg,#df684b,#ad3e2d); color: #fff; font-size: 3.5rem; font-weight: 800; }
+        .sd-sidebar-avatar img { display: block; width: 100%; height: 100%; object-fit: cover; }
+        .sd-sidebar-profile-name { color: #fff; font-size: 16px; font-weight: 700; overflow-wrap: anywhere; }
+        .sd-sidebar-profile-role { color: rgba(255,255,255,.6); font-size: 16px; }
+        .sd-sidebar-search { display: flex; align-items: center; gap: 7px; height: 34px; margin: 10px 3px 6px; padding: 0 10px; border: 1px solid rgba(225,86,54,.4); border-radius: 10px; background: rgba(255,255,255,.04); color: rgba(255,255,255,.62); }
+        .sd-sidebar-search svg { flex: 0 0 16px; width: 16px; height: 16px; }
+        .sd-sidebar-search input { width: 100%; min-width: 0; padding: 0; border: 0; outline: 0; background: transparent; color: #fff; }
+        .sd-sidebar-search input::placeholder { color: rgba(255,255,255,.5); }
+        .sd-sidebar-nav { flex: 1; min-height: 0; overflow-y: auto; padding: 2px 3px; }
+        .sd-sidebar-section { margin-bottom: 8px; }
+        .sd-sidebar-section + .sd-sidebar-section { margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,.12); }
+        .sd-sidebar-section-label { margin: 8px 8px 4px; color: rgba(255,255,255,.52); font-size: 16px; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; }
+        .sd-sidebar-link { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 48px; padding: 8px 9px; border: 1px solid transparent; border-radius: 10px; background: transparent; color: rgba(255,255,255,.88); text-align: left; font-size: 16px; font-weight: 700; letter-spacing: .01em; cursor: pointer; }
+        .sd-sidebar-link:hover:not(.active) { background: rgba(255,255,255,.055); color: #fff; border-color: rgba(255,255,255,.12); }
+        .sd-sidebar-link.active { background: linear-gradient(135deg,rgba(41,41,44,.92),rgba(28,28,31,.95)); color: #fff; border-color: rgba(215,86,56,.78); box-shadow: inset 3px 0 0 #f06a4a,0 5px 14px rgba(0,0,0,.2); }
+        .sd-sidebar-link svg { flex: 0 0 18px; width: 18px; height: 18px; }
+        .sd-sidebar-link-label { min-width: 0; }
+        .sd-sidebar-link .sd-sidebar-chevron { flex: 0 0 13px; width: 13px; height: 13px; margin-left: auto; opacity: .45; }
+        .sd-sidebar-badge { display: grid; place-items: center; min-width: 26px; height: 26px; margin-left: auto; padding: 0 6px; border-radius: 999px; background: linear-gradient(135deg,#d26147,#9a3828); color: #fff; font-size: 16px; font-weight: 800; box-shadow: 0 8px 18px rgba(173,63,42,.3); }
+        .sd-sidebar-footer { padding: 12px 8px 2px; border-top: 1px solid rgba(216,82,53,.28); }
+        .sd-sidebar-logout { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 48px; padding: 8px 9px; border: 1px solid transparent; border-radius: 10px; background: transparent; color: #fff; text-align: left; font-size: 16px; font-weight: 700; cursor: pointer; }
+        .sd-sidebar-logout:hover { background: rgba(255,255,255,.055); }
+        .sd-sidebar-logout svg { flex: 0 0 18px; width: 18px; height: 18px; }
         .sd-main {
           margin-left: 0 !important;
           min-width: 0;
@@ -1609,7 +1698,7 @@ export default function StudentDashboard({ user, onLogout, onProfileUpdated, cou
         .dashboard-empty { padding-top: 12px; border-top: 1px solid #eee8dc; color: #675d55; }
         .dashboard-attention { margin-top: 18px; border-color: #efcba5; background: #fff8ef; }
         .dashboard-attention p { margin: 0; color: #675d55; }
-        @media (max-width: 1200px) { .dashboard-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+        @media (max-width: 980px) { .dashboard-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
         @media (max-width: 700px) { .dashboard-feeds { grid-template-columns: 1fr; } }
         @media (max-width: 480px) { .dashboard-summary-grid { grid-template-columns: 1fr; } }
         .sd-topbar {
@@ -1625,6 +1714,21 @@ export default function StudentDashboard({ user, onLogout, onProfileUpdated, cou
           overflow-y: auto;
           overflow-x: hidden;
           scrollbar-width: none;
+        }
+        .student-assignment-table-wrap {
+          width: 100%;
+          min-width: 0;
+          max-width: 100%;
+          overflow-x: auto;
+          overflow-y: hidden;
+          overscroll-behavior-x: contain;
+          -webkit-overflow-scrolling: touch;
+        }
+        .student-assignment-table {
+          display: table;
+          width: 100%;
+          min-width: 840px;
+          table-layout: auto;
         }
         .sd-logo-badge {
           width: 42px;
@@ -1656,15 +1760,35 @@ export default function StudentDashboard({ user, onLogout, onProfileUpdated, cou
           border-radius: 999px;
         }
         @media (max-width: 860px) {
+          .sd-sidebar {
+            position: fixed !important;
+            top: 12px !important;
+            bottom: 12px !important;
+            left: 12px !important;
+            width: min(300px, calc(100vw - 24px)) !important;
+            height: auto !important;
+            transform: translateX(-110%);
+          }
+          .sd-sidebar.open { transform: translateX(0); }
           .sd-shell {
-            height: auto;
-            min-height: 100vh;
-            overflow: visible;
+            width: 100%;
+            height: auto !important;
+            min-height: 100vh !important;
+            overflow: visible !important;
           }
           .sd-main {
-            height: auto;
-            min-height: calc(100vh - 24px);
+            width: 100%;
+            max-width: 100%;
+            height: auto !important;
+            min-height: calc(100vh - 24px) !important;
           }
+          .sd-content { padding: 16px !important; }
+        }
+        /* Match the browser's 80% desktop zoom without shrinking dialogs or overlays. */
+        @media (min-width: 981px) {
+          .sd-shell { zoom: .8; width: 100%; height: 125vh; }
+          .sd-sidebar, .sd-main { height: calc(125vh - 32px); }
+          .sd-student-root .cp-wrap { height: calc(125vh - 88px) !important; }
         }
       `}</style>
 
@@ -1679,50 +1803,47 @@ export default function StudentDashboard({ user, onLogout, onProfileUpdated, cou
           display: "flex", flexDirection: "column", zIndex: 100, transition: "transform .2s ease",
           boxShadow: "0 24px 50px rgba(8,9,10,0.22)",
         }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "4px 8px 16px", margin: "18px 14px 0", borderBottom: "1px solid rgba(178,147,118,0.12)" }}>
+          <div className="sd-sidebar-brand">
             <div className="sd-logo-badge"><span>S</span><i /><span>T</span></div>
             <div>
-              <div style={{ fontWeight: 700, fontSize: 16, color: C.sidebarTextBright, whiteSpace: "nowrap" }}>SYSTEM TECHNOLOGIES</div>
-              <div style={{ fontSize: 16, color: "rgba(255,255,255,0.66)", marginTop: 1 }}>Ajmer Student Portal</div>
+              <div className="sd-sidebar-brand-name">SYSTEM TECHNOLOGIES</div>
+              <div className="sd-sidebar-brand-subtitle">Ajmer Student Portal</div>
             </div>
           </div>
 
-          <button type="button" onClick={() => handleNav("profile")} style={{ display: "flex", flexDirection: "column", alignItems: "center", width: "calc(100% - 24px)", margin: "12px 12px 0", padding: "12px", border: `1px solid ${C.sidebarBorder}`, borderRadius: 16, background: C.sidebarHover, cursor: "pointer", fontFamily: "inherit", textAlign: "center" }}>
-            <span style={{ width: 68, height: 68, display: "grid", placeItems: "center", flexShrink: 0, overflow: "hidden", borderRadius: 14, background: C.badgeBg, color: C.badgeIcon, fontSize: 23, fontWeight: 800 }}>
-              {user?.imageUrl ? <img src={user.imageUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : studentInitials}
+          <div className="sd-sidebar-profile">
+            <span className="sd-sidebar-avatar">
+              {user?.imageUrl ? <img src={user.imageUrl} alt="" /> : studentName.trim().charAt(0).toUpperCase() || "S"}
             </span>
-            <strong style={{ marginTop: 8, color: C.sidebarTextBright, fontSize: 16, overflowWrap: "anywhere" }}>{studentName}</strong>
-            <span style={{ marginTop: 2, color: C.sidebarLabel, fontSize: 16 }}>Student</span>
-          </button>
+            <strong className="sd-sidebar-profile-name">{studentName}</strong>
+            <span className="sd-sidebar-profile-role">Student</span>
+          </div>
 
-          <nav style={{ flex: 1, overflowY: "auto", padding: "4px 12px 10px" }}>
-            {NAV_SECTIONS.map(section => (
-              <div key={section.label}>
-                <div style={{ fontSize: 16, textTransform: "uppercase", letterSpacing: "0.12em", color: C.sidebarLabel, fontWeight: 800, padding: "12px 10px 5px" }}>{section.label}</div>
+          <div className="sd-sidebar-search">
+            <Icon.search aria-hidden="true" />
+            <input aria-label="Search menu" placeholder="Search menu" value={navSearch} onChange={(event) => setNavSearch(event.target.value)} />
+          </div>
+
+          <nav className="sd-sidebar-nav">
+            {NAV_SECTIONS.map(section => ({ ...section, items: section.items.filter(item => item.label.toLowerCase().includes(navSearch.trim().toLowerCase())) })).filter(section => section.items.length > 0).map(section => (
+              <div className="sd-sidebar-section" key={section.label}>
+                <div className="sd-sidebar-section-label">{section.label}</div>
                 {section.items.map(item => {
                   const active = activeNav === item.id;
                   return (
                     <button type="button"
                       key={item.id}
+                      className={`sd-sidebar-link${active ? " active" : ""}`}
                       aria-current={active ? "page" : undefined}
                       onClick={() => handleNav(item.id)}
-                      style={{
-                        width: "100%", display: "flex", alignItems: "center", gap: 11, padding: "9px 12px", borderRadius: 12, textAlign: "left", fontFamily: "inherit",
-                        color: active ? "#fff" : C.sidebarText, background: active ? "linear-gradient(135deg, rgba(41,41,44,0.92), rgba(28,28,31,0.95))" : "transparent",
-                        border: active ? "1px solid rgba(215,86,56,0.48)" : "1px solid transparent", fontSize: 16, fontWeight: 700, marginBottom: 1, cursor: "pointer", position: "relative",
-                        boxShadow: active ? "inset 3px 0 0 #d55c41" : "none",
-                      }}
-                      onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = C.sidebarHover; }}
-                      onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = "transparent"; }}
                     >
-                      {active && <span style={{ position: "absolute", left: 0, top: 8, width: 3, height: 18, background: "#d55c41", borderRadius: "0 3px 3px 0" }} />}
-                      <item.icon style={{ width: 16, height: 16, opacity: 0.9, flexShrink: 0 }} />
-                      <span>{item.label}</span>
+                      <item.icon aria-hidden="true" />
+                      <span className="sd-sidebar-link-label">{item.label}</span>
                       {item.id === "announcements" && unreadCount > 0 && (
-                        <span style={{ marginLeft: "auto", background: "#e2734a", color: "#fff", fontSize: 16, fontWeight: 700, borderRadius: 10, padding: "1px 6px" }}>{unreadCount}</span>
+                        <span className="sd-sidebar-badge">{unreadCount}</span>
                       )}
                       {["all-courses", "my-courses"].includes(item.id) && !(item.id === "announcements" && unreadCount > 0) && (
-                        <Icon.chevronRight style={{ width: 13, height: 13, opacity: 0.45, marginLeft: "auto" }} />
+                        <Icon.chevronRight className="sd-sidebar-chevron" aria-hidden="true" />
                       )}
                     </button>
                   );
@@ -1731,8 +1852,8 @@ export default function StudentDashboard({ user, onLogout, onProfileUpdated, cou
             ))}
           </nav>
 
-          <div style={{ borderTop: "1px solid rgba(216,82,53,0.28)", padding: "18px 26px 20px" }}>
-            <button type="button" onClick={() => handleNav("logout")} style={{ width: "100%", border: 0, background: "transparent", color: C.sidebarTextBright, display: "flex", alignItems: "center", gap: 12, padding: "8px 0", cursor: "pointer", fontFamily: "inherit", fontSize: 16, textAlign: "left" }}><Icon.logout style={{ width: 21, height: 21, color: "#fff" }} />Logout</button>
+          <div className="sd-sidebar-footer">
+            <button className="sd-sidebar-logout" type="button" onClick={() => handleNav("logout")}><Icon.logout aria-hidden="true" />Logout</button>
           </div>
         </aside>
 
@@ -1749,6 +1870,9 @@ export default function StudentDashboard({ user, onLogout, onProfileUpdated, cou
                   <h1 style={{ fontSize: 17, margin: 0, fontWeight: 700 }}>{meta.title}</h1>
                   <p style={{ margin: "2px 0 0", fontSize: 16, color: C.textSecondary }}>{activeNav === "dashboard" ? `Welcome back, ${studentName}! Here's what needs your attention.` : meta.sub}</p>
                 </div>
+              )}
+              {activeNav === "course-player" && (
+                <button type="button" onClick={() => handleNav(playerReturnNav)} style={{ display: "inline-flex", alignItems: "center", gap: 9, padding: "10px 15px", border: `1px solid ${C.accent}`, borderRadius: 11, background: C.accent, color: "#fff", fontWeight: 700, cursor: "pointer" }}><Icon.arrowLeft style={{ width: 18, height: 18, flexShrink: 0 }} /><span>Back to {PAGE_META[playerReturnNav]?.title || "My Courses"}</span></button>
               )}
             </div>
 
@@ -1890,7 +2014,8 @@ export default function StudentDashboard({ user, onLogout, onProfileUpdated, cou
                   onMarkProgress={markLessonProgress}
                   onStudySeconds={recordStudySeconds}
                   onOpenResource={setOpenResource}
-                  onBack={() => handleNav("my-courses")}
+                  onBack={() => handleNav(playerReturnNav)}
+                  backLabel={PAGE_META[playerReturnNav]?.title || "My Courses"}
                 />
               ) : (
                 <div style={{ padding: 24, color: C.textSecondary }}>Select a course from My Courses to start learning.</div>
@@ -1898,12 +2023,12 @@ export default function StudentDashboard({ user, onLogout, onProfileUpdated, cou
             )}
 
             {activeNav === "assignments" && (
-              <Panel title="Course Assignments">
+              <Panel title="Course Assignments" right={<Btn variant="outline" onClick={() => handleNav(assignmentsReturnNav)}><Icon.arrowLeft style={{ width: 17, height: 17 }} />Back to {PAGE_META[assignmentsReturnNav]?.title || "Dashboard"}</Btn>}>
                 {assignmentsLoading ? <div role="status" style={{ padding: 24, color: C.textSecondary }}>Loading your assignments...</div> : assignmentLoadError ? <div style={{ padding: 24, color: C.textSecondary }}>Some assignments could not load. <button type="button" onClick={() => setAssignmentLoadAttempt((attempt) => attempt + 1)} style={{ border: 0, padding: 0, background: "none", color: C.accent, cursor: "pointer", fontWeight: 700 }}>Retry</button></div> : assignments.length ? (
                   <div style={{ overflowX: "auto" }}>
                     <AssignmentsTable
                       rows={assignments.map((assignment) => ({ ...assignment, name: assignment.title || "Assignment", course: assignment.courseTitle, due: formatStudentDate(assignment.dueValue) }))}
-                      onOpen={(assignment) => openCoursePlayer(enrolledCourses.find((course) => course.id === assignment.courseId), assignment.lessonUID)}
+                      onOpen={openAssignment}
                     />
                   </div>
                 ) : <div style={{ padding: 24, color: C.textSecondary }}>No assignments are available in your enrolled courses.</div>}

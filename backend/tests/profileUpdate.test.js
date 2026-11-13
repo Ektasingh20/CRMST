@@ -6,7 +6,7 @@ const { default: User } = await import("../models/User.js");
 const { updateUser } = await import("../controllers/usersController.js");
 
 test("profile updates find Firestore IDs and return saved fields and photo without a password", async () => {
-  const existing = { _id: "admin_01", name: "Old name" };
+  const existing = { _id: "admin_01", name: "Old name", role: "Admin", dept: "Admin", toObject() { return { _id: this._id, name: this.name, role: this.role, dept: this.dept }; } };
   const payload = {
     name: "Updated name", email: "ADMIN@example.com", phone: "9876543210",
     imageUrl: "https://example.com/profile.webp", imagePublicId: "profile-photo",
@@ -18,7 +18,7 @@ test("profile updates find Firestore IDs and return saved fields and photo witho
   });
   const update = mock.method(User, "findOneAndUpdate", async (query, values) => {
     assert.deepEqual(query, { _id: "admin_01" });
-    return { toObject: () => ({ ...existing, ...values, password: "private-hash" }) };
+    return { _id: "admin_01", toObject: () => ({ ...existing.toObject(), ...values, password: "private-hash" }) };
   });
   let response;
   const res = { status(code) { assert.fail(`Unexpected HTTP ${code}`); }, json(value) { response = value; } };

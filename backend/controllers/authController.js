@@ -28,14 +28,19 @@ export async function login(req, res) {
     const isHashed = storedPassword.startsWith("$2a$") || storedPassword.startsWith("$2b$");
     let match = false;
     const email = String(user.email || "").trim().toLowerCase();
+    let firebaseEmail = email;
     if (user.firebaseAuthManaged) {
       const apiKey = process.env.FIREBASE_WEB_API_KEY;
       if (!apiKey) return res.status(503).json({ error: "Firebase web API key is not configured for password sign-in." });
       try {
+        if (user.firebaseAuthUid) {
+          const authUser = await getAuth().getUser(user.firebaseAuthUid);
+          firebaseEmail = String(authUser.email || email).trim().toLowerCase();
+        }
         const authResponse = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${encodeURIComponent(apiKey)}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email, password: String(password), returnSecureToken: true }),
+          body: JSON.stringify({ email: firebaseEmail, password: String(password), returnSecureToken: true }),
         });
         match = authResponse.ok;
       } catch (error) {
@@ -48,6 +53,11 @@ export async function login(req, res) {
 
     if (!match) {
       return res.status(401).json({ error: "Invalid credentials" });
+    }
+
+    if (user.firebaseAuthManaged && user.firebaseAuthUid && firebaseEmail !== email) {
+      try { await getAuth().updateUser(user.firebaseAuthUid, { email }); }
+      catch (error) { console.error("Could not synchronize Firebase Auth email after sign-in:", error); }
     }
 
     if (user.firebaseAuthManaged) {

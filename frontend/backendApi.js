@@ -1,3 +1,6 @@
+import { createRequestCoalescer } from "./requestCoalescer.js";
+
+const concurrentReads = createRequestCoalescer();
 const TOKEN_KEY = "crmst-api-token";
 const SESSION_KEY = "crmst-current-user";
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "/api";
@@ -118,6 +121,7 @@ function setToken(token) {
 }
 
 function clearToken() {
+  concurrentReads.clear();
   safeStorageRemove(TOKEN_KEY);
 }
 
@@ -155,6 +159,20 @@ function buildHeaders(useAuth = true, contentType = "application/json") {
 }
 
 async function request(path, options = {}) {
+  const method = (options.method || "GET").toUpperCase();
+  if (method !== "GET") {
+    // Reads started before a mutation must not be reused by its refresh.
+    concurrentReads.clear();
+    try { return await performRequest(path, options); }
+    finally { concurrentReads.clear(); }
+  }
+  // Caller-owned abort signals must remain independent.
+  if (options.signal) return performRequest(path, options);
+  const key = JSON.stringify([getToken(), path, options]);
+  return concurrentReads.read(key, () => performRequest(path, options));
+}
+
+async function performRequest(path, options = {}) {
   const url = `${API_BASE}${path}`;
   const { auth = true, contentType = "application/json", headers: customHeaders = {}, ...rest } = options;
   if (auth && !getToken()) {
@@ -261,6 +279,10 @@ export async function createHelpdeskConversation(subject, message, employeeId = 
 }
 
 export const fetchHelpdeskMessages = (conversationId) => request(`/hr-helpdesk/conversations/${encodeURIComponent(conversationId)}/messages`);
+
+export const deleteHelpdeskConversation = (conversationId) => request(`/hr-helpdesk/conversations/${encodeURIComponent(conversationId)}`, {
+  method: "DELETE",
+});
 
 export async function sendHelpdeskMessage(conversationId, text) {
   return request(`/hr-helpdesk/conversations/${encodeURIComponent(conversationId)}/messages`, {

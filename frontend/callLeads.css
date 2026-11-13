@@ -6,30 +6,28 @@
 }
 .shared-call-leads .call-leads-toolbar > input { flex: 1; min-width: 200px; }
 .shared-call-leads .call-leads-toolbar > select { min-width: 140px; }
-.panel.shared-call-leads .crm-call-leads-table-wrap { overflow-x: auto; max-height: none; }
-.shared-call-leads .crm-call-leads-table-wrap .crm-call-leads-table {
-  min-width: 1080px;
-  width: 100%;
-  table-layout: fixed;
+.panel.shared-call-leads .crm-call-leads-table-wrap {
+  overflow-x: auto;
+  max-height: none;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
 }
-.shared-call-leads .crm-call-leads-table-wrap .crm-call-leads-table th:nth-child(1) { width: 4%; }
-.shared-call-leads .crm-call-leads-table-wrap .crm-call-leads-table th:nth-child(2) { width: 9%; }
-.shared-call-leads .crm-call-leads-table-wrap .crm-call-leads-table th:nth-child(3) { width: 13%; }
-.shared-call-leads .crm-call-leads-table-wrap .crm-call-leads-table th:nth-child(4) { width: 7%; }
-.shared-call-leads .crm-call-leads-table-wrap .crm-call-leads-table th:nth-child(5) { width: 11%; }
-.shared-call-leads .crm-call-leads-table-wrap .crm-call-leads-table th:nth-child(6) { width: 9%; }
-.shared-call-leads .crm-call-leads-table-wrap .crm-call-leads-table th:nth-child(7) { width: 11%; }
-.shared-call-leads .crm-call-leads-table-wrap .crm-call-leads-table th:nth-child(8) { width: 10%; }
-.shared-call-leads .crm-call-leads-table-wrap .crm-call-leads-table th:nth-child(9) { width: 8%; }
-.shared-call-leads .crm-call-leads-table-wrap .crm-call-leads-table th:nth-child(10) { width: 7%; }
-.shared-call-leads .crm-call-leads-table-wrap .crm-call-leads-table th:nth-child(11) { width: 11%; }
+.panel.shared-call-leads .crm-call-leads-table-wrap:focus-visible {
+  outline: 2px solid #b8875e;
+  outline-offset: -2px;
+}
+.shared-call-leads .crm-call-leads-table-wrap .crm-call-leads-table {
+  min-width: 1280px;
+  width: 100%;
+  table-layout: auto;
+}
 .shared-call-leads .crm-call-leads-table td input,
 .shared-call-leads .crm-call-leads-table td select { width: 100%; min-width: 0; }
 .shared-call-leads .lead-status-select.approved { background: #d9eee6; color: #12624b; border-color: #12624b; }
 .shared-call-leads .lead-status-select.rejected { background: #fbe6e3; color: #a73324; }
 .shared-call-leads .panel-subtitle { margin-top: 6px; color: #7b7169; }
 
-.panel.shared-call-leads .panel-head { padding: 20px 18px 16px; }
+.panel.shared-call-leads .panel-head { padding: 12px 16px; }
 .panel.shared-call-leads .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .panel.shared-call-leads .call-leads-head-actions { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 10px; }
 .panel.shared-call-leads .panel-head h3 { margin: 0; font-size: 16px; font-weight: 650; }
@@ -53,8 +51,9 @@
   cursor: pointer;
 }
 :where(.crm-root) .panel.shared-call-leads .call-leads-type-tabs button {
-  font-size: max(16px, 13px);
+  font-size: 13px;
 }
+.panel.shared-call-leads .call-leads-type-tabs button { min-height: 32px; padding-inline: 14px; }
 .panel.shared-call-leads .call-leads-type-tabs button + button { border-left: 1px solid #eee6dc; }
 .panel.shared-call-leads .call-leads-type-tabs button.active { background: #7f4e2b; color: #fff; }
 .panel.shared-call-leads,
@@ -68,7 +67,7 @@
 }
 .panel.shared-call-leads .panel-subtitle { margin: 6px 0 0; font-size: 13px; line-height: 1.5; }
 :where(.crm-root) .panel.shared-call-leads .panel-subtitle {
-  font-size: max(16px, 13px);
+  font-size: 13px;
 }
 .panel.shared-call-leads .call-leads-error {
   position: fixed;
@@ -125,7 +124,7 @@
   color: #302923;
 }
 :where(.crm-root) .panel.shared-call-leads .call-leads-search input {
-  font-size: max(16px, 13px);
+  font-size: 14px;
 }
 .panel.shared-call-leads .call-leads-search button {
   flex-shrink: 0;
@@ -140,8 +139,22 @@
   cursor: pointer;
   box-shadow: 0 3px 8px #70452620;
 }
+.panel.shared-call-leads .call-leads-search .call-leads-search-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #675d55;
+  box-shadow: none;
+}
+.panel.shared-call-leads .call-leads-search .call-leads-search-clear:hover { background: #f3ede6; color: #402d20; }
 :where(.crm-root) .panel.shared-call-leads .call-leads-search button {
-  font-size: max(16px, 14px);
+  font-size: 14px;
 }
 .panel.shared-call-leads .call-leads-toolbar > select,
 .panel.shared-call-leads .call-leads-toolbar > input,
@@ -160,7 +173,7 @@
   box-sizing: border-box;
 }
 :where(.crm-root) .panel.shared-call-leads .call-leads-toolbar > select, :where(.crm-root) .panel.shared-call-leads .call-leads-toolbar > input, :where(.crm-root) .panel.shared-call-leads .call-leads-reset {
-  font-size: max(16px, 13px);
+  font-size: 14px;
 }
 .panel.shared-call-leads .call-leads-toolbar .table-date-filter {
   width: 100%;
@@ -206,7 +219,7 @@
 }
 .call-leads-pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; border-top: 1px solid #eee6dc; color: #756a60; font-size: 13px; }
 :where(.crm-root) .call-leads-pagination {
-  font-size: max(16px, 13px);
+  font-size: 13px;
 }
 .call-leads-pagination > div { display: flex; align-items: center; gap: 10px; }
 .call-leads-pagination button { min-height: 36px; padding: 0 14px; border: 1px solid #e5d8cb; border-radius: 9px; background: #fff; color: #403832; cursor: pointer; }
@@ -230,7 +243,7 @@
   text-align: left;
 }
 :where(.crm-root) .panel.shared-call-leads .crm-call-leads-table-wrap .crm-call-leads-table th {
-  font-size: max(16px, 10px);
+  font-size: 13px;
 }
 .panel.shared-call-leads .crm-call-leads-table-wrap .crm-call-leads-table td {
   height: 54px;
@@ -242,7 +255,7 @@
   box-sizing: border-box;
 }
 :where(.crm-root) .panel.shared-call-leads .crm-call-leads-table-wrap .crm-call-leads-table td {
-  font-size: max(16px, 12px);
+  font-size: 14px;
 }
 .panel.shared-call-leads .crm-call-leads-table tbody tr:last-child td { border-bottom: 0; }
 .panel.shared-call-leads .crm-call-leads-table tbody tr:hover { background: #f8f3ed; }
@@ -340,6 +353,67 @@
   border-color: rgba(33, 130, 84, 0.24) !important;
   background: #fff !important;
 }
+
+.crm-root .panel.shared-call-leads .panel-head { padding: 9px 16px; }
+.crm-root .panel.shared-call-leads .panel-head h3 { font-size: 15px; }
+.crm-root .panel.shared-call-leads .call-leads-head-actions { gap: 8px; }
+.crm-root .panel.shared-call-leads .call-leads-head-actions > button {
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  gap: 6px;
+}
+.crm-root .panel.shared-call-leads .call-leads-head-actions > button svg { width: 15px; height: 15px; }
+.crm-root .panel.shared-call-leads .call-leads-type-tabs { margin-top: 10px; }
+.crm-root .panel.shared-call-leads .call-leads-toolbar { padding-block: 9px 8px; gap: 8px; }
+.crm-root .panel.shared-call-leads .call-leads-search,
+.crm-root .panel.shared-call-leads .call-leads-toolbar > select,
+.crm-root .panel.shared-call-leads .call-leads-toolbar > input,
+.crm-root .panel.shared-call-leads .call-leads-reset,
+.crm-root .panel.shared-call-leads .call-leads-toolbar .table-date-filter {
+  height: 34px;
+  min-height: 34px;
+  font-size: 14px;
+}
+.crm-root .panel.shared-call-leads .call-leads-search input,
+.crm-root .panel.shared-call-leads .call-leads-toolbar .table-date-filter input {
+  height: 28px;
+  font-size: 14px;
+}
+.crm-root .panel.shared-call-leads .crm-call-leads-table thead th { font-size: 13px; }
+.crm-root .panel.shared-call-leads .crm-call-leads-table tbody td,
+.crm-root .panel.shared-call-leads .crm-call-leads-table tbody td strong,
+.crm-root .panel.shared-call-leads .crm-call-leads-table tbody td input,
+.crm-root .panel.shared-call-leads .crm-call-leads-table tbody td select,
+.crm-root .panel.shared-call-leads .crm-call-leads-table tbody td button { font-size: 14px; }
+.crm-root .panel.shared-call-leads .call-lead-status-menu { font-size: 12px; }
+.crm-root .panel.shared-call-leads .call-lead-status-menu button { min-height: 27px; font-size: 12px; }
+.crm-root .panel.shared-call-leads .call-lead-status-menu button svg { width: 12px; height: 12px; }
+.crm-root .panel.shared-call-leads .call-lead-status-picker .lead-status-select { gap: 6px; }
+.crm-root .panel.shared-call-leads .call-lead-status-picker .lead-status-select > svg:first-child { width: 13px; height: 13px; }
+.crm-root .panel.shared-call-leads .call-leads-pagination { padding-block: 9px; font-size: 13px; }
+.crm-root .panel.shared-call-leads .call-leads-pagination button { min-height: 32px; font-size: 13px; }
+.crm-root .panel.shared-call-leads .crm-call-leads-table tbody td .lead-status-select.choose {
+  background-color: #fff !important;
+  color: #704229 !important;
+  border-color: #e5d6c9 !important;
+}
+.crm-root .panel.shared-call-leads .crm-call-leads-table tbody td .lead-status-select.pending {
+  background-color: #ffdfb8 !important;
+  color: #8a430d !important;
+  border-color: #ffd09b !important;
+}
+.crm-root .panel.shared-call-leads .crm-call-leads-table tbody td .lead-status-select.approved {
+  background-color: #ebd7c7 !important;
+  color: #67351f !important;
+  border-color: #dfc3ad !important;
+}
+.crm-root .panel.shared-call-leads .crm-call-leads-table tbody td .lead-status-select.rejected {
+  background-color: #f7d8d8 !important;
+  color: #8d2923 !important;
+  border-color: #f0c2c2 !important;
+}
 .panel.shared-call-leads .call-leads-name { display: flex; align-items: center; gap: 7px; min-width: 0; }
 .panel.shared-call-leads .call-leads-name strong { overflow: hidden; text-overflow: ellipsis; }
 .panel.shared-call-leads .call-leads-avatar {
@@ -370,23 +444,116 @@
 }
 .panel.shared-call-leads .row-icon-btn.call-lead-add-button { color: #366aa4; border: 1px solid #c9d9ed; }
 .panel.shared-call-leads .row-icon-btn .call-lead-form-icon { width: 18px; height: 18px; }
-.panel.shared-call-leads .crm-call-leads-table td .lead-status-select.approved { background-color: #d9eee6; color: #12624b; border-color: #a2cdbd; }
-.panel.shared-call-leads .crm-call-leads-table td .lead-status-select.rejected { background-color: #fbe6e3; color: #a73324; }
+.panel.shared-call-leads .call-lead-status-picker { width: 100%; }
+.panel.shared-call-leads .crm-call-leads-table td .lead-status-select {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 7px;
+  width: 100%;
+  min-width: 100px;
+  min-height: 32px;
+  height: 32px;
+  padding: 0 7px;
+  font-size: 14px;
+  cursor: pointer;
+  text-align: left;
+}
+.panel.shared-call-leads .crm-call-leads-table td .lead-status-select span { flex: 1; }
+.panel.shared-call-leads .crm-call-leads-table td .lead-status-select > svg:last-child {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 13px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.panel.shared-call-leads .crm-call-leads-table td .lead-status-select.choose {
+  background-color: #fff;
+  color: #704229;
+  border-color: #e5d6c9;
+}
+.panel.shared-call-leads .crm-call-leads-table td .lead-status-select.pending {
+  background-color: #ffdfb8;
+  color: #8a430d;
+  border-color: #ffd09b;
+}
+.panel.shared-call-leads .crm-call-leads-table td .lead-status-select.approved {
+  background-color: #ebd7c7;
+  color: #67351f;
+  border-color: #dfc3ad;
+}
+.panel.shared-call-leads .crm-call-leads-table td .lead-status-select.rejected {
+  background-color: #f7d8d8;
+  color: #8d2923;
+  border-color: #f0c2c2;
+}
+.panel.shared-call-leads .crm-call-leads-table td .lead-status-select.choose > svg:first-child { color: #8b5a32; }
+.panel.shared-call-leads .crm-call-leads-table td .lead-status-select.pending > svg:first-child { color: #b96a16; }
+.panel.shared-call-leads .crm-call-leads-table td .lead-status-select.approved > svg:first-child { color: #704229; }
+.panel.shared-call-leads .crm-call-leads-table td .lead-status-select.rejected > svg:first-child { color: #b44740; }
+.call-lead-status-menu {
+  z-index: 2100;
+  display: grid;
+  gap: 1px;
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  padding: 3px;
+  border: 1px solid #e5d8cb;
+  border-radius: 9px;
+  background: #fff;
+  box-shadow: 0 10px 24px rgba(41, 31, 24, .2);
+  font-family: "Manrope", sans-serif;
+  font-size: 12px;
+}
+.call-lead-status-menu button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 27px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #403832;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.call-lead-status-menu button.call-lead-status-option {
+  margin: 0;
+  min-height: 30px;
+  padding: 0 7px;
+  border-radius: 5px;
+  background: transparent;
+  color: #4a4038;
+}
+.call-lead-status-menu button.call-lead-status-option:hover,
+.call-lead-status-menu button.call-lead-status-option[aria-selected="true"] { background: #f3ede4; }
+.call-lead-status-menu button.call-lead-status-option.pending svg { color: #b47721; }
+.call-lead-status-menu button.call-lead-status-option.approved svg { color: #1f6f58; }
+.call-lead-status-menu button.call-lead-status-option.rejected svg { color: #a74539; }
+.call-lead-status-menu button:focus-visible { outline: 2px solid #b8875e; outline-offset: -2px; }
+.call-lead-status-menu button:nth-child(2) svg { color: #b47721; }
+.call-lead-status-menu button:nth-child(3) svg { color: #1f6f58; }
+.call-lead-status-menu button:nth-child(4) svg { color: #a74539; }
 .panel.shared-call-leads .crm-call-leads-table tbody tr.call-lead-locked select.call-lead-program-select:disabled {
   background-color: #fff;
   border-color: #eee5dc;
   color: #1f1a16 !important;
 }
 .panel.shared-call-leads .crm-call-leads-table td .lead-status-select.approved:disabled {
-  background-color: #d9eee6 !important;
-  color: #12624b !important;
-  border-color: #a2cdbd !important;
+  background-color: #ebd7c7 !important;
+  color: #67351f !important;
+  border-color: #dfc3ad !important;
   opacity: 1 !important;
 }
 .panel.shared-call-leads .crm-call-leads-table td .lead-status-select.pending:disabled {
-  background-color: #fff !important;
-  color: #1f1a16 !important;
-  border-color: #eee5dc !important;
+  background-color: #ffdfb8 !important;
+  color: #8a430d !important;
+  border-color: #ffd09b !important;
   opacity: 1 !important;
 }
 .panel.shared-call-leads .crm-call-leads-table .row-icon-btn.call-lead-add-button:disabled {
@@ -415,4 +582,261 @@
 @media (max-width: 600px) {
   .panel.shared-call-leads .call-leads-toolbar { grid-template-columns: minmax(0, 1fr); }
   .panel.shared-call-leads .call-leads-search { grid-column: 1; }
+}
+
+.panel.shared-call-leads .crm-call-leads-table-wrap .crm-call-leads-table {
+  min-width: 1400px;
+  border-collapse: collapse;
+  border-spacing: 0;
+  table-layout: fixed;
+  font-size: 15px;
+}
+.crm-root .panel.shared-call-leads .crm-call-leads-table th,
+.crm-root .panel.shared-call-leads .crm-call-leads-table td {
+  min-width: 0;
+  padding: 10px 8px;
+  border-right: 1px solid rgba(178, 147, 118, 0.16);
+  border-bottom: 1px solid #eee8dc;
+  line-height: 1.35;
+  vertical-align: top;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: normal;
+}
+.crm-root .panel.shared-call-leads .crm-call-leads-table th:first-child,
+.crm-root .panel.shared-call-leads .crm-call-leads-table td:first-child { padding-left: 20px; }
+.crm-root .panel.shared-call-leads .crm-call-leads-table th:last-child,
+.crm-root .panel.shared-call-leads .crm-call-leads-table td:last-child {
+  padding-right: 20px;
+  border-right: 0;
+}
+.crm-root .panel.shared-call-leads .crm-call-leads-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: #804727;
+  color: #fff;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  font-size: max(16px, 0.62rem);
+  font-weight: 800;
+  letter-spacing: 0.035em;
+  text-transform: uppercase;
+}
+.crm-root .panel.shared-call-leads .crm-call-leads-table thead th.sortable-call-leads-header:hover { color: #f3d9c4; }
+.crm-root .panel.shared-call-leads .crm-call-leads-table tbody td { background: #fff; }
+.crm-root .panel.shared-call-leads .crm-call-leads-table tbody tr:not(.call-lead-assigned).call-status-pending td { background: #fff0e3; }
+.crm-root .panel.shared-call-leads .crm-call-leads-table tbody tr:not(.call-lead-assigned).call-status-follow-up td { background: #f8e4dd; }
+.crm-root .panel.shared-call-leads .crm-call-leads-table tbody tr:not(.call-lead-assigned).call-status-completed td { background: #f1e9e2; }
+.crm-root .panel.shared-call-leads .crm-call-leads-table tbody tr:hover td { box-shadow: inset 0 0 0 9999px rgba(128, 71, 39, .035); }
+.crm-root .panel.shared-call-leads .crm-call-leads-table tbody tr:last-child td { border-bottom: 0; }
+.crm-root .panel.shared-call-leads .crm-call-leads-table td,
+.crm-root .panel.shared-call-leads .crm-call-leads-table td strong,
+.crm-root .panel.shared-call-leads .crm-call-leads-table td select,
+.crm-root .panel.shared-call-leads .crm-call-leads-table td input {
+  font-size: 14px;
+}
+.crm-root .panel.shared-call-leads .crm-call-leads-table td strong { font-weight: 650; }
+.crm-root .panel.shared-call-leads .crm-call-leads-table td input::placeholder { color: #89796b; }
+.crm-root .panel.shared-call-leads .crm-call-leads-table td input,
+.crm-root .panel.shared-call-leads .crm-call-leads-table td select {
+  height: 32px;
+  min-height: 32px;
+  padding: 0 24px 0 9px;
+  border: 1px solid #e5d6c9;
+  border-radius: 6px;
+  background-color: #fffdfb;
+  color: #302923;
+  font-size: 14px;
+}
+.crm-root .panel.shared-call-leads .crm-call-leads-table.call-leads-table-standard th:nth-child(1) { width: 5%; }
+.crm-root .panel.shared-call-leads .crm-call-leads-table.call-leads-table-standard th:nth-child(2) { width: 9%; }
+.crm-root .panel.shared-call-leads .crm-call-leads-table.call-leads-table-standard th:nth-child(3) { width: 11%; }
+.crm-root .panel.shared-call-leads .crm-call-leads-table.call-leads-table-standard th:nth-child(4) { width: 9%; }
+.crm-root .panel.shared-call-leads .crm-call-leads-table.call-leads-table-standard th:nth-child(5) { width: 7%; }
+.crm-root .panel.shared-call-leads .crm-call-leads-table.call-leads-table-standard th:nth-child(6) { width: 10%; }
+.crm-root .panel.shared-call-leads .crm-call-leads-table.call-leads-table-standard th:nth-child(7) { width: 10%; }
+.crm-root .panel.shared-call-leads .crm-call-leads-table.call-leads-table-standard th:nth-child(8) { width: 11%; }
+.crm-root .panel.shared-call-leads .crm-call-leads-table.call-leads-table-standard th:nth-child(9) { width: 11%; }
+.crm-root .panel.shared-call-leads .crm-call-leads-table.call-leads-table-standard th:nth-child(10) { width: 12%; }
+.crm-root .panel.shared-call-leads .crm-call-leads-table.call-leads-table-standard th:nth-child(11) { width: 4%; }
+.crm-root .panel.shared-call-leads .crm-call-leads-table tbody td .lead-status-select {
+  background-color: #fff;
+  border-color: #e5d6c9;
+  color: #704229;
+}
+.panel.shared-call-leads .call-lead-row-number {
+  display: inline-grid;
+  min-width: 30px;
+  min-height: 30px;
+  padding: 0 5px;
+  place-items: center;
+  border-radius: 7px;
+  background: #f8e6d3;
+  color: #8d5e38;
+  font-weight: 800;
+}
+.panel.shared-call-leads .call-lead-call-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: #f1e4d7;
+  color: #704229;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.panel.shared-call-leads .call-lead-call-status.call-list-status-choose { border-color: #e5d6c9; background: #fff; }
+.panel.shared-call-leads .call-lead-call-status.call-list-status-pending { background: #ffdfc3; color: #a44712; }
+.panel.shared-call-leads .call-lead-call-status.call-list-status-follow-up { background: #bd4b0d; color: #fff; }
+.panel.shared-call-leads .call-lead-call-status.call-list-status-completed { background: #ebd7c7; color: #67351f; }
+.panel.shared-call-leads .row-icon-btn.call,
+.panel.shared-call-leads .row-icon-btn.whatsapp,
+.panel.shared-call-leads .crm-call-leads-table .row-icon-btn.call-lead-add-button {
+  width: 31px;
+  height: 31px;
+  flex-basis: 31px;
+  border: 1px solid #f0ceb5;
+  border-radius: 6px;
+  background: #fffaf6;
+  color: #bf551c;
+}
+.panel.shared-call-leads .crm-call-leads-table .row-icon-btn svg {
+  display: block;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  stroke-width: 2;
+}
+.panel.shared-call-leads .call-lead-call-status svg {
+  display: block;
+  width: 19px;
+  height: 19px;
+  flex: 0 0 19px;
+  stroke-width: 2.4;
+}
+.call-lead-draft-view .call-lead-draft-view-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.call-lead-draft-view .call-lead-draft-view-field {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid #e8ddd2;
+  border-radius: 8px;
+  background: #fff;
+}
+.call-lead-draft-view .call-lead-draft-view-field span {
+  color: #756a60;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+.call-lead-draft-view .call-lead-draft-view-field strong {
+  color: #302923;
+  font-size: 14px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.call-lead-draft-view .form-actions {
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+@media (max-width: 640px) {
+  .call-lead-draft-view .call-lead-draft-view-grid { grid-template-columns: minmax(0, 1fr); }
+}
+.panel.shared-call-leads .crm-call-leads-table .row-icon-btn.call:disabled,
+.panel.shared-call-leads .crm-call-leads-table .row-icon-btn.whatsapp:disabled,
+.panel.shared-call-leads .crm-call-leads-table .row-icon-btn.call-lead-add-button:disabled {
+  border-color: #f0ceb5 !important;
+  background: #fffaf6 !important;
+  color: #bf551c !important;
+  opacity: 1 !important;
+}
+.crm-root .panel.shared-call-leads .crm-call-leads-table tbody tr.call-lead-locked .row-icon-btn.call:disabled,
+.crm-root .panel.shared-call-leads .crm-call-leads-table tbody tr.call-lead-locked .row-icon-btn.whatsapp:disabled {
+  border-color: #f0ceb5 !important;
+  background: #fffaf6 !important;
+  color: #bf551c !important;
+}
+
+/* Call Leads filters use the same control rhythm as the call lists. */
+.crm-root .panel.shared-call-leads .call-leads-filter-area {
+  padding: 12px 16px 16px;
+  border-top: 1px solid #eee5dc;
+  background: #fffdfb;
+}
+.crm-root .panel.shared-call-leads .call-leads-filter-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 11px;
+}
+.crm-root .panel.shared-call-leads .call-leads-filter-top > span,
+.crm-root .panel.shared-call-leads .call-leads-date-caption {
+  color: #806a58;
+  font-size: 12px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+.crm-root .panel.shared-call-leads .call-leads-type-tabs { margin: 0; }
+.crm-root .panel.shared-call-leads .call-leads-type-tabs button { min-width: 75px; min-height: 34px; }
+.crm-root .panel.shared-call-leads .call-leads-toolbar {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.6fr) minmax(160px, .7fr) minmax(210px, 1fr);
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.crm-root .panel.shared-call-leads .call-leads-search { grid-column: auto; }
+.crm-root .panel.shared-call-leads .call-leads-search,
+.crm-root .panel.shared-call-leads .call-leads-toolbar > select { height: 40px; min-height: 40px; }
+.crm-root .panel.shared-call-leads .call-leads-date-row {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 9px;
+  min-width: 0;
+  padding-top: 10px;
+  border-top: 1px solid #f0e9e2;
+}
+.crm-root .panel.shared-call-leads .call-leads-toolbar .call-list-date-picker {
+  flex: 0 0 190px;
+  width: 190px;
+  min-width: 190px;
+  height: 40px;
+  padding: 0 9px;
+}
+.crm-root .panel.shared-call-leads .call-leads-toolbar .call-list-date-picker > span { padding-right: 8px; }
+.crm-root .panel.shared-call-leads .call-leads-toolbar .call-leads-reset {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 76px;
+  height: 40px;
+  min-height: 40px;
+  padding: 0 14px;
+  background: #fff;
+}
+.crm-root .panel.shared-call-leads .call-leads-reset:hover { border-color: #c9ab91; background: #f8efe6; }
+@media (max-width: 1000px) {
+  .crm-root .panel.shared-call-leads .call-leads-toolbar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .crm-root .panel.shared-call-leads .call-leads-search { grid-column: 1 / -1; }
+}
+@media (max-width: 640px) {
+  .crm-root .panel.shared-call-leads .call-leads-filter-top { flex-wrap: wrap; }
+  .crm-root .panel.shared-call-leads .call-leads-toolbar { grid-template-columns: minmax(0, 1fr); }
+  .crm-root .panel.shared-call-leads .call-leads-search { grid-column: 1; }
+  .crm-root .panel.shared-call-leads .call-leads-date-row { flex-wrap: wrap; justify-content: flex-start; }
+  .crm-root .panel.shared-call-leads .call-leads-date-caption { flex: 1 0 100%; }
+  .crm-root .panel.shared-call-leads .call-leads-toolbar .call-list-date-picker { flex: 1 1 150px; width: auto; min-width: 150px; }
 }

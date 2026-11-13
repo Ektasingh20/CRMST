@@ -610,14 +610,19 @@ async function updateEnrollmentSummary(enrolledCourseRef, courseRef, studentId, 
       return { total: result.total + current.total, done: result.done + current.done };
     }, { total: 0, done: 0 });
     const sectionCompleted = progressDocs.filter((lesson) => String(lesson.section || "General").trim().toLowerCase() === sectionName.toLowerCase() && lesson.completed === true).length;
-    await enrolledCourseRef.collection("sections").doc(sectionDocumentId(sectionName)).set({
+    const sectionSummary = {
       name: sectionName,
       totalLessons: sectionLessons.length,
       completedLessons: sectionCompleted,
       progress: sectionProgress.total ? Math.round((sectionProgress.done / sectionProgress.total) * 100) : 0,
       completed: sectionLessons.length > 0 && sectionCompleted >= sectionLessons.length,
-      updatedAt: new Date().toISOString(),
-    }, { merge: true });
+    };
+    const previousSection = sections.docs.find((section) => section.id === sectionDocumentId(sectionName))?.data();
+    if (!previousSection || Object.entries(sectionSummary).some(([key, value]) => previousSection[key] !== value)) {
+      await enrolledCourseRef.collection("sections").doc(sectionDocumentId(sectionName)).set({
+        ...sectionSummary, updatedAt: new Date().toISOString(),
+      }, { merge: true });
+    }
   }
   await enrolledCourseRef.set({
     studentId: String(studentId),

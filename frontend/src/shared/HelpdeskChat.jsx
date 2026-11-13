@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowRight, BellRing, MessageCircle, Plus, Search, X } from "lucide-react";
-import { createHelpdeskConversation, fetchHelpdeskConversations, fetchHelpdeskMessages, fetchUsers, sendHelpdeskMessage } from "../../backendApi.js";
+import { ArrowRight, BellRing, MessageCircle, Plus, Search, Trash2, X } from "lucide-react";
+import { createHelpdeskConversation, deleteHelpdeskConversation, fetchHelpdeskConversations, fetchHelpdeskMessages, fetchUsers, sendHelpdeskMessage } from "../../backendApi.js";
 import "./helpdeskChat.css";
 
 const isHrUser = (user) => /admin|hr|human resource/i.test(`${user?.role || ""} ${user?.dept || user?.department || ""}`);
@@ -30,7 +30,10 @@ export function HelpdeskIncomingToast({ user, onOpen }) {
           const incoming = rows.filter((row) => row.lastMessageAt && row.lastSenderId !== meId
             && previous.get(row.id) !== row.lastMessageAt)
             .sort((a, b) => String(b.lastMessageAt).localeCompare(String(a.lastMessageAt)))[0];
-          if (incoming) setNotice({ id: `${incoming.id}:${incoming.lastMessageAt}`, conversationId: incoming.id, sender: incoming.lastSenderName || incoming.employeeName || "New message", subject: incoming.subject, text: incoming.lastMessage || "You received a message." });
+          if (incoming) {
+            setNotice({ id: `${incoming.id}:${incoming.lastMessageAt}`, conversationId: incoming.id, sender: incoming.lastSenderName || incoming.employeeName || "New message", subject: incoming.subject, text: incoming.lastMessage || "You received a message." });
+            window.dispatchEvent(new Event("crm:helpdesk-incoming-message"));
+          }
         }
         lastMessages.current = new Map(rows.map((row) => [row.id, row.lastMessageAt]));
         baseline.current = true;
@@ -81,6 +84,7 @@ export default function HelpdeskChat({ user, displayName }) {
   const [draft, setDraft] = useState("");
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
+  const [deletingId, setDeletingId] = useState("");
   const [error, setError] = useState("");
   const messageEndRef = useRef(null);
 
@@ -190,6 +194,30 @@ export default function HelpdeskChat({ user, displayName }) {
     } finally { setSending(false); }
   };
 
+  const removeConversation = async (event, conversation) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (deletingId) return;
+    const label = conversation.subject || "this chat";
+    if (!window.confirm(`Remove "${label}" from your chat list? The other participant will still be able to access it.`)) return;
+    setDeletingId(conversation.id);
+    setError("");
+    try {
+      await deleteHelpdeskConversation(conversation.id);
+      const remaining = conversations.filter((item) => item.id !== conversation.id);
+      setConversations(remaining);
+      if (selectedId === conversation.id) {
+        setSelectedId(remaining[0]?.id || "");
+        setMessages([]);
+        setDraft("");
+      }
+    } catch (requestError) {
+      setError(requestError.message || "Could not delete this chat.");
+    } finally {
+      setDeletingId("");
+    }
+  };
+
   const send = async (event) => {
     event.preventDefault();
     const text = draft.trim();
@@ -229,7 +257,7 @@ export default function HelpdeskChat({ user, displayName }) {
       <section className="eh-thread">
         {newConversation ? <div className="eh-compose-new"><span className="eh-empty-icon"><MessageCircle size={22} /></span><h3>{hr ? "Message an employee" : "New chat with HR"}</h3><p>{hr ? "Choose a CRM or IT employee and start a direct conversation." : "Start a conversation and HR will reply here."}</p><form onSubmit={startConversation}>{hr && <label>Employee<select required value={recipientId} onChange={(event) => setRecipientId(event.target.value)}><option value="">Choose a CRM or IT employee</option>{employees.map((employee) => <option key={employee.id} value={employee.id}>{employee.name || employee.username} · {employee.dept || employee.department || employee.role}</option>)}</select></label>}<label>Subject<input autoFocus={!hr} maxLength={160} required value={subject} onChange={(event) => setSubject(event.target.value)} placeholder="What do you need help with?" /></label><label>Message<textarea rows="4" maxLength={5000} required value={firstMessage} onChange={(event) => setFirstMessage(event.target.value)} placeholder="Write your message…" /></label><button type="submit" disabled={sending || (hr && !recipientId) || !subject.trim() || !firstMessage.trim()}>{sending ? "Sending…" : "Start chat"}</button></form></div>
           : selected ? <>
-            <header className="eh-thread-header"><span className="eh-avatar">{(hr ? selected.employeeName : "HR").slice(0, 1).toUpperCase()}</span><div><strong>{hr ? selected.employeeName : "HR Support"}</strong><small>{hr ? `${selected.department || "Employee"} · ` : ""}{selected.subject}</small></div><span className="eh-online-dot" /> <small>Helpdesk</small></header>
+            <header className="eh-thread-header"><span className="eh-avatar">{(hr ? selected.employeeName : "HR").slice(0, 1).toUpperCase()}</span><div><strong>{hr ? selected.employeeName : "HR Support"}</strong><small>{hr ? `${selected.department || "Employee"} · ` : ""}{selected.subject}</small></div><span className="eh-online-dot" /> <small>Helpdesk</small><button type="button" className="eh-thread-delete" onClick={(event) => removeConversation(event, selected)} disabled={Boolean(deletingId)} aria-label="Delete this chat" title="Delete chat"><Trash2 size={15} aria-hidden="true" /></button></header>
             <div className="eh-messages" aria-live="polite">{messages.map((item, index) => {
               const mine = item.senderId === meId;
               return <div key={item.id || `${item.createdAt}-${index}`} className={`eh-message-row${mine ? " is-mine" : ""}`}><article className="eh-bubble"><small>{item.senderName} · {formatTime(item.createdAt)}</small><p>{item.text}</p></article></div>;

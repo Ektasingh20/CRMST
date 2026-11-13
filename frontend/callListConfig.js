@@ -47,11 +47,20 @@ export const CALL_STATUS_OPTIONS = ["Pending", "Follow Up", "Completed"];
 export const CALL_LIST_INTEREST_STATUS_OPTIONS = ["Not Interested", "Interested"];
 export const normalizeCallStatus = (value) => {
   const status = String(value || "").trim().toLowerCase().replace(/[-_]+/g, " ").replace(/\s+/g, " ");
+  if (["", "choose", "select status", "not called"].includes(status)) return "";
   if (["follow up", "followup", "follow up required"].includes(status)) return "Follow Up";
   if (["completed", "complete"].includes(status)) return "Completed";
   return "Pending";
 };
 export const normalizeInterestStatus = (value) => ["interested", "interest"].includes(String(value || "").trim().toLowerCase()) ? "Interested" : "Not Interested";
+const stableDateValue = (...values) => String(values.find(Boolean) || "").slice(0, 10);
+// Dates shown in working call lists are immutable record dates. Activity is
+// tracked separately in lastWorkedAt and must never reorder these tables.
+export const callListRecordDate = (row) => stableDateValue(row?.date, row?.createdAt, row?.createdLeadDate);
+export const callLeadRecordDate = (row) => stableDateValue(row?.createdLeadDate, row?.date, row?.createdAt);
+export const callListStableSortDate = (row) => stableDateValue(row?.date, row?.createdAt, row?.createdLeadDate);
+export const isCallContactLocked = (row) => normalizeCallStatus(row.callStatus) === "Completed"
+  && normalizeInterestStatus(row.interestStatus) === "Interested";
 export const normalizeCallProgram = (value) => /^(?:it services?|it training|-|select (?:a )?(?:course|training|service|program)|not selected)$/i.test(String(value || "").trim()) ? "" : String(value || "").trim();
 export const callListPrograms = (type) => type === "training" ? TRAINING_CALL_LIST_PROGRAMS : type === "services" ? SERVICE_CALL_LIST_SERVICES : [...new Set([...SERVICE_CALL_LIST_SERVICES, ...TRAINING_CALL_LIST_PROGRAMS])];
 export function matchesCallListFilters(row, { search = "", program = "All", callStatus = "All", interest = "All", date = "", employee = "All", listType = "All" } = {}) {

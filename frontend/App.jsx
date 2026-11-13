@@ -199,7 +199,7 @@ const STUDENT_DASHBOARD_URL = "http://localhost:5175";
 
 const USERS_STORAGE_KEY = "crmst-users.txt";
 const LEADS_STORAGE_KEY = "crmst-leads.txt";
-const LEADS_CACHE_VERSION = 3;
+const LEADS_CACHE_VERSION = 4;
 const SESSION_STORAGE_KEY = "crmst-current-user";
 const SAVED_LOGIN_STORAGE_KEY = "crmst-saved-login";
 const SERVICES_STORAGE_KEY = "crmst-services.txt";
@@ -563,85 +563,6 @@ function isHrExEmployee(employee) {
 }
 
 const initialUsers = [];
-
-const initialLeads = [
-  {
-    id: "1",
-    name: "Neha Joshi",
-    phone: "9876500001",
-    email: "neha@example.com",
-    alternatePhone: "",
-    city: "",
-    company: "",
-    type: "Training",
-    interest: "Digital Marketing",
-    value: 45000,
-    status: "Pending",
-    source: "WhatsApp",
-    leadSource: "WhatsApp",
-    assignedTo: "",
-    assignedDate: "",
-    notes: "",
-    createdAt: "2026-07-10",
-  },
-  {
-    id: "2",
-    name: "Arjun Mehta",
-    phone: "9876500002",
-    email: "arjun@example.com",
-    alternatePhone: "",
-    city: "Jaipur",
-    company: "",
-    type: "Service",
-    interest: "E-commerce Website",
-    value: 55000,
-    status: "Pending",
-    source: "Referral",
-    leadSource: "Referral",
-    assignedTo: "2",
-    assignedDate: "",
-    notes: "",
-    createdAt: "2026-07-12",
-  },
-  {
-    id: "3",
-    name: "Rahul Kumar",
-    phone: "9876500004",
-    email: "rahulk@example.com",
-    alternatePhone: "",
-    city: "Beawar",
-    company: "",
-    type: "Training",
-    interest: "VFX & Animation",
-    value: 50000,
-    status: "Pending",
-    source: "Walk-in",
-    leadSource: "Walk-in",
-    assignedTo: "2",
-    assignedDate: "",
-    notes: "",
-    createdAt: "2026-07-16",
-  },
-  {
-    id: 4,
-    name: "Mohan Das",
-    phone: "9876500006",
-    email: "mohan@example.com",
-    alternatePhone: "",
-    city: "Kota",
-    company: "",
-    type: "Service",
-    interest: "SEO",
-    value: 15000,
-    status: "Pending",
-    source: "Referral",
-    leadSource: "Referral",
-    assignedTo: "2",
-    assignedDate: "",
-    notes: "",
-    createdAt: "2026-07-22",
-  },
-];
 
 const initialCrmReports = [
   {
@@ -1137,7 +1058,7 @@ function getLeadCacheUserKey(user) {
 
 function readLeadsFromStorage(user) {
   const raw = safeStorageGet(LEADS_STORAGE_KEY);
-  if (!raw) return { items: initialLeads, hasCache: false };
+  if (!raw) return { items: [], hasCache: false };
   try {
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) {
@@ -1151,10 +1072,11 @@ function readLeadsFromStorage(user) {
       const items = sanitizeImageCollection(parsed.items);
       return { items, hasCache: items.length > 0 };
     }
-  } catch {
-    // Fall through to the local demo data when an older cache is invalid.
+  } catch (error) {
+    console.warn("Ignoring invalid cached leads.", error);
+    return { items: [], hasCache: false };
   }
-  return { items: initialLeads, hasCache: false };
+  return { items: [], hasCache: false };
 }
 
 function readSessionFromStorage() {
@@ -1305,7 +1227,7 @@ function App() {
   const [hrDashboardData, setHrDashboardData] = useState(null);
   const [hrDashboardDataStatus, setHrDashboardDataStatus] = useState("idle");
   const [leadAssignmentUsers, setLeadAssignmentUsers] = useState([]);
-  const [leads, setLeads] = useState(initialLeads);
+  const [leads, setLeads] = useState([]);
   const [leadsLoadedFromBackend, setLeadsLoadedFromBackend] = useState(false);
   const leadRecoveryAttempted = useRef(false);
   const adminAllLeadsLoadedForUser = useRef("");
@@ -1315,7 +1237,9 @@ function App() {
   const isHydratingInitialData = useRef(true);
   const [crmReports] = useState(initialCrmReports);
   const [tasks, setTasks] = useState(initialTasks);
+  const [adminTasksLoaded, setAdminTasksLoaded] = useState(false);
   const [attendance, setAttendance] = useState([]);
+  const [adminTaskSaving, setAdminTaskSaving] = useState(false);
   const [adminTaskForm, setAdminTaskForm] = useState({ title: "", description: "", assigneeId: "", priority: "Medium", dueDate: new Date().toISOString().slice(0, 10) });
   const [leaves, setLeaves] = useState([]);
   const [interns, setInterns] = useState(initialInterns);
@@ -1384,7 +1308,7 @@ function App() {
     const setters = [
       setUsers,
       (rows) => setLeads(rows.map(normalizeLeadForUi)),
-      setTasks,
+      (rows) => { setTasks(rows); setAdminTasksLoaded(true); },
       setAttendance,
       setLeaves,
       setMonitorProjects,
@@ -1589,7 +1513,10 @@ function App() {
           loadAttendance(),
           loadLeaves(),
         ]);
-        if (Array.isArray(remoteTasks)) setTasks(remoteTasks);
+        if (Array.isArray(remoteTasks)) {
+          setTasks(remoteTasks);
+          setAdminTasksLoaded(true);
+        }
         if (Array.isArray(remoteAttendance)) setAttendance(remoteAttendance);
         if (Array.isArray(remoteLeaves)) setLeaves(remoteLeaves);
         if (Array.isArray(remoteUsers)) {
@@ -2094,7 +2021,7 @@ function App() {
         if (!active) return;
         const emps = (Array.isArray(backendUsers) ? backendUsers : [])
           .filter((user) => !isAdminUser(user) && String(user.role || "").toLowerCase() !== "student"
-            && String(user.dept || user.department || "").toLowerCase() !== "student")
+            && String(user.dept || user.department || "").trim().toLowerCase() !== "student")
           .map((user) => {
             const backendId = String(user.id || user._id || "");
             return {
@@ -2260,12 +2187,27 @@ function App() {
   });
   const activeEmployeeUsers = employeeUsers.filter((user) => String(user?.status || "Active").trim().toLowerCase() !== "inactive");
   const hrEmployees = Array.isArray(hrDashboardData?.emps) ? hrDashboardData.emps : [];
-  const activeHrEmployees = hrEmployees.filter((employee) => !isHrExEmployee(employee));
-  const hrTaskAssignees = activeHrEmployees.filter((employee) => {
-    const role = String(employee.role || employee.desig || employee.position || "").toLowerCase();
-    return (role.includes("crm") && role.includes("executive")) || String(employee.dept || "").toLowerCase() === "sales";
-  });
-  const availableHrTaskAssignees = hrTaskAssignees.length ? hrTaskAssignees : activeHrEmployees;
+  const availableHrTaskAssignees = useMemo(() => {
+    const assigneesById = new Map();
+    [...users, ...hrEmployees].forEach((user) => {
+      const role = String(user?.role || "").trim().toLowerCase();
+      const department = String(user?.dept || user?.department || "").trim().toLowerCase();
+      if (role === "student" || ["student", "students"].includes(department)) return;
+      const id = String(user.id || user._id || user.backendId || "");
+      if (!id) return;
+      const existing = assigneesById.get(id) || {};
+      assigneesById.set(id, {
+        ...existing,
+        ...user,
+        id,
+        backendId: String(user.backendId || user.id || user._id || ""),
+        name: user.name || user.username || "Employee",
+        dept: user.dept || user.department || "",
+        desig: user.desig || user.position || user.role || "",
+      });
+    });
+    return [...assigneesById.values()];
+  }, [users, hrEmployees]);
   const hrEmployeeDirectoryRows = hrEmployees.map((employee) => ({
     ...employee,
     id: String(employee.id || ""),
@@ -2278,12 +2220,18 @@ function App() {
     type: isHrExEmployee(employee) ? "Former" : "Current",
     exEmployee: isHrExEmployee(employee) ? "Yes" : "No",
   }));
-  const hrTasks = Array.isArray(hrDashboardData?.tasks) ? hrDashboardData.tasks : [];
-  const hrTaskRows = hrTasks.map((task) => ({
-    ...task,
-    emp: hrEmployees.find((employee) => String(employee.id) === String(task.assignedTo))?.name || task.emp || task.assignee || "Unassigned",
-    due: task.due || task.dueDate || "",
-  }));
+  const hrTaskRows = tasks.map((task) => {
+    const assignedTo = task.assigneeId || task.assignedTo || "";
+    const assignee = availableHrTaskAssignees.find((employee) => String(employee.id) === String(assignedTo)
+      || String(employee.backendId || "") === String(assignedTo));
+    return {
+      ...task,
+      assignedTo,
+      assignedBy: task.createdById || task.assignedBy,
+      emp: assignee?.name || task.assignee || task.emp || "Unassigned",
+      due: task.due || task.dueDate || "",
+    };
+  });
   const hrLeaves = Array.isArray(hrDashboardData?.leaves) ? hrDashboardData.leaves : [];
   const hrAttendanceRows = Object.entries(hrDashboardData?.att || {}).map(([key, status]) => {
     const [date, employeeId] = key.split("|");
@@ -3840,33 +3788,34 @@ function App() {
 
   async function assignTaskToEmployee(event) {
     event.preventDefault();
+    if (adminTaskSaving) return;
     if (!adminTaskForm.title.trim() || !adminTaskForm.assigneeId) {
       notify("Enter a task title and select an employee.");
       return;
     }
-    const hrData = readHrDashboardData() || hrDashboardData;
-    if (!hrData || !Array.isArray(hrData.emps)) {
-      notify("Open the HR Dashboard once to initialize its shared employee data.");
-      return;
-    }
-    const assignee = hrData.emps.find((employee) => String(employee.id) === String(adminTaskForm.assigneeId));
+    const assignee = availableHrTaskAssignees.find((employee) => String(employee.id) === String(adminTaskForm.assigneeId));
     if (!assignee) {
       notify("That employee is no longer in the HR directory. Reopen Assign Task and try again.");
       return;
     }
-    const task = {
-      id: Date.now(),
-      title: adminTaskForm.title.trim(),
-      description: adminTaskForm.description.trim(),
-      assignedTo: assignee.id,
-      assignedBy: 1,
-      priority: adminTaskForm.priority || "Medium",
-      due: adminTaskForm.dueDate || "",
-      status: "Pending",
-    };
-    if (!persistHrDashboardData({ ...hrData, tasks: [...(hrData.tasks || []), task] })) return;
-    setAdminTaskForm({ title: "", description: "", assigneeId: "", priority: "Medium", dueDate: new Date().toISOString().slice(0, 10) });
-    notify(`Task assigned to ${assignee.name} and saved with HR Dashboard data.`);
+    setAdminTaskSaving(true);
+    try {
+      const saved = await createTask({
+        title: adminTaskForm.title.trim(),
+        description: adminTaskForm.description.trim(),
+        assigneeId: String(assignee.backendId || assignee.id),
+        priority: adminTaskForm.priority || "Medium",
+        dueDate: adminTaskForm.dueDate || "",
+      });
+      setTasks((current) => [saved, ...current.filter((task) => String(task.id || task._id) !== String(saved.id || saved._id))]);
+      setAdminTasksLoaded(true);
+      setAdminTaskForm({ title: "", description: "", assigneeId: "", priority: "Medium", dueDate: new Date().toISOString().slice(0, 10) });
+      notify(`Task assigned to ${assignee.name} and saved to Firebase.`);
+    } catch (error) {
+      notify(error.message || "Task could not be assigned.");
+    } finally {
+      setAdminTaskSaving(false);
+    }
   }
 
   async function updateLeaveRequestStatus(leave, status) {
@@ -4118,7 +4067,7 @@ function App() {
       assignedDate: new Date().toISOString().slice(0, 10),
       notes: "",
     });
-    notify(wasEditing ? "Lead updated in the backend." : savedCallLeadDraft ? "Lead form saved and locked. Approve it from Call Leads when ready." : "Lead saved to the pipeline.");
+    notify(wasEditing ? "Lead updated in the backend." : savedCallLeadDraft ? "Lead form saved. You can edit it until approval." : "Lead saved to the pipeline.");
     setActivePage(wasEditing || savedCallLeadDraft ? returnPage : "crm");
   }
 
@@ -5865,25 +5814,27 @@ function App() {
           {activePage === "hr-assign" && (
             <Panel title="Assign task to employee">
               <form className="form-grid" onSubmit={assignTaskToEmployee}>
-                <label className="field"><span>Employee *</span><select value={adminTaskForm.assigneeId} onChange={(event) => setAdminTaskForm((current) => ({ ...current, assigneeId: event.target.value }))}><option value="">Select employee</option>{availableHrTaskAssignees.map((employee) => <option key={employee.id} value={employee.id}>{employee.name} · {employee.dept || employee.desig || employee.role}</option>)}</select></label>
-                <label className="field"><span>Task title *</span><input value={adminTaskForm.title} onChange={(event) => setAdminTaskForm((current) => ({ ...current, title: event.target.value }))} placeholder="e.g. Follow up warm leads" /></label>
-                <label className="field"><span>Priority</span><select value={adminTaskForm.priority} onChange={(event) => setAdminTaskForm((current) => ({ ...current, priority: event.target.value }))}><option>High</option><option>Medium</option><option>Low</option></select></label>
-                <label className="field"><span>Due date</span><input type="date" value={adminTaskForm.dueDate} onChange={(event) => setAdminTaskForm((current) => ({ ...current, dueDate: event.target.value }))} /></label>
-                <label className="field span-full"><span>Description</span><textarea rows="3" value={adminTaskForm.description} onChange={(event) => setAdminTaskForm((current) => ({ ...current, description: event.target.value }))} placeholder="Add instructions or expected outcome" /></label>
-                <div className="form-actions span-full"><button type="submit" className="primary-button"><ClipboardCheck size={16} /> Assign Task</button></div>
+                <label className="field"><span>Employee *</span><select value={adminTaskForm.assigneeId} onChange={(event) => setAdminTaskForm((current) => ({ ...current, assigneeId: event.target.value }))} required disabled={adminTaskSaving}><option value="">Select employee</option>{availableHrTaskAssignees.map((employee) => <option key={employee.id} value={employee.id}>{employee.name} · {employee.dept || employee.desig || employee.role}</option>)}</select></label>
+                <label className="field"><span>Task title *</span><input value={adminTaskForm.title} onChange={(event) => setAdminTaskForm((current) => ({ ...current, title: event.target.value }))} placeholder="e.g. Follow up warm leads" maxLength={120} required disabled={adminTaskSaving} /></label>
+                <label className="field"><span>Priority</span><select value={adminTaskForm.priority} onChange={(event) => setAdminTaskForm((current) => ({ ...current, priority: event.target.value }))} disabled={adminTaskSaving}><option>High</option><option>Medium</option><option>Low</option></select></label>
+                <label className="field"><span>Due date</span><input type="date" value={adminTaskForm.dueDate} onChange={(event) => setAdminTaskForm((current) => ({ ...current, dueDate: event.target.value }))} disabled={adminTaskSaving} /></label>
+                <label className="field span-full"><span>Description</span><textarea rows="3" value={adminTaskForm.description} onChange={(event) => setAdminTaskForm((current) => ({ ...current, description: event.target.value }))} placeholder="Add instructions or expected outcome" maxLength={1000} disabled={adminTaskSaving} /></label>
+                <div className="form-actions span-full"><button type="submit" className="primary-button" disabled={adminTaskSaving || availableHrTaskAssignees.length === 0}><ClipboardCheck size={16} /> {adminTaskSaving ? "Assigning..." : "Assign Task"}</button></div>
               </form>
             </Panel>
           )}
 
           {activePage === "hr-tasks" && (
             <Panel title="All tasks">
-              {hrDashboardDataStatus === "missing" ? <p className="admin-employee-loading">Open the HR Dashboard once to initialize its employee and task data.</p> : <TaskTable tasks={hrTaskRows} />}
+              {!adminTasksLoaded ? <p className="admin-employee-loading">Loading tasks from Firebase...</p> : hrTaskRows.length ? <TaskTable tasks={hrTaskRows} /> : <p className="admin-employee-loading">No Firebase tasks found.</p>}
             </Panel>
           )}
 
           {activePage === "hr-assigned-tasks" && (
             <Panel title="Tasks assigned to employees">
-              {hrDashboardDataStatus === "missing" ? <p className="admin-employee-loading">Open the HR Dashboard once to initialize its employee and task data.</p> : <TaskTable tasks={hrTaskRows.filter((task) => Number(task.assignedBy) === 1)} />}
+              {!adminTasksLoaded ? <p className="admin-employee-loading">Loading tasks from Firebase...</p> : hrTaskRows.filter((task) => Number(task.assignedBy) === 1 || String(task.createdById || "") === currentUserId).length
+                ? <TaskTable tasks={hrTaskRows.filter((task) => Number(task.assignedBy) === 1 || String(task.createdById || "") === currentUserId)} />
+                : <p className="admin-employee-loading">No tasks assigned by this Admin yet.</p>}
             </Panel>
           )}
 
@@ -7617,7 +7568,7 @@ function CrmUploadDataPage({ rows, setRows, users, currentUser, isAdmin, onCallL
     autoTable(pdf, {
       startY: 25,
       head: [["S. No.", "Date", "Name", "Contact", "Call Status", "Interest", "Service / Program", "Remark", "Assigned To"]],
-      body: filteredRows.map((row, index) => [index + 1, formatAdminDate(row.createdAt || row.date), row.name || "-", row.contact || row.number || "-", normalizeCallStatus(row.callStatus), normalizeInterestStatus(row.interestStatus), normalizeCallProgram(row.program) || "-", row.remark || "-", row.assignedToName || users.find((user) => String(user.id || user._id) === String(row.assignedTo))?.name || "Unassigned"]),
+      body: filteredRows.map((row, index) => [index + 1, formatAdminDate(row.createdAt || row.date), row.name || "-", row.contact || row.number || "-", normalizeCallStatus(row.callStatus) || "Choose", normalizeInterestStatus(row.interestStatus), normalizeCallProgram(row.program) || "-", row.remark || "-", row.assignedToName || users.find((user) => String(user.id || user._id) === String(row.assignedTo))?.name || "Unassigned"]),
       styles: { fontSize: 7, cellPadding: 2, overflow: "linebreak" }, headStyles: { fillColor: [127, 78, 43] },
     });
     pdf.save(`call-list-${new Date().toISOString().slice(0, 10)}.pdf`);
@@ -7707,6 +7658,7 @@ function CrmUploadDataPage({ rows, setRows, users, currentUser, isAdmin, onCallL
           </select>
           <select aria-label="Call status" value={callStatusFilter} onChange={(event) => setCallStatusFilter(event.target.value)}>
             <option value="All">All Call Status</option>
+            <option value="">Choose</option>
             {CALL_STATUS_OPTIONS.map((status) => <option key={status}>{status}</option>)}
           </select>
           <select aria-label="Interest status" value={interestFilter} onChange={(event) => setInterestFilter(event.target.value)}>
@@ -7765,6 +7717,7 @@ function CrmUploadDataPage({ rows, setRows, users, currentUser, isAdmin, onCallL
                   </td>
                   <td>
                     <select className="inline-select" value={normalizeCallStatus(row.callStatus)} onChange={(event) => updateRow(row.id, { callStatus: event.target.value })}>
+                      <option value="">Choose</option>
                       {CALL_STATUS_OPTIONS.map((status) => <option key={status}>{status}</option>)}
                     </select>
                   </td>

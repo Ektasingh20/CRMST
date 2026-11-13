@@ -15,11 +15,20 @@ test("duplicate visible tasks keep the submitted course and lesson link", () => 
 
 test("tasks in different courses or with different due dates remain separate", () => {
   const rows = dedupeStudentAssignments([
-    { title: "Project", courseTitle: "Web", dueValue: "2026-11-10", status: "Ready" },
-    { title: "Project", courseTitle: "Web", dueValue: "2026-11-17", status: "Ready" },
-    { title: "Project", courseTitle: "Python", dueValue: "2026-11-10", status: "Ready" },
+    { title: "Project", courseTitle: "Web", dueValue: "2026-11-10", status: "Pending" },
+    { title: "Project", courseTitle: "Web", dueValue: "2026-11-17", status: "Pending" },
+    { title: "Project", courseTitle: "Python", dueValue: "2026-11-10", status: "Pending" },
   ]);
   assert.equal(rows.length, 3);
+});
+
+test("an unlocked pending assignment takes priority over a locked duplicate", () => {
+  const rows = dedupeStudentAssignments([
+    { title: "Project", courseTitle: "Web", courseId: "old", status: "Locked", dueValue: "" },
+    { title: "Project", courseTitle: "Web", courseId: "new", status: "Pending", dueValue: "" },
+  ]);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].courseId, "new");
 });
 
 test("graded tasks show marks, including zero, while other tasks show a dash", () => {

@@ -4,8 +4,9 @@ import Lead from "../models/Lead.js";
 import User from "../models/User.js";
 import { LEAD_INTERESTS } from "./leadCatalog.js";
 import { leadCollection, normalizeLeadData } from "./firestoreLeadModel.js";
-import { whatsappMessageRef } from "./firestoreWhatsAppModel.js";
+import { whatsappMessageRef, whatsappMessages } from "./firestoreWhatsAppModel.js";
 import { isCallLead } from "../../frontend/callLeads.js";
+import { normalizeCallStatus } from "../../frontend/callListConfig.js";
 
 const validTypes = new Set(["services", "training"]);
 export function normalizeListType(value) {
@@ -22,7 +23,12 @@ function callListError(message, status = 400) {
   error.status = status;
   return error;
 }
-export function normalizeCallLeadDraft(value) {
+export function isApprovedCallCompletionUpdate(record, patch) {
+  return patch.callStatus === "Completed"
+    && normalizeCallStatus(record.callStatus) === "Follow Up"
+    && Object.keys(patch).every((key) => key === "callStatus");
+}
+export function normalizeCallLeadDraft(value, validInterests = LEAD_INTERESTS) {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw callListError("Save the lead form before approving.");
   const draft = Object.fromEntries(leadDraftFields.map((key) => [key, clean(value[key])]));
   const typeKey = draft.type.toLowerCase();
@@ -31,10 +37,23 @@ export function normalizeCallLeadDraft(value) {
   if (draft.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(draft.email)) throw callListError("Enter a valid email address.");
   if (draft.alternatePhone && !/^[6-9]\d{9}$/.test(draft.alternatePhone)) throw callListError("Enter a valid alternate mobile number.");
   if (!draft.city) throw callListError("City is required.");
-  if (!LEAD_INTERESTS[typeKey]?.includes(draft.interest)) throw callListError("Select an interest for the lead type.");
+  if (!validInterests[typeKey]?.includes(draft.interest)) throw callListError("Select an interest for the lead type.");
   if (!leadStatusValues.has(draft.status)) throw callListError("Select a valid lead status.");
   if (draft.value && (!Number.isFinite(Number(draft.value)) || Number(draft.value) < 0)) throw callListError("Enter a valid lead value.");
   return draft;
+}
+async function leadInterestsWithActiveTemplates(type) {
+  const typeKey = clean(type).toLowerCase();
+  const configured = LEAD_INTERESTS[typeKey] || [];
+  if (typeKey !== "training" && typeKey !== "service") return LEAD_INTERESTS;
+  const snapshot = await whatsappMessages()
+    .where("active", "==", true)
+    .where("type", "==", typeKey)
+    .get();
+  const templateTitles = snapshot.docs
+    .map((document) => clean(document.data()?.title))
+    .filter(Boolean);
+  return { ...LEAD_INTERESTS, [typeKey]: [...new Set([...configured, ...templateTitles])] };
 }
 const cleanIndianPhone = (value) => {
   let digits = String(value ?? "").replace(/\D/g, "");
@@ -183,9 +202,9 @@ export async function importCallRecords({ listType, assignedTo, assignedToName =
       callId: ref.id, listType: type, name: clean(raw.name),
       contact,
       program: clean(raw.program || raw.service || raw.training || raw.programInterest || raw.courseInterest),
-      source: clean(raw.source) || "Uploaded Call List", callStatus: !importedCallStatus || /^select status$/i.test(importedCallStatus) ? "Pending" : importedCallStatus,
+      source: clean(raw.source) || "Uploaded Call List", callStatus: !importedCallStatus || /^(?:select status|choose|not called)$/i.test(importedCallStatus) ? "" : importedCallStatus,
       interestStatus: !importedInterestStatus || /^select status$/i.test(importedInterestStatus) ? "Not Interested" : importedInterestStatus, remark: clean(raw.remark), assignedTo: clean(assignedTo),
-      assignedToName: clean(assignedToName), callClicked: false, whatsappClicked: false, leadCreated: false, callLeadStatus: "Pending", active: true,
+      assignedToName: clean(assignedToName), callClicked: false, whatsappClicked: false, leadCreated: false, callLeadStatus: "", callLeadStatusSelected: false, active: true,
       createdAt: now, updatedAt: now, uploadedBy: clean(uploadedBy),
     };
     if (!record.name || !record.contact) return;
@@ -248,13 +267,13 @@ export async function createCallRecord(type, input, actor) {
     callId: ref.id, listType, name, contact,
     program: clean(template.data().title), [templateField]: templateId,
     source: "Manual Call List", date: now.slice(0, 10),
-    callStatus: clean(input.callStatus) || "Pending",
+    callStatus: clean(input.callStatus),
     interactionType: clean(input.interactionType) || "",
     interestStatus: clean(input.interestStatus) || "Not Interested",
     remark: clean(input.remark), assignedTo,
     assignedToName: clean(actor?.name || actor?.username),
     callClicked: false, whatsappClicked: false, leadCreated: false,
-    callLeadStatus: "Pending", active: true, createdAt: now, updatedAt: now,
+    callLeadStatus: "", callLeadStatusSelected: false, active: true, createdAt: now, updatedAt: now,
     uploadedBy: assignedTo,
   };
   const batch = getFirestore().batch();
@@ -271,7 +290,11 @@ export async function createCallRecord(type, input, actor) {
 }
 
 export async function updateCallRecord(type, id, patch, assignedTo = "", requiredAssignedTo = "") {
+<<<<<<< Updated upstream
   const allowed = ["leadCreated", "createdLeadId", "createdLeadDate", "callLeadStatus", "callLeadAssignedTo", "callLeadAssignedDate", "callStatus", "callAt", "interactionType", "interestStatus", "program", "programId", "serviceId", "remark", "leadDraft", "leadDraftSavedBy", "leadDraftSavedByName", "callClicked", "whatsappClicked", "active", "name", "contact", "date", "assignedTo", "assignedToName"];
+=======
+  const allowed = ["leadCreated", "createdLeadId", "createdLeadDate", "callLeadStatus", "callLeadStatusSelected", "callLeadAssignedTo", "callLeadAssignedDate", "callStatus", "interactionType", "interestStatus", "program", "programId", "serviceId", "remark", "leadDraft", "leadDraftSavedBy", "leadDraftSavedByName", "callClicked", "whatsappClicked", "active", "name", "contact", "date", "assignedTo", "assignedToName"];
+>>>>>>> Stashed changes
   const payload = Object.fromEntries(allowed.filter((key) => patch[key] !== undefined).map((key) => [key, patch[key]]));
   const templateField = normalizeListType(type) === "training" ? "programId" : "serviceId";
   const otherTemplateField = templateField === "programId" ? "serviceId" : "programId";
@@ -283,7 +306,10 @@ export async function updateCallRecord(type, id, patch, assignedTo = "", require
     }
     payload.program = clean(template.data().title);
   }
-  if (payload.leadDraft !== undefined) payload.leadDraft = normalizeCallLeadDraft(payload.leadDraft);
+  if (payload.leadDraft !== undefined) {
+    const validInterests = await leadInterestsWithActiveTemplates(payload.leadDraft?.type);
+    payload.leadDraft = normalizeCallLeadDraft(payload.leadDraft, validInterests);
+  }
   const snapshot = await findCallSnapshot(type, id, assignedTo);
   if (!snapshot?.exists) throw new Error("Call record not found.");
   const ref = snapshot.ref;
@@ -296,11 +322,10 @@ export async function updateCallRecord(type, id, patch, assignedTo = "", require
     const hasAssignedAccess = String(data.assignedTo) === String(requiredAssignedTo)
       || String(data.callLeadAssignedTo || "") === String(requiredAssignedTo);
     if (requiredAssignedTo && !hasAssignedAccess) throw callListError("This call is not assigned to you.", 403);
-    if (data.leadDraft && Object.prototype.hasOwnProperty.call(payload, "leadDraft")) {
-      throw callListError("The lead form has already been saved and cannot be submitted again.", 409);
-    }
+    const changesLockedRecord = Object.keys(payload).some((key) => !isDeepStrictEqual(data[key], payload[key]));
     if ((data.leadCreated || data.callLeadStatus === "Approved")
-      && Object.keys(payload).some((key) => !isDeepStrictEqual(data[key], payload[key]))) {
+      && changesLockedRecord
+      && !isApprovedCallCompletionUpdate(data, payload)) {
       throw callListError("This call contact is locked because its lead has already been created.", 409);
     }
     before = { id: fresh.id, listType: normalizeListType(type), ...data };
@@ -337,7 +362,8 @@ export async function approveCallRecord(type, id, actor, assignedTo = "", admin 
   }
   if (initialData.leadCreated || initialData.callLeadStatus === "Approved") throw callListError("This lead has already been approved.", 409);
   const sourceCallPath = snapshot.ref.path;
-  const draft = normalizeCallLeadDraft(initialData.leadDraft);
+  const validInterests = await leadInterestsWithActiveTemplates(initialData.leadDraft?.type);
+  const draft = normalizeCallLeadDraft(initialData.leadDraft, validInterests);
   const existingLead = await Lead.findOne({ phone: draft.phone });
   if (existingLead && existingLead.sourceCallPath !== sourceCallPath) {
     throw callListError("A lead already exists for this phone number.", 409);
@@ -388,7 +414,7 @@ export async function approveCallRecord(type, id, actor, assignedTo = "", admin 
     if (!isCallLead(data)) {
       throw callListError("This contact no longer qualifies as a call lead.", 409);
     }
-    const currentDraft = normalizeCallLeadDraft(data.leadDraft);
+    const currentDraft = normalizeCallLeadDraft(data.leadDraft, validInterests);
     if (!isDeepStrictEqual(currentDraft, draft)) throw callListError("The saved lead form changed. Refresh and try again.", 409);
     if (!existingLead) transaction.create(leadRef, leadData);
     const changes = { leadCreated: true, callLeadStatus: "Approved", createdLeadId: leadRef.path, createdLeadDate: now, program: draft.interest, updatedAt: now, lastWorkedAt: now };

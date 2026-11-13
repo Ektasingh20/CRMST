@@ -1,15 +1,18 @@
 import CallLeadsPanel from "../../CallLeadsPanel.jsx";
+import CallListDatePicker from "../../CallListDatePicker.jsx";
 import WhatsAppModal from "../../WhatsAppModal.jsx";
 import { useMessageTemplates } from "../../useMessageTemplates.js";
 import { resolveLeadTemplate, templateSelectionPatch } from "../../whatsAppMessage.js";
 import RemarkField from "../../RemarkField.jsx";
-import { callLeadForm, callLeadProgram, isCallLead } from "../../callLeads.js";
+import { callLeadForm, callLeadProgram, callLeadReviewStatus, isCallLead } from "../../callLeads.js";
 import { createTask as createTaskApi, fetchTasks, updateTask as updateTaskApi, fetchAttendance, createAttendance, updateAttendance, fetchLeaves, createLeave, updateMyProfile, fetchAppNotifications, markAppNotificationRead } from "../../backendApi.js";
 import PasswordResetLink from "../PasswordResetLink.jsx";
 import HelpdeskChat, { HelpdeskIncomingToast } from "../shared/HelpdeskChat.jsx";
-import { TRAINING_CALL_LIST_PROGRAMS, SERVICE_CALL_LIST_SERVICES, CALL_STATUS_OPTIONS, CALL_LIST_INTEREST_STATUS_OPTIONS, normalizeCallStatus, normalizeInterestStatus, normalizeCallProgram, matchesCallListFilters } from "../../callListConfig.js";
+import { TRAINING_CALL_LIST_PROGRAMS, SERVICE_CALL_LIST_SERVICES, CALL_STATUS_OPTIONS, CALL_LIST_INTEREST_STATUS_OPTIONS, normalizeCallStatus, normalizeInterestStatus, normalizeCallProgram, isCallContactLocked, matchesCallListFilters, callListRecordDate, callLeadRecordDate } from "../../callListConfig.js";
 import { isCrmPageLoading } from "./crmPageLoading.js";
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { BellRing, CalendarDays, Check, CircleAlert, CircleX, Hourglass, RefreshCw, Search } from "lucide-react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 import "./crmExecutive.css";
@@ -89,6 +92,114 @@ const IconWhatsapp = (p) => (
     <path d="m14 13.9 1.5-.9 1.7 1.1" />
   </Icon>
 );
+const CALL_STATUS_CHOICES = [
+  { value: "", label: "Choose", Icon: CircleAlert },
+  { value: "Pending", label: "Pending", Icon: Hourglass },
+  { value: "Follow Up", label: "Follow Up", Icon: RefreshCw },
+  { value: "Completed", label: "Completed", Icon: Check },
+];
+function CallListStatusSelect({ contact, disabled, onChange }) {
+  const status = normalizeCallStatus(contact.callStatus);
+  const selected = CALL_STATUS_CHOICES.find((choice) => choice.value === status) || CALL_STATUS_CHOICES[0];
+  const triggerRef = useRef(null);
+  const menuRef = useRef(null);
+  const optionRefs = useRef([]);
+  const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState(null);
+
+  useLayoutEffect(() => {
+    if (!open) return undefined;
+    const updatePosition = () => {
+      const rect = triggerRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const width = Math.max(150, rect.width);
+      const height = CALL_STATUS_CHOICES.length * 30 + 8;
+      const below = window.innerHeight - rect.bottom;
+      const top = below >= height || below >= rect.top ? rect.bottom + 4 : rect.top - height - 4;
+      setPosition({
+        top: Math.max(4, Math.min(top, window.innerHeight - height - 4)),
+        left: Math.max(4, Math.min(rect.left, window.innerWidth - width - 4)),
+        width: Math.min(width, window.innerWidth - 8),
+      });
+    };
+    const closeOnOutsideClick = (event) => {
+      if (!triggerRef.current?.contains(event.target) && !menuRef.current?.contains(event.target)) setOpen(false);
+    };
+    updatePosition();
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+    document.addEventListener("pointerdown", closeOnOutsideClick);
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+      document.removeEventListener("pointerdown", closeOnOutsideClick);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const index = CALL_STATUS_CHOICES.findIndex((choice) => choice.value === selected.value);
+    optionRefs.current[index]?.focus();
+  }, [open, selected.value]);
+
+  const closeMenu = () => {
+    setOpen(false);
+    triggerRef.current?.focus();
+  };
+  const handleKeyDown = (event, index) => {
+    let next;
+    if (event.key === "ArrowDown") next = (index + 1) % CALL_STATUS_CHOICES.length;
+    else if (event.key === "ArrowUp") next = (index - 1 + CALL_STATUS_CHOICES.length) % CALL_STATUS_CHOICES.length;
+    else if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = CALL_STATUS_CHOICES.length - 1;
+    else if (event.key === "Escape") {
+      event.preventDefault();
+      closeMenu();
+      return;
+    } else return;
+    event.preventDefault();
+    optionRefs.current[next]?.focus();
+  };
+
+  return (
+    <span className={clsx("call-list-status-control", `call-list-status-${(selected.value || "choose").toLowerCase().replace(/\s+/g, "-")}`)}>
+      <button
+        ref={triggerRef}
+        type="button"
+        className="inline-select call-list-status-trigger"
+        aria-label={`Call status for ${contact.name || "contact"}`}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        disabled={disabled}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <selected.Icon size={15} aria-hidden="true" />
+        <span>{selected.label}</span>
+        <Icon size={14} aria-hidden="true"><path d="m6 9 6 6 6-6" /></Icon>
+      </button>
+      {open && position && createPortal(
+        <div ref={menuRef} className="call-lead-status-menu" role="listbox" aria-label={`Call status options for ${contact.name || "contact"}`} style={{ ...position, position: "fixed" }}>
+          {CALL_STATUS_CHOICES.map(({ value, label, Icon: StatusIcon }, index) => (
+            <button
+              key={label}
+              ref={(element) => { optionRefs.current[index] = element; }}
+              type="button"
+              className={`call-lead-status-option ${value ? value.toLowerCase().replace(/\s+/g, "-") : "choose"}`}
+              role="option"
+              aria-selected={selected.value === value}
+              onKeyDown={(event) => handleKeyDown(event, index)}
+              onClick={() => { onChange(value); closeMenu(); }}
+            >
+              <StatusIcon size={14} aria-hidden="true" />
+              <span>{label}</span>
+            </button>
+          ))}
+        </div>,
+        document.body,
+      )}
+    </span>
+  );
+}
 const IconUsers = (p) => (
   <Icon {...p}>
     <circle cx="9" cy="8" r="3" />
@@ -479,7 +590,7 @@ function isContactToWork(contact, today) {
   return contact.active !== false
     && !contact.leadCreated && contact.callLeadStatus !== "Approved"
     && (!contact.snoozeUntil || contact.snoozeUntil <= today)
-    && ["Pending", "Follow Up"].includes(normalizeCallStatus(contact.callStatus));
+    && ["", "Pending", "Follow Up"].includes(normalizeCallStatus(contact.callStatus));
 }
 
 function DashboardTab({ contacts, leads, tasks, leaveRequests, onNavigate }) {
@@ -635,7 +746,7 @@ function emptyContactForm() {
     name: "",
     contact: "",
     program: PROGRAMS[0],
-    callStatus: "Pending",
+    callStatus: "",
     interactionType: "",
     interestStatus: "Not Interested",
     remark: "",
@@ -671,6 +782,11 @@ function ContactFormModal({ initial, onClose, onSave, category, templates, templ
       return next;
     });
   };
+  const clearErrors = (...keys) => setErrors((current) => {
+    const next = { ...current };
+    keys.forEach((key) => delete next[key]);
+    return next;
+  });
 
   const handleSave = () => {
     const nextErrors = {};
@@ -745,6 +861,7 @@ function ContactFormModal({ initial, onClose, onSave, category, templates, templ
         <div className="field">
           <span>Call Status</span>
           <select value={form.callStatus} onChange={(e) => set("callStatus", e.target.value)}>
+            <option value="">Choose</option>
             {CALL_STATUS_OPTIONS.map((p) => (
               <option key={p}>{p}</option>
             ))}
@@ -808,10 +925,21 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
   const [savingContact, setSavingContact] = useState(false);
   const [whatsAppLead, setWhatsAppLead] = useState(null);
   const tableRef = useRef(null);
-  // The API sets this only when status, interest, or remark is changed. This
-  // keeps the original date for every other kind of edit.
-  const contactDate = (contact) => contact.lastWorkedAt || contact.date || contact.createdAt || contact.createdLeadDate || "";
-  // Date sorting uses the exact activity date shown in the table.
+  const panelRef = useRef(null);
+  const controlsRef = useRef(null);
+  useEffect(() => {
+    const panel = panelRef.current;
+    const controls = controlsRef.current;
+    if (!panel || !controls) return;
+    const updateHeaderOffset = () => panel.style.setProperty("--call-list-controls-height", `${controls.offsetHeight}px`);
+    updateHeaderOffset();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(updateHeaderOffset);
+    observer?.observe(controls);
+    return () => observer?.disconnect();
+  }, []);
+  // The displayed date is the immutable upload/manual-add date. CRM activity
+  // remains available in lastWorkedAt without changing row order.
+  const contactDate = callListRecordDate;
   const sortableDate = (contact) => {
     const value = String(contactDate(contact)).slice(0, 10);
     const timestamp = new Date(`${value}T00:00:00`).getTime();
@@ -868,13 +996,33 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
       showToast(`Please select a ${category === "Training" ? "training" : "service"} before marking this contact ${patch.callStatus}.`);
       return;
     }
+    const optimisticLastWorkedAt = activityRecorded ? new Date().toISOString() : undefined;
     setContacts((prev) => prev.map((c) => {
       if (c.id !== id) return c;
-      const updated = { ...c, ...patch, ...(activityRecorded ? { lastWorkedAt: new Date().toISOString() } : {}) };
+      const updated = { ...c, ...patch, ...(activityRecorded ? { lastWorkedAt: optimisticLastWorkedAt } : {}) };
       onContactChange?.(updated);
       return updated;
     }));
-    if (persist && existing?.sourceRecord) Promise.resolve(onPersistContact?.(existing, { ...patch, ...(activityRecorded ? { activityRecorded: true } : {}) })).catch(() => showToast("Could not save this update"));
+    if (persist && existing?.sourceRecord) {
+      Promise.resolve(onPersistContact?.(existing, { ...patch, ...(activityRecorded ? { activityRecorded: true } : {}) })).catch((error) => {
+        setContacts((prev) => prev.map((contact) => {
+          if (contact.id !== id) return contact;
+          const rollback = Object.fromEntries(Object.entries(patch)
+            .filter(([key, value]) => Object.is(contact[key], value))
+            .map(([key]) => [key, existing[key]]));
+          const restoreActivityDate = activityRecorded && contact.lastWorkedAt === optimisticLastWorkedAt;
+          if (!Object.keys(rollback).length && !restoreActivityDate) return contact;
+          const restored = {
+            ...contact,
+            ...rollback,
+            ...(restoreActivityDate ? { lastWorkedAt: existing.lastWorkedAt } : {}),
+          };
+          onContactChange?.(restored);
+          return restored;
+        }));
+        showToast(error?.message || "Could not save this update");
+      });
+    }
   };
 
   const handleCall = (c) => {
@@ -938,15 +1086,8 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
     setPage(1);
   };
 
-  const handleSearch = () => {
-    setSearch(searchInput.trim());
-    setPage(1);
-  };
-
   const isSnoozed = (c) => c.snoozeUntil && c.snoozeUntil > todayISO();
-  // A completed call is final: it can be viewed, but its CRM details cannot
-  // be changed. Interest status does not affect this lock.
-  const isConvertedToLead = (c) => c.callStatus === "Completed";
+  const isConvertedToLead = isCallContactLocked;
   const exportPdf = () => {
     const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
     pdf.setFontSize(16); pdf.text(`${title} Report`, 14, 14);
@@ -954,58 +1095,54 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
     autoTable(pdf, {
       startY: 25,
       head: [["S. No.", "Date", "Name", "Contact", "Call Status", "Interest", category === "Services" ? "Service" : "Training", "Remark"]],
-      body: filtered.map((c, index) => [index + 1, formatDisplayDate(contactDate(c)), c.name || "-", c.contact || "-", normalizeCallStatus(c.callStatus), normalizeInterestStatus(c.interestStatus), normalizeCallProgram(c.program) || "-", c.remark || "-"]),
+      body: filtered.map((c, index) => [index + 1, formatDisplayDate(contactDate(c)), c.name || "-", c.contact || "-", normalizeCallStatus(c.callStatus) || "Choose", normalizeInterestStatus(c.interestStatus), normalizeCallProgram(c.program) || "-", c.remark || "-"]),
       styles: { fontSize: 7, cellPadding: 2, overflow: "linebreak" }, headStyles: { fillColor: [127, 78, 43] },
     });
     pdf.save(`${String(title).toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${todayISO()}.pdf`);
   };
 
   return (
-    <div className="panel call-list-panel">
+    <div className="panel call-list-panel" ref={panelRef}>
+      <div className="call-list-controls" ref={controlsRef}>
       <div className="panel-head">
         <h3>{title}</h3>
-        <div className="row-actions"><button className="primary-button" onClick={exportPdf} disabled={!filtered.length}><IconDownload size={16} /> Export PDF ({filtered.length})</button><button className="primary-button" onClick={() => setModalState({ ...emptyContactForm(), program: "", callListCategory: category })}><IconPlus size={16} /> {addLabel}</button></div>
+        <div className="row-actions"><button className="primary-button call-list-export-button" onClick={exportPdf} disabled={!filtered.length}><IconDownload size={16} /> Export PDF <span className="call-list-button-count">{filtered.length}</span></button><button className="primary-button call-list-add-button" onClick={() => setModalState({ ...emptyContactForm(), program: "", callListCategory: category })}><IconPlus size={16} /> {addLabel}</button></div>
       </div>
 
       {templatesError && <p className="field-error" role="alert">Could not load message templates: {templatesError}</p>}
 
       <div className="module-toolbar">
         <div className="toolbar-search">
-          <IconSearch size={16} />
+          <Search className="toolbar-search-icon" size={17} aria-hidden="true" />
           <input
+            type="search"
+            aria-label="Search contacts"
             placeholder="Search by name or contact number"
             value={searchInput}
             onChange={(e) => {
               setSearchInput(e.target.value);
-              setSearch(e.target.value);
+              setSearch(e.target.value.trim());
               setPage(1);
             }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                setSearch(searchInput.trim());
-                setPage(1);
-              }
-            }}
           />
-          <button type="button" className="toolbar-search-action" onClick={handleSearch}>
-            Search
-          </button>
+          {searchInput && <button type="button" className="toolbar-search-clear" aria-label="Clear search" title="Clear search" onClick={() => { setSearchInput(""); setSearch(""); setPage(1); }}><IconClose size={16} /></button>}
         </div>
         <div className="toolbar-filters">
-          <select value={programFilter} onChange={(e) => setProgramFilter(e.target.value)}>
+          <select aria-label={category === "Services" ? "Filter by service" : "Filter by training"} value={programFilter} onChange={(e) => setProgramFilter(e.target.value)}>
             <option value="All">{category === "Services" ? "All Services" : "All Training"}</option>
             <option value="">Unspecified</option>
             {[...new Set([...templates.map((template) => template.title), ...contacts.filter((contact) => (contact.callListCategory || getCallListCategory(contact.program)) === category).map((contact) => normalizeCallProgram(contact.program)).filter(Boolean)])].map((p) => (
               <option key={p}>{p}</option>
             ))}
           </select>
-          <select value={callStatusFilter} onChange={(e) => setCallStatusFilter(e.target.value)}>
+          <select aria-label="Filter by call status" value={callStatusFilter} onChange={(e) => setCallStatusFilter(e.target.value)}>
             <option value="All">All Call Status</option>
+            <option value="">Choose</option>
             {CALL_STATUS_OPTIONS.map((p) => (
               <option key={p}>{p}</option>
             ))}
           </select>
-          <select value={interestFilter} onChange={(e) => setInterestFilter(e.target.value)}>
+          <select aria-label="Filter by interest status" value={interestFilter} onChange={(e) => setInterestFilter(e.target.value)}>
             <option value="All">All Interest</option>
             {CALL_LIST_INTEREST_STATUS_OPTIONS.map((p) => (
               <option key={p}>{p}</option>
@@ -1013,14 +1150,15 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
           </select>
         </div>
         <div className="call-list-date-row">
-          <span>Lead activity date</span>
-          <label className="table-date-filter"><span>From</span><input aria-label="From date" type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} /></label>
-          <label className="table-date-filter"><span>To</span><input aria-label="To date" type="date" min={fromDate} value={toDate} onChange={(e) => setToDate(e.target.value)} /></label>
+          <span className="call-list-date-caption"><CalendarDays size={15} aria-hidden="true" /> Added date</span>
+          <CallListDatePicker label="From" value={fromDate} onChange={setFromDate} />
+          <CallListDatePicker label="To" value={toDate} min={fromDate} onChange={setToDate} />
           <button type="button" className="ghost-button compact" onClick={resetFilters}>Reset</button>
         </div>
       </div>
+      </div>
 
-      <div className="table-wrap" ref={tableRef}>
+      <div className="table-wrap" ref={tableRef} tabIndex={0} role="region" aria-label="Call list table. Scroll horizontally to see all columns.">
         <table className="table">
           <thead>
             <tr>
@@ -1044,9 +1182,9 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
             {pageRows.length === 0 && <EmptyRow colSpan={10} text={`No ${category.toLowerCase()} contacts match the selected filters.`} />}
             {pageRows.map((c, idx) => {
               const locked = isConvertedToLead(c);
-              const statusClass = `call-list-status-${normalizeCallStatus(c.callStatus).toLowerCase().replace(/\s+/g, "-")}`;
+              const statusClass = `call-list-status-${(normalizeCallStatus(c.callStatus) || "choose").toLowerCase().replace(/\s+/g, "-")}`;
               return <tr key={c.id} className={clsx(statusClass, locked && "call-list-locked")}>
-                <td>{(page - 1) * CONTACT_PAGE_SIZE + idx + 1}</td>
+                <td><span className="call-list-serial">{(page - 1) * CONTACT_PAGE_SIZE + idx + 1}</span></td>
                 <td>{formatDisplayDate(contactDate(c))}</td>
                 <td>
                   <div className="person-cell">
@@ -1068,16 +1206,11 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
                   </div>
                 </td>
                 <td>
-                  <select
-                    className="inline-select"
-                    value={normalizeCallStatus(c.callStatus)}
+                  <CallListStatusSelect
+                    contact={c}
                     disabled={locked}
-                    onChange={(e) => updateContact(c.id, { callStatus: e.target.value })}
-                  >
-                    {CALL_STATUS_OPTIONS.map((s) => (
-                      <option key={s}>{s}</option>
-                    ))}
-                  </select>
+                    onChange={(value) => updateContact(c.id, { callStatus: value })}
+                  />
                 </td>
                 <td>
                   <select
@@ -1291,7 +1424,7 @@ function AssignedLeadsTab({ leads, callLeadRows, currentUser }) {
   );
 }
 
-function LeadFormModal({ initial, onClose, onSave, currentUser, users = [], saving = false, readOnly = false, hideAssignment = false, draftSaved = false, saveLabel = "Save lead" }) {
+function LeadFormModal({ initial, onClose, onSave, currentUser, users = [], saving = false, readOnly = false, hideAssignment = false, draftSaved = false, saveLabel = "Save lead", title }) {
   const initialType = initial.type || (getCallListCategory(initial.program) === "Services" ? "Service" : getCallListCategory(initial.program) === "Internship" ? "Internship" : "Training");
   const interestOptions = (type) => type === "Service"
     ? SERVICE_CALL_LIST_SERVICES
@@ -1316,10 +1449,51 @@ function LeadFormModal({ initial, onClose, onSave, currentUser, users = [], savi
     assignedDate: initial.assignedDate || "",
     notes: initial.notes || initial.remark || "",
   }));
-  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+  const [errors, setErrors] = useState({});
+  const formRef = useRef(null);
+  const set = (k, v) => {
+    setForm((f) => ({ ...f, [k]: v }));
+    setErrors((current) => {
+      if (!current[k]) return current;
+      const next = { ...current };
+      delete next[k];
+      return next;
+    });
+  };
+  const clearErrors = (...keys) => setErrors((current) => {
+    if (!keys.some((key) => current[key])) return current;
+    const next = { ...current };
+    keys.forEach((key) => delete next[key]);
+    return next;
+  });
   const availableInterests = [...new Set([...interestOptions(form.type), form.interest].filter(Boolean))];
   const handleSave = () => {
-    if (!form.name.trim() || !/^[6-9]\d{9}$/.test(form.phone.trim()) || !form.city.trim() || !form.interest) return;
+    const nextErrors = {};
+    const validStatuses = ["Pending", "Interested", "Not Interested"];
+    const validSources = ["Website", "Referral", "Facebook", "Instagram", "Google", "Walk-in", "Phone Call", "Other"];
+    if (!form.name.trim()) nextErrors.name = "Full name is required";
+    else if (!/^[a-zA-Z][a-zA-Z .'-]*$/.test(form.name.trim())) nextErrors.name = "Use letters, spaces, apostrophes, or hyphens only";
+    if (!form.phone.trim()) nextErrors.phone = "Phone number is required";
+    else if (!/^[6-9]\d{9}$/.test(form.phone.trim())) nextErrors.phone = "Enter a valid 10-digit Indian mobile number";
+    if (form.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) nextErrors.email = "Enter a valid email address";
+    if (form.alternatePhone.trim() && !/^[6-9]\d{9}$/.test(form.alternatePhone.trim())) nextErrors.alternatePhone = "Enter a valid 10-digit Indian mobile number";
+    if (!form.city.trim()) nextErrors.city = "City is required";
+    if (!form.type) nextErrors.type = "Lead type is required";
+    if (!form.interest) nextErrors.interest = "Select a service, training, or internship interest";
+    if (form.value !== "" && Number(form.value) < 0) nextErrors.value = "Value cannot be negative";
+    if (!validSources.includes(form.leadSource)) nextErrors.leadSource = "Select a lead source";
+    if (!validStatuses.includes(form.status)) nextErrors.status = "Select a valid status";
+    if (!hideAssignment && !form.assignedTo) nextErrors.assignedTo = "Select an assignee";
+    if (Object.keys(nextErrors).length) {
+      setErrors(nextErrors);
+      requestAnimationFrame(() => {
+        const firstInvalid = formRef.current?.querySelector('[aria-invalid="true"]');
+        firstInvalid?.scrollIntoView({ behavior: "smooth", block: "center" });
+        firstInvalid?.focus({ preventScroll: true });
+      });
+      return;
+    }
+    setErrors({});
     onSave({
       ...initial,
       ...form,
@@ -1333,29 +1507,41 @@ function LeadFormModal({ initial, onClose, onSave, currentUser, users = [], savi
   };
 
   return (
-    <Modal title={readOnly ? "View lead" : draftSaved ? "Edit saved lead form" : "Add new lead"} onClose={onClose} wide>
+    <Modal title={title || (readOnly ? "View lead" : draftSaved ? "Edit saved lead form" : "Add new lead")} onClose={onClose} wide>
       <fieldset className="crm-enquiry-fieldset" disabled={readOnly}>
-      <div className="form-grid add-lead-form crm-enquiry-form">
+      <div ref={formRef} className="form-grid add-lead-form crm-enquiry-form">
+        {Object.keys(errors).length > 0 && <div className="form-validation-summary span-full" role="alert"><CircleAlert size={17} aria-hidden="true" /><span>Please correct the highlighted fields before saving.</span></div>}
         <p className="form-section-title">Contact Information</p>
         <div className="field">
           <span>Full name *</span>
-          <input value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="Enter the lead's full name here" />
+          <input value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="Enter the lead's full name here" required aria-required="true" aria-invalid={Boolean(errors.name)} />
+          {errors.name && <span className="field-error">{errors.name}</span>}
         </div>
         <div className="field">
           <span>Phone *</span>
-          <input value={form.phone} maxLength={10} onChange={(e) => set("phone", e.target.value.replace(/\D/g, "").slice(0, 10))} placeholder="Enter the lead's phone number here" />
+          <div className="india-phone-input">
+            <span className="india-phone-prefix" aria-label="India country code plus 91">
+              <span className="india-flag" aria-hidden="true" />
+              <span>+91</span>
+            </span>
+            <input type="tel" inputMode="numeric" value={form.phone} maxLength={10} onChange={(e) => set("phone", e.target.value.replace(/\D/g, "").slice(0, 10))} placeholder="Enter 10-digit mobile number" required aria-required="true" aria-invalid={Boolean(errors.phone)} aria-label="Indian mobile number, starting with 6, 7, 8, or 9" />
+          </div>
+          {errors.phone && <span className="field-error">{errors.phone}</span>}
         </div>
         <div className="field">
           <span>Email</span>
-          <input type="email" value={form.email} onChange={(e) => set("email", e.target.value)} placeholder="Enter the lead's email here" />
+          <input type="email" value={form.email} onChange={(e) => set("email", e.target.value)} placeholder="Enter the lead's email here" aria-invalid={Boolean(errors.email)} />
+          {errors.email && <span className="field-error">{errors.email}</span>}
         </div>
         <div className="field">
           <span>Alternate Phone</span>
-          <input value={form.alternatePhone} maxLength={10} onChange={(e) => set("alternatePhone", e.target.value.replace(/\D/g, "").slice(0, 10))} placeholder="Enter an alternate phone number here" />
+          <input value={form.alternatePhone} maxLength={10} onChange={(e) => set("alternatePhone", e.target.value.replace(/\D/g, "").slice(0, 10))} placeholder="Enter an alternate phone number here" aria-invalid={Boolean(errors.alternatePhone)} />
+          {errors.alternatePhone && <span className="field-error">{errors.alternatePhone}</span>}
         </div>
         <div className="field">
           <span>City *</span>
-          <input value={form.city} onChange={(e) => set("city", e.target.value)} placeholder="Enter the city here" />
+          <input value={form.city} onChange={(e) => set("city", e.target.value)} placeholder="Enter the city here" required aria-required="true" aria-invalid={Boolean(errors.city)} />
+          {errors.city && <span className="field-error">{errors.city}</span>}
         </div>
         <div className="field">
           <span>Company / Organization</span>
@@ -1365,37 +1551,42 @@ function LeadFormModal({ initial, onClose, onSave, currentUser, users = [], savi
         <p className="form-section-title">Lead Information</p>
         <div className="field">
           <span>Lead Type *</span>
-          <select value={form.type} onChange={(e) => { const type = e.target.value; setForm((current) => ({ ...current, type, interest: interestOptions(type)[0] })); }}>
+          <select value={form.type} required aria-required="true" aria-invalid={Boolean(errors.type)} onChange={(e) => { const type = e.target.value; setForm((current) => ({ ...current, type, interest: interestOptions(type)[0] })); clearErrors("type", "interest"); }}>
             <option>Training</option>
             <option>Service</option>
             <option>Internship</option>
           </select>
+          {errors.type && <span className="field-error">{errors.type}</span>}
         </div>
         <div className="field">
           <span>Interest *</span>
-          <select value={form.interest} onChange={(e) => set("interest", e.target.value)}>
+          <select value={form.interest} onChange={(e) => set("interest", e.target.value)} required aria-required="true" aria-invalid={Boolean(errors.interest)}>
             <option value="">Select interest</option>
             {availableInterests.map((interest) => <option key={interest}>{interest}</option>)}
           </select>
+          {errors.interest && <span className="field-error">{errors.interest}</span>}
         </div>
         <div className="field">
           <span>Value</span>
-          <input type="number" min="0" value={form.value} onChange={(e) => set("value", e.target.value)} placeholder="Enter the estimated value here" />
+          <input type="number" min="0" value={form.value} onChange={(e) => set("value", e.target.value)} placeholder="Enter the estimated value here" aria-invalid={Boolean(errors.value)} />
+          {errors.value && <span className="field-error">{errors.value}</span>}
         </div>
         <div className="field">
           <span>Lead Source *</span>
-          <select value={form.leadSource} onChange={(e) => set("leadSource", e.target.value)}>
+          <select value={form.leadSource} onChange={(e) => set("leadSource", e.target.value)} required aria-required="true" aria-invalid={Boolean(errors.leadSource)}>
             {["Website", "Referral", "Facebook", "Instagram", "Google", "Walk-in", "Phone Call", "Other"].map((source) => <option key={source}>{source}</option>)}
           </select>
+          {errors.leadSource && <span className="field-error">{errors.leadSource}</span>}
         </div>
         <div className="field">
           <span>Status *</span>
-          <select value={form.status} onChange={(e) => set("status", e.target.value)}>
+          <select value={form.status} onChange={(e) => set("status", e.target.value)} required aria-required="true" aria-invalid={Boolean(errors.status)}>
             <option>Pending</option>
             <option>Interested</option>
             <option>Not Interested</option>
             {form.status && !["Pending", "Interested", "Not Interested"].includes(form.status) ? <option>{form.status}</option> : null}
           </select>
+          {errors.status && <span className="field-error">{errors.status}</span>}
         </div>
 
         {hideAssignment ? <>
@@ -1412,10 +1603,11 @@ function LeadFormModal({ initial, onClose, onSave, currentUser, users = [], savi
           </div>
           <div className="field">
             <span>Assigned To *</span>
-            <select value={form.assignedTo} onChange={(e) => set("assignedTo", e.target.value)}>
+            <select value={form.assignedTo} onChange={(e) => set("assignedTo", e.target.value)} required aria-required="true" aria-invalid={Boolean(errors.assignedTo)}>
               <option value="">Select Assignee</option>
               {users.map((user) => <option key={user.id || user._id} value={user.id || user._id}>{user.name || user.username}</option>)}
             </select>
+            {errors.assignedTo && <span className="field-error">{errors.assignedTo}</span>}
           </div>
           <div className="field">
             <span>Assigned Date</span>
@@ -1432,7 +1624,7 @@ function LeadFormModal({ initial, onClose, onSave, currentUser, users = [], savi
       </fieldset>
       <div className="form-actions">
         <button className="ghost-button" onClick={onClose}>
-          Cancel
+          {readOnly ? "Close" : "Cancel"}
         </button>
         {!readOnly && (
           <button className="primary-button" disabled={saving} onClick={handleSave}>
@@ -1457,13 +1649,13 @@ function LeadsTab({ rows, users, currentUser, onSave, onApprove, onDelete, onCre
         await onCreateLead(form);
       }
       setInitial(null);
-      showToast(initial.record ? "Lead form saved. The form is now locked; approve the lead when ready." : "Lead uploaded successfully.");
+      showToast(initial.record ? "Lead form saved. You can edit it until approval." : "Lead uploaded successfully.");
     } catch (error) { showToast(error.message || "Could not create lead"); }
     finally { setSaving(false); }
   };
   return <>
-    <CallLeadsPanel rows={rows} users={users} currentUser={currentUser} largeText onSave={onSave} onApprove={onApprove} onDelete={onDelete} onAdd={(row) => setInitial({ record: row, form: { ...callLeadForm(row), ...row.leadDraft } })} onUploadLead={() => setInitial({ record: null, form: callLeadForm({ listType: "services" }) })} showAssignee={false} lockCreatedLead />
-    {initial && <LeadFormModal initial={initial.form} users={users} currentUser={currentUser} saving={saving} onClose={() => setInitial(null)} onSave={create} hideAssignment draftSaved={Boolean(initial.record?.leadDraft)} saveLabel={initial.record ? "Save lead form" : "Save lead"} />}
+    <CallLeadsPanel rows={rows} users={users} currentUser={currentUser} largeText compactHeader onSave={onSave} onApprove={onApprove} onDelete={onDelete} onAdd={(row) => setInitial({ record: row, form: { ...callLeadForm(row), ...row.leadDraft } })} onView={(row) => setInitial({ record: row, form: { ...callLeadForm(row), ...row.leadDraft }, readOnly: true })} onUploadLead={() => setInitial({ record: null, form: callLeadForm({ listType: "services" }) })} showAssignee={false} lockCreatedLead />
+    {initial && <LeadFormModal initial={initial.form} users={users} currentUser={currentUser} saving={saving} readOnly={Boolean(initial.readOnly)} title={initial.readOnly ? "View saved lead form" : undefined} onClose={() => setInitial(null)} onSave={create} hideAssignment draftSaved={Boolean(initial.record?.leadDraft)} saveLabel={initial.record ? "Save lead form" : "Save lead"} />}
   </>;
 }
 
@@ -1508,15 +1700,99 @@ function ApprovedLeadsTab({ leads, sourceContacts, currentUser }) {
   />;
 }
 
-function SalesReportsTab({ contacts, showToast }) {
-  const [reportScope, setReportScope] = useState("Services");
+const salesReportCategory = (contact) => contact.listType === "training" ? "Training" : contact.listType === "services" ? "Services" : getCallListCategory(contact.program);
+const salesReportDate = (contact) => callLeadRecordDate(contact);
+const salesReportApproved = (contact) => Boolean(contact.leadCreated || contact.createdLeadId || contact.callLeadStatus === "Approved");
+
+function SalesReportTableTab({ contacts, setContacts, currentUser, users, onSave, showToast }) {
+  const [scope, setScope] = useState("All");
+  const [query, setQuery] = useState("");
+  const [action, setAction] = useState("All");
+  const [formState, setFormState] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const candidates = contacts.filter((contact) => isCallLead(contact) || contact.leadDraft || salesReportApproved(contact));
+  const scoped = candidates.filter((contact) => scope === "All" || salesReportCategory(contact) === scope);
+  const filtered = scoped.filter((contact) => {
+    const matchesQuery = `${contact.name} ${contact.contact} ${contact.program}`.toLowerCase().includes(query.trim().toLowerCase());
+    const matchesAction = action === "All" || (action === "Approved" && salesReportApproved(contact))
+      || (action === "Form filled" && Boolean(contact.leadDraft))
+      || (action === "Form needed" && !contact.leadDraft);
+    return matchesQuery && matchesAction;
+  });
+  const filled = filtered.filter((contact) => contact.leadDraft);
+  const exportSalesEnquiriesPdf = () => {
+    if (!filtered.length) return;
+    const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+    pdf.setFontSize(16); pdf.text(`${scope === "All" ? "All" : scope} Sales Enquiries`, 14, 14);
+    pdf.setFontSize(9); pdf.setTextColor(100); pdf.text(`${filtered.length} filtered record(s)`, 14, 20);
+    autoTable(pdf, {
+      startY: 25,
+      head: [["S. No.", "Program", "Lead Name", "Contact", "Call Status", "Interest", "Approval", "Enquiry"]],
+      body: filtered.map((contact, index) => [index + 1, contact.program || "-", contact.name || "-", contact.contact || "-", normalizeCallStatus(contact.callStatus) || "-", normalizeInterestStatus(contact.interestStatus) || "-", salesReportApproved(contact) ? "Approved" : callLeadReviewStatus(contact) || "Not reviewed", contact.leadDraft ? "Filled" : "Not filled"]),
+      styles: { fontSize: 8, cellPadding: 2.4, overflow: "linebreak" },
+      headStyles: { fillColor: [128, 71, 39] },
+    });
+    pdf.save(`sales-enquiries-${scope.toLowerCase()}-${todayISO()}.pdf`);
+  };
+  const exportFilledEnquiriesPdf = () => {
+    if (!filled.length) return;
+    const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+    pdf.setFontSize(16); pdf.text(`${scope === "All" ? "All" : scope} Filled Enquiries`, 14, 14);
+    pdf.setFontSize(9); pdf.setTextColor(100); pdf.text(`${filled.length} completed form(s)`, 14, 20);
+    autoTable(pdf, {
+      startY: 25,
+      head: [["S. No.", "Program", "Lead Name", "Contact", "City", "Company", "Form Status"]],
+      body: filled.map((contact, index) => [index + 1, contact.leadDraft.interest || contact.program || "-", contact.leadDraft.name || contact.name || "-", contact.leadDraft.phone || contact.contact || "-", contact.leadDraft.city || "-", contact.leadDraft.company || "-", "Filled"]),
+      styles: { fontSize: 8, cellPadding: 2.4, overflow: "linebreak" },
+      headStyles: { fillColor: [128, 71, 39] },
+    });
+    pdf.save(`filled-enquiries-${scope.toLowerCase()}-${todayISO()}.pdf`);
+  };
+  const openForm = (contact, mode) => setFormState({ contact, mode });
+  const saveForm = async (form) => {
+    if (!formState || saving) return;
+    setSaving(true);
+    try {
+      const saved = await onSave(formState.contact, { leadDraft: form });
+      setContacts((current) => current.map((contact) => contact.id === saved.id && contact.listType === saved.listType ? normalizeSourceContact(saved) : contact));
+      setFormState(null);
+      showToast("Enquiry form saved.");
+    } catch (error) { showToast(error.message || "Could not save the enquiry form."); }
+    finally { setSaving(false); }
+  };
+  const renderActions = (contact) => contact.leadDraft
+    ? <button type="button" className="sales-report-icon" title="View enquiry" aria-label={`View enquiry for ${contact.name}`} onClick={() => openForm(contact, "view")}><IconEye size={16} /></button>
+    : <button type="button" className="sales-report-icon" title="Fill enquiry form" aria-label={`Fill enquiry form for ${contact.name}`} onClick={() => openForm(contact, "fill")}><IconFillEnquiry size={16} /></button>;
+  return <div className="sales-report-tables">
+    <div className="panel sales-report-table-panel">
+      <div className="panel-head"><div><h3>Sales enquiries</h3><p className="panel-subtitle">Qualified contacts from your assigned call lists</p></div><div className="sales-report-head-actions"><span className="sales-report-count">{filtered.length} records</span><button type="button" className="primary-button sales-report-export-button" disabled={!filtered.length} onClick={exportSalesEnquiriesPdf}><IconDownload size={16} /> Export PDF <span>{filtered.length}</span></button></div></div>
+      <div className="sales-report-table-filters">
+        <div className="sales-report-scope" role="tablist" aria-label="Report type">{["All", "Services", "Training"].map((item) => <button key={item} type="button" role="tab" aria-selected={scope === item} className={scope === item ? "active" : ""} onClick={() => setScope(item)}>{item}</button>)}</div>
+        <div className="sales-report-search"><Search size={17} aria-hidden="true" /><input type="search" aria-label="Search sales enquiries" placeholder="Search name, contact or program" value={query} onChange={(event) => setQuery(event.target.value)} /></div>
+        <select aria-label="Filter by action" value={action} onChange={(event) => setAction(event.target.value)}><option value="All">All actions</option><option>Approved</option><option>Form filled</option><option>Form needed</option></select>
+      </div>
+      <div className="sales-report-table-scroll"><table className="sales-report-table"><thead><tr><th>SR NO</th><th>PROGRAM</th><th>LEAD NAME</th><th>CONTACT</th><th>CALL STATUS</th><th>INTEREST</th><th>APPROVAL</th><th>ENQUIRY</th><th>ACTION</th></tr></thead><tbody>
+        {filtered.length ? filtered.map((contact, index) => <tr key={`${contact.listType}-${contact.id}`}><td>{index + 1}</td><td>{contact.program || "—"}</td><td className="sales-report-name">{contact.name || "—"}</td><td>{contact.contact || "—"}</td><td>{normalizeCallStatus(contact.callStatus) || "—"}</td><td>{normalizeInterestStatus(contact.interestStatus) || "—"}</td><td><span className={`sales-report-badge ${salesReportApproved(contact) ? "approved" : "pending"}`}>{salesReportApproved(contact) ? "Approved" : callLeadReviewStatus(contact) || "Not reviewed"}</span></td><td><span className={`sales-report-badge ${contact.leadDraft ? "filled" : "needed"}`}>{contact.leadDraft ? "Filled" : "Not filled"}</span></td><td>{renderActions(contact)}</td></tr>) : <tr><td colSpan={9} className="sales-report-no-results">No enquiries match these filters.</td></tr>}
+      </tbody></table></div>
+    </div>
+    <div className="panel sales-report-table-panel"><div className="panel-head"><div><h3>Filled enquiries</h3><p className="panel-subtitle">Saved form details from your sales contacts</p></div><div className="sales-report-head-actions"><span className="sales-report-count">{filled.length} forms</span><button type="button" className="primary-button sales-report-export-button" disabled={!filled.length} onClick={exportFilledEnquiriesPdf}><IconDownload size={16} /> Export PDF <span>{filled.length}</span></button></div></div><div className="sales-report-table-scroll"><table className="sales-report-table"><thead><tr><th>SR NO</th><th>PROGRAM</th><th>LEAD NAME</th><th>CONTACT</th><th>CITY</th><th>COMPANY</th><th>FORM STATUS</th><th>ACTION</th></tr></thead><tbody>
+      {filled.length ? filled.map((contact, index) => <tr key={`${contact.listType}-${contact.id}`}><td>{index + 1}</td><td>{contact.leadDraft.interest || contact.program || "—"}</td><td className="sales-report-name">{contact.leadDraft.name || contact.name}</td><td>{contact.leadDraft.phone || contact.contact}</td><td>{contact.leadDraft.city || "—"}</td><td>{contact.leadDraft.company || "—"}</td><td><span className="sales-report-badge filled">Filled</span></td><td>{renderActions(contact)}</td></tr>) : <tr><td colSpan={8} className="sales-report-no-results">No filled enquiry forms match these filters.</td></tr>}
+    </tbody></table></div></div>
+    {formState && <LeadFormModal key={`${formState.contact.listType}-${formState.contact.id}-${formState.mode}`} initial={{ ...callLeadForm(formState.contact), ...formState.contact.leadDraft }} currentUser={currentUser} users={users} onClose={() => setFormState(null)} onSave={saveForm} saving={saving} readOnly={formState.mode === "view"} hideAssignment draftSaved={Boolean(formState.contact.leadDraft)} saveLabel={formState.mode === "edit" ? "Save changes" : "Save enquiry"} title={`${formState.mode === "view" ? "View" : formState.mode === "edit" ? "Edit" : "Fill"} enquiry form`} />}
+  </div>;
+}
+
+function SalesReportAnalysisTab({ contacts, showToast }) {
+  const [reportScope, setReportScope] = useState("All");
   const [program, setProgram] = useState("All");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
-  const reportDate = (contact) => String(contact.lastWorkedAt || contact.createdLeadDate || contact.date || contact.createdAt || "").slice(0, 10);
-  const reportCategory = (contact) => contact.listType === "training" ? "Training" : contact.listType === "services" ? "Services" : getCallListCategory(contact.program);
-  const scopedContacts = contacts.filter((contact) => reportScope === "All" || reportCategory(contact) === reportScope);
-  const programOptions = [...new Set([...PROGRAMS, ...scopedContacts.map((contact) => contact.program).filter(Boolean)])];
+  const [exportingPdf, setExportingPdf] = useState(false);
+  const reportRef = useRef(null);
+  const reportDate = salesReportDate;
+  const scopedContacts = contacts.filter((contact) => reportScope === "All" || salesReportCategory(contact) === reportScope);
+  const programOptions = [...new Set(scopedContacts.map((contact) => contact.program).filter(Boolean))]
+    .sort((left, right) => left.localeCompare(right, undefined, { sensitivity: "base" }));
 
   const filteredContacts = scopedContacts.filter((c) => {
     const matchesProgram = program === "All" || c.program === program;
@@ -1547,31 +1823,217 @@ function SalesReportsTab({ contacts, showToast }) {
       return { program: programName, total: rows.length, interested: rows.filter((contact) => normalizeInterestStatus(contact.interestStatus) === "Interested").length, leadsCreated, rate: rows.length ? Math.round((leadsCreated / rows.length) * 100) : 0 };
     })
     .sort((left, right) => right.total - left.total || right.leadsCreated - left.leadsCreated);
-  // Replaced visual blocks remain mounted below for backwards compatibility;
-  // the report panel hides them in favour of the operational dashboard.
-  const categorySummary = [];
-  const reportRows = [];
-
-  const handleExport = () => {
-    if (!programRows.length) {
+  const handleExport = async () => {
+    if (!filteredContacts.length || exportingPdf) {
       showToast("Nothing to export for the selected filters");
       return;
     }
-    downloadCSV(`sales-report-${todayISO()}.csv`, programRows.map((row) => ({ Program: row.program, "Total Contacts": row.total, Interested: row.interested, "Leads Created": row.leadsCreated, "Conversion Rate": `${row.rate}%` })));
-    showToast("Report exported as CSV");
+    setExportingPdf(true);
+    try {
+      const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      const margin = 10;
+      const contentWidth = pageWidth - (margin * 2);
+      const palette = {
+        ink: [48, 41, 35], muted: [132, 119, 107], line: [235, 227, 217],
+        soft: [249, 246, 242], brown: [128, 80, 51], rust: [185, 99, 66],
+        amber: [196, 145, 82], taupe: [167, 116, 91], track: [239, 234, 228],
+      };
+      const reportTitle = reportScope === "All" ? "Overall Sales Analysis" : reportScope === "Training" ? "Training Sales Analysis" : "Service Sales Analysis";
+      const filterParts = [program === "All" ? "All programs" : program];
+      if (dateFrom || dateTo) filterParts.push(`${dateFrom ? formatDisplayDate(dateFrom) : "Beginning"} - ${dateTo ? formatDisplayDate(dateTo) : "Today"}`);
+      const setText = (color = palette.ink) => pdf.setTextColor(...color);
+      const drawHeader = (continuation = false) => {
+        pdf.setFillColor(255, 255, 255);
+        pdf.rect(0, 0, pageWidth, pageHeight, "F");
+        pdf.setFont("helvetica", "bold");
+        pdf.setFontSize(15);
+        setText();
+        pdf.text(continuation ? `${reportTitle} - Program Performance` : reportTitle, margin, 15);
+        pdf.setFont("helvetica", "normal");
+        pdf.setFontSize(8.5);
+        setText(palette.muted);
+        pdf.text(continuation ? "Continued from the previous page" : "Performance based on your assigned call-list contacts", margin, 21);
+        pdf.text(`Filters: ${filterParts.join(" | ")}  |  Generated: ${formatDisplayDate(todayISO())}`, pageWidth - margin, 21, { align: "right" });
+        pdf.setDrawColor(...palette.line);
+        pdf.line(margin, 25, pageWidth - margin, 25);
+      };
+      const roundedCard = (x, y, width, height, accent) => {
+        pdf.setFillColor(255, 255, 255);
+        pdf.setDrawColor(...palette.line);
+        pdf.roundedRect(x, y, width, height, 3, 3, "FD");
+        if (accent) {
+          pdf.setDrawColor(...accent);
+          pdf.setLineWidth(0.8);
+          pdf.line(x + 3, y, x + width - 3, y);
+          pdf.setLineWidth(0.2);
+        }
+      };
+      const summary = [
+        ["Total contacts", totalContacts, "Within selected filters", null],
+        ["Interested", interested, `${totalContacts ? Math.round((interested / totalContacts) * 100) : 0}% of contacts`, palette.rust],
+        ["Follow ups due", followUps, "Needs another conversation", palette.amber],
+        ["Leads created", createdLeads, `${conversionRate}% conversion rate`, palette.brown],
+      ];
+
+      drawHeader();
+      const cardY = 31;
+      const cardGap = 4;
+      const cardWidth = (contentWidth - (cardGap * 3)) / 4;
+      summary.forEach(([label, value, hint, accent], index) => {
+        const x = margin + (index * (cardWidth + cardGap));
+        roundedCard(x, cardY, cardWidth, 28, accent);
+        pdf.setFont("helvetica", "bold");
+        pdf.setFontSize(9);
+        setText(palette.muted);
+        pdf.text(label, x + 5, cardY + 8);
+        pdf.setFontSize(17);
+        setText();
+        pdf.text(String(value), x + 5, cardY + 18);
+        pdf.setFont("helvetica", "normal");
+        pdf.setFontSize(7.5);
+        setText(palette.muted);
+        pdf.text(hint, x + 5, cardY + 24);
+      });
+
+      const funnelY = 65;
+      const conversionWidth = 66;
+      const sectionGap = 5;
+      const funnelWidth = contentWidth - conversionWidth - sectionGap;
+      roundedCard(margin, funnelY, funnelWidth, 75);
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(10);
+      setText();
+      pdf.text("Sales funnel", margin + 5, funnelY + 9);
+      pdf.setFont("helvetica", "normal");
+      pdf.setFontSize(7.5);
+      setText(palette.muted);
+      pdf.text("How contacts progress through your pipeline", margin + 5, funnelY + 15);
+      pdf.setFillColor(249, 235, 226);
+      pdf.roundedRect(margin + funnelWidth - 38, funnelY + 5, 33, 9, 4, 4, "F");
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(7.5);
+      pdf.setTextColor(...palette.rust);
+      pdf.text(`${notInterested} not interested`, margin + funnelWidth - 21.5, funnelY + 11, { align: "center" });
+      const barColors = [palette.brown, palette.rust, palette.amber, palette.taupe, palette.brown];
+      pipeline.forEach((step, index) => {
+        const y = funnelY + 25 + (index * 9.5);
+        pdf.setFont("helvetica", "normal");
+        pdf.setFontSize(8);
+        setText(palette.muted);
+        pdf.text(step.label, margin + 5, y);
+        pdf.setFont("helvetica", "bold");
+        setText();
+        pdf.text(String(step.value), margin + funnelWidth - 5, y, { align: "right" });
+        pdf.setFillColor(...palette.track);
+        pdf.roundedRect(margin + 5, y + 2, funnelWidth - 10, 2.3, 1, 1, "F");
+        const progress = totalContacts ? (step.value / totalContacts) : 0;
+        if (progress > 0) {
+          pdf.setFillColor(...barColors[index]);
+          pdf.roundedRect(margin + 5, y + 2, Math.max(2, (funnelWidth - 10) * progress), 2.3, 1, 1, "F");
+        }
+      });
+
+      const conversionX = margin + funnelWidth + sectionGap;
+      roundedCard(conversionX, funnelY, conversionWidth, 75);
+      pdf.setFont("helvetica", "normal");
+      pdf.setFontSize(9);
+      setText(palette.muted);
+      pdf.text("Conversion rate", conversionX + (conversionWidth / 2), funnelY + 18, { align: "center" });
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(17);
+      pdf.setTextColor(...palette.brown);
+      pdf.text(`${conversionRate}%`, conversionX + (conversionWidth / 2), funnelY + 30, { align: "center" });
+      pdf.setDrawColor(...palette.line);
+      pdf.setLineWidth(3.2);
+      pdf.circle(conversionX + (conversionWidth / 2), funnelY + 47, 10, "S");
+      pdf.setLineWidth(0.2);
+      pdf.setFontSize(12);
+      pdf.text(String(createdLeads), conversionX + (conversionWidth / 2), funnelY + 46, { align: "center" });
+      pdf.setFont("helvetica", "normal");
+      pdf.setFontSize(7.5);
+      setText(palette.muted);
+      pdf.text("leads", conversionX + (conversionWidth / 2), funnelY + 52, { align: "center" });
+      pdf.text(`Created leads out of ${totalContacts} contacts`, conversionX + (conversionWidth / 2), funnelY + 67, { align: "center" });
+
+      let rowY = 151;
+      const drawProgramHeading = () => {
+        pdf.setFont("helvetica", "bold");
+        pdf.setFontSize(10);
+        setText();
+        pdf.text("Program performance", margin, rowY);
+        pdf.setFont("helvetica", "normal");
+        pdf.setFontSize(7.5);
+        setText(palette.muted);
+        pdf.text("Contact volume and leads created by service or training program", margin, rowY + 6);
+        rowY += 13;
+      };
+      drawProgramHeading();
+      programRows.forEach((row) => {
+        if (rowY > pageHeight - 15) {
+          pdf.addPage("a4", "landscape");
+          drawHeader(true);
+          rowY = 34;
+          drawProgramHeading();
+        }
+        pdf.setFont("helvetica", "bold");
+        pdf.setFontSize(8.5);
+        setText();
+        const programLabel = pdf.splitTextToSize(row.program, 67)[0];
+        pdf.text(programLabel, margin, rowY);
+        pdf.setFont("helvetica", "normal");
+        pdf.setFontSize(7);
+        setText(palette.muted);
+        pdf.text(`${row.total} contact${row.total === 1 ? "" : "s"} | ${row.interested} interested`, margin, rowY + 5);
+        const barX = margin + 76;
+        const barWidth = contentWidth - 112;
+        pdf.setFillColor(...palette.track);
+        pdf.roundedRect(barX, rowY - 1.5, barWidth, 2.7, 1, 1, "F");
+        if (row.total > 0) {
+          pdf.setFillColor(...palette.brown);
+          pdf.roundedRect(barX, rowY - 1.5, Math.max(2, barWidth * (row.total / totalContacts)), 2.7, 1, 1, "F");
+        }
+        pdf.setFont("helvetica", "bold");
+        pdf.setFontSize(8.5);
+        pdf.setTextColor(...palette.brown);
+        pdf.text(String(row.leadsCreated), pageWidth - margin, rowY, { align: "right" });
+        pdf.setFont("helvetica", "normal");
+        pdf.setFontSize(7);
+        setText(palette.muted);
+        pdf.text(`leads | ${row.rate}%`, pageWidth - margin, rowY + 5, { align: "right" });
+        pdf.setDrawColor(...palette.line);
+        pdf.line(margin, rowY + 8, pageWidth - margin, rowY + 8);
+        rowY += 13;
+      });
+      const pageCount = pdf.getNumberOfPages();
+      for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
+        pdf.setPage(pageNumber);
+        pdf.setFont("helvetica", "normal");
+        pdf.setFontSize(7);
+        setText(palette.muted);
+        pdf.text(`Page ${pageNumber} of ${pageCount}`, pageWidth - margin, pageHeight - 5, { align: "right" });
+      }
+      pdf.save(`sales-analysis-${reportScope.toLowerCase()}-${todayISO()}.pdf`);
+      showToast("Analysis report exported as PDF");
+    } catch (error) {
+      showToast(error?.message || "Could not export the analysis report");
+    } finally {
+      setExportingPdf(false);
+    }
   };
 
   return (
-    <div className="panel sales-report-panel">
+    <div className="panel sales-report-panel" ref={reportRef}>
       <div className="panel-head">
-        <div><h3>{reportScope === "Training" ? "Training Sales Report" : reportScope === "Services" ? "Service Sales Report" : "Sales Reports"}</h3><p className="panel-subtitle">Performance based on your assigned call-list contacts</p></div>
-        <button className="ghost-button" onClick={handleExport}>
-          <IconDownload size={16} /> Export CSV
+        <div><h3>{reportScope === "All" ? "Overall Sales Analysis" : reportScope === "Training" ? "Training Sales Analysis" : "Service Sales Analysis"}</h3><p className="panel-subtitle">Performance based on your assigned call-list contacts</p></div>
+        <button className="ghost-button sales-analysis-export-button" data-html2canvas-ignore="true" onClick={handleExport} disabled={!filteredContacts.length || exportingPdf}>
+          <IconDownload size={16} /> {exportingPdf ? "Exporting..." : "Export PDF"} <span>{filteredContacts.length}</span>
         </button>
       </div>
 
       <div className="sales-report-scope" role="tablist" aria-label="Report type">
-        {["Services", "Training"].map((scope) => <button key={scope} type="button" role="tab" aria-selected={reportScope === scope} className={reportScope === scope ? "active" : ""} onClick={() => { setReportScope(scope); setProgram("All"); }}>{scope}</button>)}
+        {["All", "Services", "Training"].map((scope) => <button key={scope} type="button" role="tab" aria-selected={reportScope === scope} className={reportScope === scope ? "active" : ""} onClick={() => { setReportScope(scope); setProgram("All"); }}>{scope}</button>)}
       </div>
 
       <div className="module-toolbar">
@@ -1583,49 +2045,13 @@ function SalesReportsTab({ contacts, showToast }) {
             ))}
           </select>
           <div className="date-chip">
-            <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+            <input type="date" aria-label="Analysis start date" max={dateTo || undefined} value={dateFrom} onChange={(e) => { const value = e.target.value; setDateFrom(value); if (value && dateTo && value > dateTo) setDateTo(""); }} />
             <span>–</span>
-            <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+            <input type="date" aria-label="Analysis end date" min={dateFrom || undefined} value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
           </div>
         </div>
       </div>
 
-      <div className="stats-grid compact four-up">
-        {categorySummary.map((summary) => (
-          <StatCard
-            key={summary.category}
-            icon={<IconSummary size={18} />}
-            tone="blue"
-            value={summary.total}
-            label={`${summary.category} Contacts`}
-            hint={`${summary.converted} converted · ${summary.rate}% rate`}
-          />
-        ))}
-      </div>
-
-      <div className="table-wrap" style={{ padding: "0 20px 20px" }}>
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Program</th>
-              <th>Total Contacts</th>
-              <th>Converted</th>
-              <th>Conversion Rate</th>
-            </tr>
-          </thead>
-          <tbody>
-            {reportRows.length === 0 && <EmptyRow colSpan={4} text="No data for the selected filters." />}
-            {reportRows.map((r) => (
-              <tr key={r.Program}>
-                <td>{r.Program}</td>
-                <td>{r["Total Contacts"]}</td>
-                <td>{r.Converted}</td>
-                <td>{r["Conversion Rate"]}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
       <div className="sales-report-summary">
         <article><span>Total contacts</span><strong>{totalContacts}</strong><small>Within selected filters</small></article>
         <article className="blue"><span>Interested</span><strong>{interested}</strong><small>{totalContacts ? Math.round((interested / totalContacts) * 100) : 0}% of contacts</small></article>
@@ -1781,11 +2207,18 @@ function TasksTab({ tasks, setTasks, showToast, currentUser }) {
     }
     setSearch(searchInput.trim());
   };
+  const resetFilters = () => {
+    setSearchInput("");
+    setSearch("");
+    setPriorityFilter("All");
+    setFromDate("");
+    setToDate("");
+  };
   return (
-    <div className="panel">
+    <div className="panel call-list-panel task-list-panel">
       <div className="panel-head">
         <div><h3>My tasks</h3><p className="panel-subtitle">Tasks assigned by Admin and tasks you created for yourself</p></div>
-        <button className="primary-button" onClick={() => setModalState({ ...emptyTaskForm(), assignee: currentUser?.name || currentUser?.username || "Me", assigneeId: currentUser?.id || currentUser?._id || "" })}>
+        <button className="primary-button call-list-add-button" onClick={() => setModalState({ ...emptyTaskForm(), assignee: currentUser?.name || currentUser?.username || "Me", assigneeId: currentUser?.id || currentUser?._id || "" })}>
           <IconPlus size={16} /> New Task
         </button>
       </div>
@@ -1799,8 +2232,10 @@ function TasksTab({ tasks, setTasks, showToast, currentUser }) {
 
       <div className="module-toolbar">
         <div className="toolbar-search">
-          <IconSearch size={16} />
+          <IconSearch className="toolbar-search-icon" size={17} aria-hidden="true" />
           <input
+            type="search"
+            aria-label="Search tasks"
             placeholder="Search tasks"
             value={searchInput}
             onChange={(e) => {
@@ -1811,25 +2246,21 @@ function TasksTab({ tasks, setTasks, showToast, currentUser }) {
               if (e.key === "Enter") setSearch(searchInput.trim());
             }}
           />
-          <button type="button" className="toolbar-search-action" onClick={handleSearch}>
-            {search.trim() ? "Clear" : "Search"}
-          </button>
+          {searchInput && <button type="button" className="toolbar-search-clear" aria-label="Clear task search" title="Clear search" onClick={handleSearch}><IconClose size={16} /></button>}
         </div>
         <div className="toolbar-filters">
-          <select value={priorityFilter} onChange={(e) => setPriorityFilter(e.target.value)}>
+          <select aria-label="Filter tasks by priority" value={priorityFilter} onChange={(e) => setPriorityFilter(e.target.value)}>
             <option value="All">All Priorities</option>
             {TASK_PRIORITIES.map((p) => (
               <option key={p}>{p}</option>
             ))}
           </select>
-          <label className="task-date-filter">
-            <span>Created from</span>
-            <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} />
-          </label>
-          <label className="task-date-filter">
-            <span>Created to</span>
-            <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} />
-          </label>
+        </div>
+        <div className="call-list-date-row">
+          <span className="call-list-date-caption"><CalendarDays size={15} aria-hidden="true" /> Created date</span>
+          <CallListDatePicker label="From" value={fromDate} max={toDate || undefined} onChange={(value) => { setFromDate(value); if (value && toDate && value > toDate) setToDate(""); }} />
+          <CallListDatePicker label="To" value={toDate} min={fromDate || undefined} onChange={setToDate} />
+          <button type="button" className="ghost-button compact" onClick={resetFilters}>Reset</button>
         </div>
       </div>
 
@@ -1837,9 +2268,11 @@ function TasksTab({ tasks, setTasks, showToast, currentUser }) {
         <table className="table tasks-table">
           <thead>
             <tr>
+              <th>Sr No</th>
               <th>Task</th>
               <th>Description</th>
               <th>Assignee</th>
+              <th>Assigned By</th>
               <th>Priority</th>
               <th>Status</th>
               <th>Created Date</th>
@@ -1847,12 +2280,14 @@ function TasksTab({ tasks, setTasks, showToast, currentUser }) {
             </tr>
           </thead>
           <tbody>
-            {filtered.length === 0 && <EmptyRow colSpan={7} text="No tasks match the selected filters." />}
-            {filtered.map((t) => (
-              <tr key={t.id}>
+            {filtered.length === 0 && <EmptyRow colSpan={9} text="No tasks match the selected filters." />}
+            {filtered.map((t, index) => (
+              <tr key={t.id} className={t.status === "Done" ? "call-list-status-completed" : t.status === "In Progress" ? "call-list-status-follow-up" : "call-list-status-pending"}>
+                <td>{index + 1}</td>
                 <td><strong>{t.title}</strong></td>
                 <td>{t.description || "-"}</td>
                 <td>{t.assignee}</td>
+                <td>{t.createdBy || t.createdByName || t.assignedBy || "-"}</td>
                 <td><span className={clsx("badge", priorityBadgeClass(t.priority))}>{t.priority}</span></td>
                 <td>
                   <select className="inline-select" value={t.status} onChange={(e) => updateTask(t.id, { status: e.target.value })}>
@@ -1873,6 +2308,128 @@ function TasksTab({ tasks, setTasks, showToast, currentUser }) {
 }
 
 /* ============================ MARK ATTENDANCE TAB =========================== */
+
+const ATTENDANCE_STATUS_OPTIONS = [
+  { value: "", label: "Select Status", Icon: CircleAlert },
+  { value: "Present", label: "Present", Icon: Check },
+  { value: "Absent", label: "Absent", Icon: CircleX },
+];
+
+function AttendanceStatusSelect({
+  value,
+  onChange,
+  disabled,
+  options = ATTENDANCE_STATUS_OPTIONS,
+  ariaLabel = "Select attendance status",
+  wrapperClassName = "",
+  triggerClassName = "",
+  menuClassName = "",
+  colorByValue = true,
+}) {
+  const selected = options.find((option) => option.value === value) || options[0];
+  const triggerRef = useRef(null);
+  const menuRef = useRef(null);
+  const optionRefs = useRef([]);
+  const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState(null);
+
+  useLayoutEffect(() => {
+    if (!open) return undefined;
+    const updatePosition = () => {
+      const rect = triggerRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const width = Math.max(180, rect.width);
+      const height = Math.min(options.length * 36 + 8, 320, window.innerHeight - 8);
+      const below = window.innerHeight - rect.bottom;
+      const top = below >= height || below >= rect.top ? rect.bottom + 4 : rect.top - height - 4;
+      setPosition({
+        top: Math.max(4, Math.min(top, window.innerHeight - height - 4)),
+        left: Math.max(4, Math.min(rect.left, window.innerWidth - width - 4)),
+        width: Math.min(width, window.innerWidth - 8),
+      });
+    };
+    const closeOnOutsideClick = (event) => {
+      if (!triggerRef.current?.contains(event.target) && !menuRef.current?.contains(event.target)) setOpen(false);
+    };
+    updatePosition();
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+    document.addEventListener("pointerdown", closeOnOutsideClick);
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+      document.removeEventListener("pointerdown", closeOnOutsideClick);
+    };
+  }, [open, options.length]);
+
+  useEffect(() => {
+    if (!open) return;
+    const index = options.findIndex((option) => option.value === selected.value);
+    optionRefs.current[index]?.focus();
+  }, [open, selected.value, options.length]);
+
+  const closeMenu = () => {
+    setOpen(false);
+    triggerRef.current?.focus();
+  };
+  const handleOptionKeyDown = (event, index) => {
+    let next;
+    if (event.key === "ArrowDown") next = (index + 1) % options.length;
+    else if (event.key === "ArrowUp") next = (index - 1 + options.length) % options.length;
+    else if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = options.length - 1;
+    else if (event.key === "Escape") {
+      event.preventDefault();
+      closeMenu();
+      return;
+    } else return;
+    event.preventDefault();
+    optionRefs.current[next]?.focus();
+  };
+
+  return (
+    <div className={clsx(
+      "crm-attendance-status",
+      wrapperClassName,
+      colorByValue && value && `crm-attendance-status-${value.toLowerCase()}`,
+    )}>
+      <button
+        ref={triggerRef}
+        type="button"
+        className={clsx("crm-attendance-status-trigger", triggerClassName)}
+        aria-label={ariaLabel}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        disabled={disabled}
+        onClick={() => setOpen((current) => !current)}
+      >
+        {selected.Icon && <selected.Icon size={16} aria-hidden="true" />}
+        <span>{selected.label}</span>
+        <Icon size={15} aria-hidden="true"><path d="m6 9 6 6 6-6" /></Icon>
+      </button>
+      {open && position && createPortal(
+        <div ref={menuRef} className={clsx("call-lead-status-menu", "crm-attendance-status-menu", menuClassName)} role="listbox" aria-label={`${ariaLabel} options`} style={{ ...position, position: "fixed" }}>
+          {options.map(({ value: optionValue, label, Icon: StatusIcon, className }, index) => (
+            <button
+              key={label}
+              ref={(element) => { optionRefs.current[index] = element; }}
+              type="button"
+              className={clsx("call-lead-status-option", className)}
+              role="option"
+              aria-selected={selected.value === optionValue}
+              onKeyDown={(event) => handleOptionKeyDown(event, index)}
+              onClick={() => { onChange(optionValue); closeMenu(); }}
+            >
+              {StatusIcon && <StatusIcon size={15} aria-hidden="true" />}
+              <span>{label}</span>
+            </button>
+          ))}
+        </div>,
+        document.body,
+      )}
+    </div>
+  );
+}
 
 function MarkAttendanceTab({ attendance, setAttendance, showToast, profile }) {
   const today = todayISO();
@@ -1896,7 +2453,6 @@ function MarkAttendanceTab({ attendance, setAttendance, showToast, profile }) {
     try {
       const saved = await createAttendance({ date: today, status, remark });
       setAttendance((prev) => [saved, ...prev.filter((record) => record.id !== saved.id)]);
-      showToast("Checked in successfully");
     } catch (error) { showToast(error.message || "Could not mark attendance"); }
   };
 
@@ -1910,24 +2466,23 @@ function MarkAttendanceTab({ attendance, setAttendance, showToast, profile }) {
   };
 
   return (
-    <div>
-      <div className="panel">
-        <div className="panel-head">
-          <h3>Mark Attendance</h3>
-        </div>
+    <div className="crm-attendance-page">
+      <div className="panel crm-attendance-panel">
+        {checkIn && (
+          <div className="crm-attendance-success" role="status" aria-live="polite">
+            <Check size={17} aria-hidden="true" />
+            <span>You Have Checked In Successfully Today</span>
+          </div>
+        )}
         <div className="crm-attendance-form">
           <label className="crm-attendance-field">
             <span>Employee Name</span>
             <input value={profile?.name || "CRM Executive"} readOnly />
           </label>
-          <label className="crm-attendance-field">
+          <div className="crm-attendance-field">
             <span>Select Status</span>
-            <select value={status} onChange={(event) => setStatus(event.target.value)} disabled={Boolean(checkIn)}>
-              <option value="">Select Status</option>
-              <option value="Present">Present</option>
-              <option value="Absent">Absent</option>
-            </select>
-          </label>
+            <AttendanceStatusSelect value={status} onChange={setStatus} disabled={Boolean(checkIn)} />
+          </div>
           <label className="crm-attendance-field">
             <span>Remark</span>
             <input value={remark} onChange={(event) => setRemark(event.target.value)} placeholder="Remark (optional)" disabled={Boolean(checkIn)} />
@@ -1963,6 +2518,15 @@ function AttendanceReportTab({ attendance, showToast }) {
     set.add(currentMonthKey());
     return Array.from(set).sort().reverse();
   }, [attendance]);
+  const monthSelectOptions = useMemo(() => monthOptions.map((month) => ({
+    value: month,
+    label: new Date(`${month}-01T00:00:00`).toLocaleDateString("en-US", { month: "long", year: "numeric" }),
+  })), [monthOptions]);
+  const statusOptions = useMemo(() => [
+    { value: "All", label: "All statuses" },
+    ...Array.from(new Set(attendance.map((row) => row.status).filter(Boolean)))
+      .map((status) => ({ value: status, label: status })),
+  ], [attendance]);
 
   const rows = attendance.filter((a) => monthKeyOf(a.date) === monthFilter
     && (statusFilter === "All" || a.status === statusFilter)
@@ -1995,7 +2559,7 @@ function AttendanceReportTab({ attendance, showToast }) {
   return (
     <div className="panel crm-record-report attendance-report-panel">
       <div className="panel-head">
-        <div><h3>Attendance Report</h3><p className="panel-subtitle">Review your punch times and attendance history</p></div>
+        <div><h3>Attendance History</h3><p className="panel-subtitle">Review your punch times and attendance history</p></div>
         <div className="report-head-actions">
           <button className="ghost-button" onClick={handleExport} disabled={!rows.length}><IconDownload size={16} /> Export CSV</button>
           <button className="primary-button" onClick={handleExportPdf} disabled={!rows.length}><IconDownload size={16} /> Export PDF ({rows.length})</button>
@@ -2008,16 +2572,10 @@ function AttendanceReportTab({ attendance, showToast }) {
         <div><span>Other</span><strong>{rows.filter((row) => !["Present", "On Leave"].includes(row.status)).length}</strong></div>
       </div>
       <div className="report-toolbar">
-        <label><span>Month</span><select value={monthFilter} onChange={(e) => setMonthFilter(e.target.value)}>
-            {monthOptions.map((m) => (
-              <option key={m} value={m}>
-                {new Date(`${m}-01T00:00:00`).toLocaleDateString("en-US", { month: "long", year: "numeric" })}
-              </option>
-            ))}
-          </select></label>
-        <label><span>Status</span><select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}><option value="All">All statuses</option>{[...new Set(attendance.map((row) => row.status).filter(Boolean))].map((status) => <option key={status}>{status}</option>)}</select></label>
-        <label><span>From</span><input type="date" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); if (dateTo && dateTo < e.target.value) setDateTo(e.target.value); }} /></label>
-        <label><span>To</span><input type="date" min={dateFrom} value={dateTo} onChange={(e) => setDateTo(e.target.value)} /></label>
+        <label><span>Month</span><AttendanceStatusSelect value={monthFilter} onChange={setMonthFilter} options={monthSelectOptions} ariaLabel="Filter attendance by month" wrapperClassName="attendance-report-filter-select" triggerClassName="attendance-report-filter-trigger" menuClassName="attendance-report-select-menu" colorByValue={false} /></label>
+        <label><span>Status</span><AttendanceStatusSelect value={statusFilter} onChange={setStatusFilter} options={statusOptions} ariaLabel="Filter attendance by status" wrapperClassName="attendance-report-filter-select" triggerClassName="attendance-report-filter-trigger" menuClassName="attendance-report-select-menu" colorByValue={false} /></label>
+        <CallListDatePicker label="From" value={dateFrom} max={dateTo || undefined} onChange={(value) => { setDateFrom(value); if (value && dateTo && value > dateTo) setDateTo(""); }} />
+        <CallListDatePicker label="To" value={dateTo} min={dateFrom || undefined} onChange={setDateTo} />
         <button type="button" className="ghost-button" onClick={() => { setMonthFilter(currentMonthKey()); setStatusFilter("All"); setDateFrom(""); setDateTo(""); }}>Reset</button>
       </div>
       <div className="table-wrap">
@@ -2074,6 +2632,12 @@ function LeaveRequestTab({ leaveRequests, setLeaveRequests, showToast }) {
   const [filterTo, setFilterTo] = useState("");
   const [page, setPage] = useState(1);
   const pageSize = 15;
+  const leaveTypeOptions = LEAVE_TYPES.map((type) => ({ value: type, label: type }));
+  const leaveFilterTypeOptions = [{ value: "All", label: "All types" }, ...leaveTypeOptions];
+  const leaveFilterStatusOptions = ["All", "Pending", "Approved", "Rejected"].map((status) => ({
+    value: status,
+    label: status === "All" ? "All statuses" : status,
+  }));
   const requestedDays = leaveDays(form.from, form.to);
   const filteredRequests = leaveRequests.filter((leave) => (typeFilter === "All" || leave.type === typeFilter)
     && (statusFilter === "All" || leave.status === statusFilter)
@@ -2124,23 +2688,46 @@ function LeaveRequestTab({ leaveRequests, setLeaveRequests, showToast }) {
           <div className="form-grid leave-form-grid">
             <div className="field">
               <span>Leave Type</span>
-              <select value={form.type} onChange={(e) => setForm((f) => ({ ...f, type: e.target.value }))}>
-                {LEAVE_TYPES.map((t) => (
-                  <option key={t}>{t}</option>
-                ))}
-              </select>
+              <AttendanceStatusSelect
+                value={form.type}
+                onChange={(value) => setForm((current) => ({ ...current, type: value }))}
+                options={leaveTypeOptions}
+                ariaLabel="Select leave type"
+                wrapperClassName="leave-select"
+                triggerClassName="leave-select-trigger"
+                menuClassName="leave-select-menu"
+                colorByValue={false}
+              />
             </div>
-            <div className="field">
+            <div className="field leave-form-date-field">
               <span>From</span>
-              <input type="date" value={form.from} onChange={(e) => setForm((f) => ({ ...f, from: e.target.value, to: f.to && f.to < e.target.value ? e.target.value : f.to }))} />
+              <CallListDatePicker
+                label="From"
+                value={form.from}
+                hideLabel
+                onChange={(value) => setForm((current) => ({
+                  ...current,
+                  from: value,
+                  to: value && current.to && current.to < value ? value : current.to,
+                }))}
+              />
               {errors.from && <span className="field-error">{errors.from}</span>}
             </div>
-            <div className="field">
+            <div className="field leave-form-date-field">
               <span>To</span>
-              <input type="date" min={form.from} value={form.to} onChange={(e) => setForm((f) => ({ ...f, to: e.target.value }))} />
+              <CallListDatePicker
+                label="To"
+                value={form.to}
+                min={form.from || undefined}
+                hideLabel
+                onChange={(value) => setForm((current) => ({ ...current, to: value }))}
+              />
               {errors.to && <span className="field-error">{errors.to}</span>}
             </div>
-            <div className="leave-duration-card" role="status"><span>Leave duration</span><strong>{requestedDays === null ? "Choose dates" : `${requestedDays} ${requestedDays === 1 ? "day" : "days"}`}</strong><small>Calendar days, including both dates</small></div>
+            <div className="leave-duration-card" role="status">
+              <span><Hourglass size={15} aria-hidden="true" /> Leave duration</span>
+              <strong>{requestedDays === null ? "Choose dates" : `${requestedDays} ${requestedDays === 1 ? "day" : "days"}`}</strong>
+            </div>
             <div className="field span-full">
               <span>Reason</span>
               <textarea value={form.reason} onChange={(e) => setForm((f) => ({ ...f, reason: e.target.value }))} />
@@ -2167,10 +2754,10 @@ function LeaveRequestTab({ leaveRequests, setLeaveRequests, showToast }) {
           <div><span>Rejected</span><strong>{filteredRequests.filter((leave) => leave.status === "Rejected").length}</strong></div>
         </div>
         <div className="report-toolbar">
-          <label><span>Leave type</span><select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)}><option value="All">All types</option>{LEAVE_TYPES.map((type) => <option key={type}>{type}</option>)}</select></label>
-          <label><span>Status</span><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="All">All statuses</option>{["Pending", "Approved", "Rejected"].map((status) => <option key={status}>{status}</option>)}</select></label>
-          <label><span>Leave from</span><input type="date" value={filterFrom} onChange={(event) => { setFilterFrom(event.target.value); if (filterTo && filterTo < event.target.value) setFilterTo(event.target.value); }} /></label>
-          <label><span>Leave to</span><input type="date" min={filterFrom} value={filterTo} onChange={(event) => setFilterTo(event.target.value)} /></label>
+          <label><span>Leave type</span><AttendanceStatusSelect value={typeFilter} onChange={setTypeFilter} options={leaveFilterTypeOptions} ariaLabel="Filter by leave type" wrapperClassName="leave-filter-select" triggerClassName="leave-filter-trigger" menuClassName="leave-filter-menu" colorByValue={false} /></label>
+          <label><span>Status</span><AttendanceStatusSelect value={statusFilter} onChange={setStatusFilter} options={leaveFilterStatusOptions} ariaLabel="Filter by leave status" wrapperClassName="leave-filter-select" triggerClassName="leave-filter-trigger" menuClassName="leave-filter-menu" colorByValue={false} /></label>
+          <CallListDatePicker label="Leave from" value={filterFrom} max={filterTo || undefined} onChange={(value) => { setFilterFrom(value); if (value && filterTo && filterTo < value) setFilterTo(""); }} />
+          <CallListDatePicker label="Leave to" value={filterTo} min={filterFrom || undefined} onChange={setFilterTo} />
           <button type="button" className="ghost-button" onClick={() => { setTypeFilter("All"); setStatusFilter("All"); setFilterFrom(""); setFilterTo(""); }}>Reset</button>
         </div>
         <div className="table-wrap">
@@ -2303,6 +2890,7 @@ const NAV_GROUPS = [
       { key: "leads", label: "Call Leads", icon: IconUsers },
       { key: "approvedleads", label: "Approved Leads", icon: IconCheck },
       { key: "salesreports", label: "Sales Report", icon: IconChart },
+      { key: "salesanalysis", label: "Sales Report Analysis", icon: IconSummary },
     ],
   },
   {
@@ -2320,7 +2908,7 @@ const NAV_GROUPS = [
   },
   {
     label: "Account",
-    items: [{ key: "notifications", label: "Notifications", icon: IconBell }, { key: "settings", label: "Settings", icon: IconSettings }],
+    items: [{ key: "notifications", label: "Notifications", icon: BellRing }, { key: "settings", label: "Settings", icon: IconSettings }],
   },
 ];
 
@@ -2328,9 +2916,10 @@ const TAB_TITLES = {
   dashboard: ["Dashboard", "Overview of your CRM performance"],
   servicecalllist: ["Service Call List", "Daily contacts for IT services"],
   trainingcalllist: ["Training Call List", "Daily contacts for training programs"],
-  leads: ["Call Leads", "Interested contacts with a selected course or service, marked Follow Up or Completed"],
+  leads: ["Call Leads", "Interested contacts with a selected service or training, ready for sales follow-up"],
   approvedleads: ["Approved Leads", "Read-only list of leads you created"],
-  salesreports: ["Sales Report", "Simple sales performance overview"],
+  salesreports: ["Sales Report", "Enquiry and approval records from your call lists"],
+  salesanalysis: ["Sales Report Analysis", "Sales performance and conversion trends"],
   tasks: ["Tasks", "Create, assign and track work"],
   salessummary: ["Sales Summary", "Services, Training, Internship & STIP performance"],
   settings: ["Settings", "Profile, preferences and security"],
@@ -2343,6 +2932,10 @@ const TAB_TITLES = {
 
 function Sidebar({ activeTab, onNavigate, profile, badges, onLogout }) {
   const [navSearch, setNavSearch] = useState("");
+  const [avatarFailed, setAvatarFailed] = useState(false);
+  useEffect(() => setAvatarFailed(false), [profile.avatarUrl]);
+  const profileName = profile.name?.trim() || "CRM Executive";
+  const profileInitial = profileName.charAt(0).toUpperCase();
   const flatItems = NAV_GROUPS.flatMap((g) => g.items);
   const filteredKeys = navSearch.trim()
     ? new Set(flatItems.filter((i) => i.label.toLowerCase().includes(navSearch.trim().toLowerCase())).map((i) => i.key))
@@ -2363,12 +2956,17 @@ function Sidebar({ activeTab, onNavigate, profile, badges, onLogout }) {
         </div>
 
         <div className="sidebar-profile">
-          {profile.avatarUrl ? (
-            <img className="sidebar-profile-image" src={profile.avatarUrl} alt="" />
+          {profile.avatarUrl && !avatarFailed ? (
+            <img
+              className="sidebar-profile-image"
+              src={profile.avatarUrl}
+              alt={`${profileName} profile`}
+              onError={() => setAvatarFailed(true)}
+            />
           ) : (
-            <div className="avatar sidebar-profile-avatar">{(profile.name || "?").charAt(0)}</div>
+            <div className="sidebar-profile-avatar" aria-hidden="true">{profileInitial}</div>
           )}
-          <span className="sidebar-profile-name">{profile.name}</span>
+          <span className="sidebar-profile-name">{profileName}</span>
         </div>
 
         <div className="sidebar-search">
@@ -2421,7 +3019,7 @@ function Sidebar({ activeTab, onNavigate, profile, badges, onLogout }) {
 /* ================================ MAIN EXPORT ================================ */
 
 function normalizeSourceContact(row) {
-  const contactDate = row.date || row.createdLeadDate || row.createdAt || todayISO();
+  const contactDate = callListRecordDate(row) || todayISO();
   return {
     ...row,
     id: String(row.id || row._id || `source-contact-${Date.now()}-${Math.random()}`),
@@ -2502,7 +3100,25 @@ export default function CrmExecutiveDashboard({
   const [activeTab, setActiveTab] = useState(initialTab);
   const [toast, showToast] = useToast();
   const [topMenu, setTopMenu] = useState("");
+  const [helpdeskMessageAlert, setHelpdeskMessageAlert] = useState(false);
   const topbarMenusRef = useRef(null);
+  const contentRef = useRef(null);
+
+  useEffect(() => { if (contentRef.current) contentRef.current.scrollTop = 0; }, [activeTab]);
+
+  useEffect(() => {
+    let timer;
+    const handleIncomingMessage = () => {
+      setHelpdeskMessageAlert(true);
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => setHelpdeskMessageAlert(false), 1800);
+    };
+    window.addEventListener("crm:helpdesk-incoming-message", handleIncomingMessage);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("crm:helpdesk-incoming-message", handleIncomingMessage);
+    };
+  }, []);
 
   const [contacts, setContacts] = useState([]);
   const [appNotifications, setAppNotifications] = useState([]);
@@ -2544,12 +3160,18 @@ export default function CrmExecutiveDashboard({
 
   useEffect(() => {
     let active = true;
-    const refresh = () => fetchAppNotifications().then((items) => { if (active && Array.isArray(items)) setAppNotifications(items); })
+    let pending = false;
+    const refresh = () => {
+      if (pending || document.visibilityState === "hidden") return;
+      pending = true;
+      return fetchAppNotifications().then((items) => { if (active && Array.isArray(items)) setAppNotifications(items); })
       .catch(() => {})
-      .finally(() => { if (active) setLoaded((current) => current.notifications ? current : { ...current, notifications: true }); });
+      .finally(() => { pending = false; if (active) setLoaded((current) => current.notifications ? current : { ...current, notifications: true }); });
+    };
     refresh();
     const timer = window.setInterval(refresh, 30000);
-    return () => { active = false; window.clearInterval(timer); };
+    document.addEventListener("visibilitychange", refresh);
+    return () => { active = false; window.clearInterval(timer); document.removeEventListener("visibilitychange", refresh); };
   }, []);
 
   useEffect(() => {
@@ -2616,11 +3238,12 @@ export default function CrmExecutiveDashboard({
     }
   };
 
+  const unreadNotificationCount = appNotifications.filter((item) => !item.read).length;
   const badges = {
     leads: leads.length || null,
     tasks: tasks.filter((t) => t.status !== "Done").length || null,
     leaverequest: leaveRequests.filter((l) => l.status === "Pending").length || null,
-    notifications: appNotifications.filter((item) => !item.read).length || null,
+    notifications: unreadNotificationCount || null,
   };
 
   const [title, subtitle] = TAB_TITLES[activeTab] || ["", ""];
@@ -2651,9 +3274,9 @@ export default function CrmExecutiveDashboard({
             </div>
             <div className="topbar-right" ref={topbarMenusRef}>
               <div className="topbar-popover-wrap">
-              <button className="icon-button notification-bell" title="Notifications" onClick={() => setTopMenu((current) => current === "notifications" ? "" : "notifications")}>
-                <IconBell size={18} />
-                {appNotifications.some((item) => !item.read) && <span className="bell-badge">{appNotifications.filter((item) => !item.read).length}</span>}
+              <button className={clsx("icon-button notification-bell", unreadNotificationCount ? "has-unread" : helpdeskMessageAlert && "has-incoming")} title="Notifications" aria-label="Notifications" onClick={() => setTopMenu((current) => current === "notifications" ? "" : "notifications")}>
+                <BellRing size={18} />
+                {unreadNotificationCount > 0 && <span className="bell-badge">{unreadNotificationCount}</span>}
               </button>
               {topMenu === "notifications" && <div className="topbar-menu notifications-menu"><div className="topbar-menu-head"><strong>Notifications</strong><button onClick={markAllNotificationsRead}>Mark all read</button></div><div className="topbar-notification-list">{appNotifications.slice(0, 6).map((item) => <button key={item.id} className={clsx("topbar-notification", !item.read && "unread")} onClick={() => markNotificationRead(item.id)}>{item.message}</button>)}{!appNotifications.length && <p>No notifications yet.</p>}</div><button className="topbar-menu-link" onClick={() => { setTopMenu(""); handleNavigate("notifications"); }}>View all notifications</button></div>}
               </div>
@@ -2678,7 +3301,7 @@ export default function CrmExecutiveDashboard({
             </div>
           </div>
 
-          <div className="content">
+          <div ref={contentRef} className={clsx("content", ["servicecalllist", "trainingcalllist"].includes(activeTab) && "call-list-content", ["leads", "approvedleads"].includes(activeTab) && "leads-content", activeTab === "salesreports" && "sales-report-list-content")}>
             {pageLoading ? <div className="crm-page-loader" role="status" aria-live="polite"><span className="crm-page-spinner" aria-hidden="true" />Loading {title.toLowerCase()}...</div> : <>
             {activeTab === "dashboard" && (
               <DashboardTab
@@ -2719,7 +3342,8 @@ export default function CrmExecutiveDashboard({
             )}
             {activeTab === "leads" && <LeadsTab rows={contacts} users={users} showToast={showToast} currentUser={currentUser} onSave={onUpdateCallListContact} onApprove={onApproveCallLead} onDelete={onDeleteCallContact} onCreateLead={onCreateLead} />}
             {activeTab === "approvedleads" && <ApprovedLeadsTab leads={externalLeads} sourceContacts={sourceContacts} currentUser={currentUser} />}
-            {activeTab === "salesreports" && <SalesReportsTab contacts={contacts} showToast={showToast} />}
+            {activeTab === "salesreports" && <SalesReportTableTab contacts={contacts} setContacts={setContacts} currentUser={currentUser} users={users} onSave={onUpdateCallListContact} showToast={showToast} />}
+            {activeTab === "salesanalysis" && <SalesReportAnalysisTab contacts={contacts} showToast={showToast} />}
             {activeTab === "notifications" && <NotificationsTab notifications={appNotifications} onRead={markNotificationRead} onMarkAll={markAllNotificationsRead} />}
             {activeTab === "tasks" && <TasksTab tasks={tasks} setTasks={setTasks} showToast={showToast} currentUser={currentUser} />}
             {activeTab === "settings" && (

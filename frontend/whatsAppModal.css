@@ -1,16 +1,19 @@
-.modal-surface.whatsapp-modal-surface { z-index: 80; }
-.modal-shell.whatsapp-modal-shell { width: min(700px, 100%); max-height: min(88vh, 820px); display: flex; flex-direction: column; overflow: hidden; }
+.modal-surface.whatsapp-modal-surface { z-index: 80; overscroll-behavior: contain; }
+.modal-shell.whatsapp-modal-shell { width: min(700px, 100%); max-height: min(88dvh, 820px); display: flex; flex-direction: column; overflow: hidden; }
 .modal-shell.whatsapp-modal-shell .modal-head { flex: 0 0 auto; }
-.modal-body.whatsapp-modal-body { display: grid; grid-template-columns: minmax(0, 1fr); grid-auto-rows: max-content; align-content: start; gap: 16px; min-height: 0; overflow-y: auto; overflow-x: hidden; }
-.whatsapp-modal-close { width: 34px; height: 34px; border: 1px solid #e5d9cd; border-radius: 9px; background: #fff; color: #37281b; font-size: 24px; line-height: 1; cursor: pointer; }
-.whatsapp-kind-tabs { position: sticky; top: 0; z-index: 2; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); min-height: 44px; border: 1px solid #e7dbcf; border-radius: 10px; overflow: hidden; background: #fff; }
+.modal-body.whatsapp-modal-body { flex: 1 1 auto; display: grid; grid-template-columns: minmax(0, 1fr); grid-auto-rows: max-content; align-content: start; gap: 16px; min-height: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; }
+.whatsapp-modal-close { display: grid; place-items: center; flex: 0 0 36px; width: 36px; height: 36px; padding: 0; border: 1px solid #dfcebf; border-radius: 10px; background: #fff; color: #68482e; cursor: pointer; transition: background .15s ease, border-color .15s ease; }
+.whatsapp-modal-close:hover { background: #f4e8dc; border-color: #b48a69; }
+.whatsapp-modal-close:focus-visible { outline: 2px solid #8d5e38; outline-offset: 2px; }
+.whatsapp-modal-tabs-wrap { position: relative; z-index: 2; flex: 0 0 auto; padding: 16px 20px 0; background: #f8f5ef; }
+.whatsapp-kind-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); min-height: 44px; border: 1px solid #e7dbcf; border-radius: 10px; overflow: hidden; background: #fff; }
 .whatsapp-kind-tabs button { min-width: 0; min-height: 44px; padding: 8px 12px; border: 0; background: transparent; color: #6e6258; font: inherit; cursor: pointer; }
 .whatsapp-kind-tabs button + button { border-left: 1px solid #e7dbcf; }
 .whatsapp-kind-tabs button.active { background: #7f4e2b; color: #fff; }
 .whatsapp-modal-field { display: grid; gap: 7px; color: #665c54; font-size: .84rem; font-weight: 700; }
 :where(.crm-root) .whatsapp-modal-field { font-size: max(16px, .84rem); }
 .whatsapp-modal-field select, .whatsapp-modal-field textarea { width: 100%; padding: 11px 12px; border: 1px solid #e7dbcf; border-radius: 10px; background: #fff; color: #332923; font: inherit; }
-.whatsapp-modal-field textarea { min-height: 180px; resize: vertical; line-height: 1.5; font-weight: 400; }
+.whatsapp-modal-field textarea { min-height: 120px; resize: none; overflow-y: hidden; line-height: 1.5; font-weight: 400; }
 .whatsapp-message-step { padding: 12px; border: 1px solid #e7dbcf; border-radius: 11px; background: #fffaf6; }
 .whatsapp-message-step.active { border-color: #ae7852; box-shadow: 0 0 0 2px #ae785222; }
 .whatsapp-message-step textarea[rows="4"] { min-height: 100px; }
@@ -26,4 +29,25 @@
 .whatsapp-modal-copy { border: 1px solid #bd9c83; background: #fffaf6; color: #6c3f25; }
 .whatsapp-modal-send { border: 0; background: #7f4e2b; color: #fff; }
 .whatsapp-modal-send:disabled, .whatsapp-modal-copy:disabled { opacity: .5; cursor: not-allowed; }
-@media (max-width: 520px) { .whatsapp-kind-tabs { grid-template-columns: 1fr; } .whatsapp-kind-tabs button + button { border-left: 0; border-top: 1px solid #e7dbcf; } .whatsapp-modal-body .modal-actions { flex-wrap: wrap; } }
+.whatsapp-modal-actions { flex: 0 0 auto; margin-top: 0; padding: 14px 20px; border-top: 1px solid #e7dbcf; background: #f8f5ef; }
+
+/* The sales dashboard scales its page to 80%; this portal sits outside that scaling. */
+.crm-root .whatsapp-modal-shell { width: min(560px, calc(100vw - 32px)); max-height: min(70dvh, 600px); font-size: 14px; }
+.crm-root .whatsapp-modal-shell .modal-head { padding: 12px 16px; }
+.crm-root .whatsapp-modal-shell .modal-head strong { font-size: 15px; }
+.crm-root .whatsapp-modal-tabs-wrap { padding: 12px 16px 0; }
+.crm-root .whatsapp-kind-tabs, .crm-root .whatsapp-kind-tabs button { min-height: 38px; }
+.crm-root .whatsapp-kind-tabs button { padding: 6px 8px; }
+.crm-root .whatsapp-modal-body { padding: 14px 16px; gap: 12px; }
+.crm-root .whatsapp-modal-field,
+.crm-root .whatsapp-modal-note,
+.crm-root .whatsapp-modal-price,
+.crm-root .whatsapp-modal-error { font-size: 14px; }
+.crm-root .whatsapp-modal-actions { padding: 12px 16px; }
+.crm-root .whatsapp-modal-actions button { min-height: 36px; padding: 0 12px; }
+
+@media (max-width: 520px) {
+  .whatsapp-kind-tabs { grid-template-columns: 1fr; }
+  .whatsapp-kind-tabs button + button { border-left: 0; border-top: 1px solid #e7dbcf; }
+  .whatsapp-modal-actions { flex-wrap: wrap; }
+}
