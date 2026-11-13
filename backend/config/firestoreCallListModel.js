@@ -290,11 +290,7 @@ export async function createCallRecord(type, input, actor) {
 }
 
 export async function updateCallRecord(type, id, patch, assignedTo = "", requiredAssignedTo = "") {
-<<<<<<< Updated upstream
-  const allowed = ["leadCreated", "createdLeadId", "createdLeadDate", "callLeadStatus", "callLeadAssignedTo", "callLeadAssignedDate", "callStatus", "callAt", "interactionType", "interestStatus", "program", "programId", "serviceId", "remark", "leadDraft", "leadDraftSavedBy", "leadDraftSavedByName", "callClicked", "whatsappClicked", "active", "name", "contact", "date", "assignedTo", "assignedToName"];
-=======
-  const allowed = ["leadCreated", "createdLeadId", "createdLeadDate", "callLeadStatus", "callLeadStatusSelected", "callLeadAssignedTo", "callLeadAssignedDate", "callStatus", "interactionType", "interestStatus", "program", "programId", "serviceId", "remark", "leadDraft", "leadDraftSavedBy", "leadDraftSavedByName", "callClicked", "whatsappClicked", "active", "name", "contact", "date", "assignedTo", "assignedToName"];
->>>>>>> Stashed changes
+  const allowed = ["leadCreated", "createdLeadId", "createdLeadDate", "callLeadStatus", "callLeadStatusSelected", "callLeadAssignedTo", "callLeadAssignedDate", "callStatus", "callAt", "interactionType", "interestStatus", "program", "programId", "serviceId", "remark", "leadDraft", "leadDraftSavedBy", "leadDraftSavedByName", "callClicked", "whatsappClicked", "active", "name", "contact", "date", "assignedTo", "assignedToName"];
   const payload = Object.fromEntries(allowed.filter((key) => patch[key] !== undefined).map((key) => [key, patch[key]]));
   const templateField = normalizeListType(type) === "training" ? "programId" : "serviceId";
   const otherTemplateField = templateField === "programId" ? "serviceId" : "programId";
