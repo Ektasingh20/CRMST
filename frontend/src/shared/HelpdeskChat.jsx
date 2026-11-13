@@ -47,7 +47,7 @@ export function HelpdeskIncomingToast({ user, onOpen }) {
 
   useEffect(() => {
     if (!notice) return undefined;
-    const timer = window.setTimeout(() => setNotice(null), 3000);
+    const timer = window.setTimeout(() => setNotice(null), 5000);
     return () => window.clearTimeout(timer);
   }, [notice]);
 
@@ -234,7 +234,7 @@ export default function HelpdeskChat({ user, displayName }) {
               const mine = item.senderId === meId;
               return <div key={item.id || `${item.createdAt}-${index}`} className={`eh-message-row${mine ? " is-mine" : ""}`}><article className="eh-bubble"><small>{item.senderName} · {formatTime(item.createdAt)}</small><p>{item.text}</p></article></div>;
             })}{!messages.length && <p className="eh-loading">Loading messages…</p>}<div ref={messageEndRef} /></div>
-            <form className="eh-message-composer" onSubmit={send}><textarea rows="2" maxLength={5000} value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form.requestSubmit(); } }} placeholder="Write a message…" aria-label="Write a message" /><button type="submit" disabled={sending || !draft.trim()} aria-label="Send message"><ArrowRight size={17} /></button><small>Press Enter to send · Shift+Enter for a new line</small></form>
+            <form className="eh-message-composer" onSubmit={send}><textarea rows="2" maxLength={5000} value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form.requestSubmit(); } }} placeholder="Write a reply…" aria-label="Write a reply" /><button type="submit" disabled={sending || !draft.trim()} aria-label="Send reply" title="Send reply"><ArrowRight size={17} /><span>Reply</span></button><small>Press Enter to send · Shift+Enter for a new line</small></form>
           </> : <div className="eh-no-selection"><span className="eh-empty-icon"><MessageCircle size={22} /></span><h3>{hr ? "Employee helpdesk" : "Your HR chats"}</h3><p>{hr ? "Select a conversation or start a chat with an employee." : "Select a conversation or start a new chat."}</p><button type="button" onClick={() => { setNewConversation(true); setRecipientId(""); }}><Plus size={15} /> New chat</button></div>}
       </section>
     </section>

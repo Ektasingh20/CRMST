@@ -4,6 +4,7 @@ import "./hrDashboardForm.css";
 import HrPlanner from "./HrPlanner";
 import HrPeopleModules from "./HrPeopleModules";
 import HrWorkflowModules from "./HrWorkflowModules";
+import HrLeads from "./HrLeads";
 import { usePageLoading, getPageTitle } from "./hrPageLoading";
 import { compressImageFile } from "../../imageUpload.js";
 import { createUser, fetchHrDashboard, fetchUsers, updateUser, updateMyProfile, deleteUser, uploadPriorExperienceDocument, downloadPriorExperienceDocument } from "../../backendApi.js";
@@ -14,7 +15,7 @@ import {
   LayoutGrid, Users, CalendarCheck, ListChecks, Upload, Settings, LogOut, ChevronRight, ChevronDown,
   Search, Bell, Calendar, UserPlus, Plus, CalendarClock, Check, UserX, CreditCard, FileText, Wallet,
   ClipboardList, UserCog, ClipboardCheck, Briefcase, Menu, X, BellRing, UserCheck, Printer, Eye, EyeOff, Pencil, Trash2, UserCircle, Download,
-  Filter, RotateCcw, FileSpreadsheet, Phone, LockKeyhole, Moon, Sun, CalendarDays, Sparkles, MessageCircle,
+  Filter, RotateCcw, FileSpreadsheet, Phone, LockKeyhole, Moon, Sun, CalendarDays, MessageCircle,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { jsPDF } from "jspdf";
@@ -3100,9 +3101,9 @@ const NAV = [
   { label: "Attendance Management", icon: CalendarCheck, kids: [["Mark Attendance", Check], ["Attendance Report", FileText], ["All Attendance Report", Users], ["Mark Attendance All", UserCheck], ["Leave Request", CalendarClock], ["View All Leave Request", Briefcase]] },
   { label: "Task Reports", icon: ListChecks, kids: [["Assigned Tasks", ClipboardList], ["My Task", UserCog], ["All Task", ClipboardCheck]] },
   { label: "Upload CRM Data", icon: Upload },
+  { label: "Leads", icon: UserPlus },
   { label: "Employee Workspace", icon: CalendarClock },
   { label: "HR Calendar", icon: CalendarDays },
-  { label: "HR AI Assistant", icon: Sparkles },
   { label: "Resignation & Exit", icon: UserX },
   { label: "Employee Helpdesk", icon: MessageCircle },
   { label: "HR Notifications", icon: BellRing },
@@ -3199,7 +3200,7 @@ export default function HrDashboard({ user, onLogout } = {}) {
       console.warn("Unable to save the HR dashboard theme preference.", error);
     }
   }, [darkMode]);
-  useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(""), 2200); return () => clearTimeout(t); }, [toast]);
+  useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(""), 5000); return () => clearTimeout(t); }, [toast]);
 
   const upd = (fn, msg) => {
     setDb((d) => ({ ...d, ...fn(d), log: msg ? [{ t: new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }), m: msg }, ...d.log].slice(0, 8) : d.log }));
@@ -3235,10 +3236,9 @@ export default function HrDashboard({ user, onLogout } = {}) {
     "Mark Attendance": <MarkAttendance c={c} />, "Attendance Report": <AttendanceReport c={c} />, "All Attendance Report": <AllAttendance c={c} />,
     "Mark Attendance All": <MarkAll c={c} />, "Leave Request": <LeaveRequest c={c} />, "View All Leave Request": <AllLeaves c={c} />,
     "Assigned Tasks": <AssignedTasks c={c} />, "My Task": <MyTask c={c} />, "All Task": <AllTask c={c} />,
-    "Upload CRM Data": <UploadCRM c={c} />, Settings: <SettingsPage c={c} />,
+    "Upload CRM Data": <UploadCRM c={c} />, Leads: <HrLeads staff={db.emps} />, Settings: <SettingsPage c={c} />,
     "Employee Workspace": <HrPlanner key={`${profile.company}:${profile.crm}`} employees={db.emps} profile={profile} tasks={db.tasks} updateTasks={(tasks) => upd(() => ({ tasks }))} />,
     "HR Calendar": <HrPeopleModules page="HR Calendar" c={c} />,
-    "HR AI Assistant": <HrPeopleModules page="HR AI Assistant" c={c} />,
     "Resignation & Exit": <HrWorkflowModules page="Resignation & Exit" c={c} />,
     "Employee Helpdesk": <HrWorkflowModules page="Employee Helpdesk" c={c} />,
     "HR Notifications": <HrWorkflowModules page="HR Notifications" c={c} />,

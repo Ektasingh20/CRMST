@@ -86,7 +86,7 @@
 :where(.crm-root) .eh-toast-copy>span{font-size:max(16px, 10px)}
 .eh-toast-close{display:grid;place-items:center;align-self:start;width:28px;height:28px;border:0;border-radius:8px;background:transparent;color:var(--eh-muted);cursor:pointer}
 .eh-toast-close:hover{background:#f4f0ec;color:var(--eh-ink)}
-.eh-toast-progress{position:absolute;right:0;bottom:0;left:0;height:3px;background:linear-gradient(90deg,#a87950,#704522);transform-origin:left;animation:eh-toast-countdown 3s linear forwards}
+.eh-toast-progress{position:absolute;right:0;bottom:0;left:0;height:3px;background:linear-gradient(90deg,#a87950,#704522);transform-origin:left;animation:eh-toast-countdown 5s linear forwards}
 @keyframes eh-toast-countdown{to{transform:scaleX(0)}}
 @keyframes eh-toast-enter{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)}}
 @media(max-width:760px){.eh-chat-app{grid-template-columns:minmax(0,1fr);height:auto;min-height:650px}.eh-inbox{max-height:255px;border-right:0;border-bottom:1px solid var(--eh-line)}.eh-thread{min-height:390px}}

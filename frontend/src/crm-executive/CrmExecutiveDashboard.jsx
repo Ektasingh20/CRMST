@@ -366,7 +366,7 @@ function useToast() {
   const showToast = useCallback((msg) => {
     setToast(msg);
     if (timerRef.current) window.clearTimeout(timerRef.current);
-    timerRef.current = window.setTimeout(() => setToast(null), 2600);
+    timerRef.current = window.setTimeout(() => setToast(null), 5000);
   }, []);
   useEffect(() => () => timerRef.current && window.clearTimeout(timerRef.current), []);
   return [toast, showToast];

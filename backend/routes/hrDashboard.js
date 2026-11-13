@@ -1,6 +1,7 @@
 import express from "express";
-import { getFirestore } from "firebase-admin/firestore";
 import { authenticate } from "../middleware/auth.js";
+import Attendance from "../models/Attendance.js";
+import { listLeaves } from "../models/Leave.js";
 import User from "../models/User.js";
 import { isAdmin, isHrUser } from "../utils/roles.js";
 
@@ -21,15 +22,16 @@ router.get("/", async (_req, res) => {
   try {
     if (cached && Date.now() - cachedAt < 60_000) return res.json(cached);
     if (!pending) pending = (async () => {
-      const db = getFirestore();
-      const [users, attendance, leaves] = await Promise.all([
+      const [users, attendanceRecords, allLeaves] = await Promise.all([
         User.find(),
-        db.collection("attendance").where("date", "==", todayInIndia()).get(),
-        db.collectionGroup("leaves").where("status", "==", "Pending").limit(100).get(),
+        Attendance.find({ date: todayInIndia() }),
+        listLeaves(),
       ]);
+      const attendance = attendanceRecords.map((record) => record.toObject());
+      const leaves = allLeaves.filter((leave) => leave.status === "Pending");
       const employees = users.map((user) => user.toObject()).filter(active);
       const byStatus = { Present: 0, Absent: 0, Leave: 0 };
-      attendance.docs.forEach((doc) => { const status = doc.get("status"); if (status in byStatus) byStatus[status] += 1; });
+      attendance.forEach((record) => { const status = record.status; if (status in byStatus) byStatus[status] += 1; });
       const departments = employees.reduce((counts, employee) => {
         const name = employee.dept || employee.department || "Other";
         counts[name] = (counts[name] || 0) + 1;
@@ -37,8 +39,8 @@ router.get("/", async (_req, res) => {
       }, {});
       return {
         date: todayInIndia(), employeeCount: employees.length, attendance: byStatus,
-        markedCount: attendance.size, pendingLeaveCount: leaves.size,
-        pendingLeaves: leaves.docs.slice(0, 5).map((doc) => ({ id: doc.get("id") || doc.id, employeeName: doc.get("employeeName") || "Employee", type: doc.get("type") || "Leave", from: doc.get("from") || "", to: doc.get("to") || "" })),
+        markedCount: attendance.length, pendingLeaveCount: leaves.length,
+        pendingLeaves: leaves.slice(0, 5).map((leave) => ({ id: leave.id, employeeName: leave.employeeName || "Employee", type: leave.type || "Leave", from: leave.from || "", to: leave.to || "" })),
         departments,
       };
     })().finally(() => { pending = null; });
@@ -46,6 +48,7 @@ router.get("/", async (_req, res) => {
     cachedAt = Date.now();
     res.json(cached);
   } catch (error) {
+    console.error("Failed to load HR dashboard summary:", error);
     res.status(500).json({ error: "Unable to load HR dashboard." });
   }
 });

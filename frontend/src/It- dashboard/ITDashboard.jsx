@@ -1407,7 +1407,7 @@ function ITWorkspace({ user, projects, onProjectsChange, onLogout }) {
   const notify = (msg) => {
     setToast(msg);
     window.clearTimeout(notify._t);
-    notify._t = window.setTimeout(() => setToast(""), 2600);
+    notify._t = window.setTimeout(() => setToast(""), 5000);
   };
 
   const selectedProject = employeeProjects.find((project) => String(project.id) === String(selectedProjectId));

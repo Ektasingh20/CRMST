@@ -18,6 +18,6 @@ export function Drawer({ title, subtitle, onClose, children }) {
   return createPortal(<dialog ref={ref} className="tm-drawer" aria-labelledby={titleId} onCancel={event => { event.preventDefault(); onClose(); }} onClick={event => { if (event.target === event.currentTarget) { const rect = event.currentTarget.getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) onClose(); } }}><header className="tm-drawer-head"><div><p className="eyebrow">TEAM MANAGEMENT</p><h2 id={titleId}>{title}</h2>{subtitle && <p>{subtitle}</p>}</div><button autoFocus type="button" className="tm-close" aria-label="Close panel" onClick={onClose}><X size={20}/></button></header><div className="tm-drawer-body">{children}</div></dialog>, document.body);
 }
 export function Toast({ message, onClose }) {
-  useEffect(() => { if (!message) return; const timer = setTimeout(onClose, 4500); return () => clearTimeout(timer); }, [message, onClose]);
+  useEffect(() => { if (!message) return; const timer = setTimeout(onClose, 5000); return () => clearTimeout(timer); }, [message, onClose]);
   return message ? <div className="tm-toast" role="status">{message}<button type="button" aria-label="Dismiss notification" onClick={onClose}><X size={17}/></button></div> : null;
 }
