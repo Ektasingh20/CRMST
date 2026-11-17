@@ -6,14 +6,20 @@ import { isAdmin, isHrUser } from "../utils/roles.js";
 import User from "../models/User.js";
 import { isITDepartment } from "../../frontend/src/itUserRoles.js";
 import { ReadCache } from "../itDashboard/src/cache.js";
+import {
+  helpdeskEmployeeRef,
+  helpdeskThreadGroup,
+  helpdeskThreadRef,
+  helpdeskThreads,
+} from "../services/hrHelpdeskPaths.js";
 
 // Polling still checks access and the conversation version on every request.
 // Unchanged histories need not reread hundreds of message documents.
 const messageCache = new ReadCache(60000, 250);
 const conversationCache = new ReadCache(3000, 250);
+let staffIndexRetryAt = 0;
 
 const router = express.Router();
-const collection = () => getFirestore().collection("hrHelpdeskConversations");
 const userId = (user) => String(user?.id || user?._id || "");
 const userName = (user) => String(user?.name || user?.username || "Employee").trim();
 const department = (user) => String(user?.dept || user?.department || "").trim();
@@ -39,8 +45,24 @@ async function accessibleConversation(req, res) {
     res.status(400).json({ error: "Invalid helpdesk conversation ID." });
     return null;
   }
-  const snapshot = await collection().doc(id).get();
-  if (!snapshot.exists) {
+  const ownerId = String(req.query?.employeeId || req.body?.employeeId || "").trim();
+  if (ownerId && !/^[A-Za-z0-9_-]{1,160}$/.test(ownerId)) {
+    res.status(400).json({ error: "Invalid helpdesk employee ID." });
+    return null;
+  }
+  let snapshot = ownerId ? await helpdeskThreadRef(ownerId, id).get() : null;
+  if (!ownerId) {
+    // Older open tabs only send the conversation ID. Keep them working after migration.
+    let matches;
+    try {
+      matches = await helpdeskThreadGroup().where("conversationId", "==", id).limit(1).get();
+    } catch (error) {
+      if (error?.code !== 9 && error?.code !== "failed-precondition") throw error;
+      matches = await helpdeskThreadGroup().get();
+    }
+    snapshot = matches.docs.find((doc) => doc.id === id) || null;
+  }
+  if (!snapshot?.exists) {
     res.status(404).json({ error: "Helpdesk conversation not found." });
     return null;
   }
@@ -64,15 +86,26 @@ router.use((req, res, next) => requireHelpdeskUser(req, res) ? next() : undefine
 router.get("/conversations", async (req, res) => {
   try {
     const items = await conversationCache.get(`${isHelpdeskStaff(req.user) ? "staff" : "employee"}:${userId(req.user)}`, async () => {
-    const snapshots = isHelpdeskStaff(req.user)
-      ? [await collection().orderBy("updatedAt", "desc").limit(200).get()]
-      : await Promise.all([
-        collection().where("participantIds", "array-contains", userId(req.user)).get(),
-        collection().where("createdById", "==", userId(req.user)).get(),
-      ]);
-    const unique = new Map(snapshots.flatMap((snapshot) => snapshot.docs.map((doc) => [doc.id, safeConversation(doc)])));
-    const items = [...unique.values()].sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
-    return items;
+      let newSnapshot;
+      if (isHelpdeskStaff(req.user)) {
+        if (Date.now() >= staffIndexRetryAt) {
+          try {
+            newSnapshot = await helpdeskThreadGroup().orderBy("updatedAt", "desc").limit(200).get();
+            staffIndexRetryAt = 0;
+          } catch (error) {
+            if (error?.code !== 9 && error?.code !== "failed-precondition") throw error;
+            staffIndexRetryAt = Date.now() + 5 * 60_000;
+          }
+        }
+        if (!newSnapshot) {
+          newSnapshot = await helpdeskThreadGroup().get();
+        }
+      } else {
+        newSnapshot = await helpdeskThreads(userId(req.user)).get();
+      }
+      return newSnapshot.docs.map(safeConversation)
+        .sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")))
+        .slice(0, 200);
     });
     return res.json(items.filter((item) => !(Array.isArray(item.hiddenFor) && item.hiddenFor.map(String).includes(userId(req.user)))));
   } catch (error) {
@@ -105,9 +138,11 @@ router.post("/conversations", async (req, res) => {
     }
     const employeeId = userId(employee);
     const employeeName = userName(employee);
-    const conversationRef = collection().doc(id);
+    const conversationRef = helpdeskThreadRef(employeeId, id);
+    const employeeRef = helpdeskEmployeeRef(employeeId);
     const messageRef = conversationRef.collection("messages").doc(randomUUID());
     const conversation = {
+      conversationId: id,
       subject,
       createdById: senderId,
       participantIds: [...new Set([employeeId, ...(isHelpdeskStaff(req.user) ? [senderId] : [])])],
@@ -124,6 +159,7 @@ router.post("/conversations", async (req, res) => {
     };
     const message = { conversationId: id, senderId, senderName, senderRole, text, createdAt };
     await getFirestore().runTransaction(async (transaction) => {
+      transaction.set(employeeRef, { employeeId, employeeName, department: department(employee), updatedAt: createdAt }, { merge: true });
       transaction.create(conversationRef, conversation);
       transaction.create(messageRef, message);
     });

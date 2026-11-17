@@ -1733,18 +1733,21 @@ img {
 .crm-upload-button { min-height: 54px; justify-content: center; }
 .crm-upload-button:disabled { opacity: .65; cursor: wait; }
 .crm-upload-error { grid-column: 1 / -1; margin: -8px 0 0; }
+.crm-upload-issues { grid-column: 1 / -1; max-height: 260px; overflow: auto; padding: 12px 16px; border: 1px solid #e5aaa0; border-radius: 12px; background: #fff7f5; color: #8b2f25; }
+.crm-upload-issues ol { margin: 8px 0 0; padding-left: 24px; }
+.crm-upload-issues li + li { margin-top: 4px; }
 .crm-upload-success { grid-column: 1 / -1; margin: 0; padding: 12px 16px; border: 1px solid #bbdfc9; border-radius: 10px; background: #edf8f1; color: #17633c; font-weight: 600; }
 .row-icon-btn.contacted { color: #fff !important; background: #218254 !important; border-color: #218254 !important; }
 .crm-format-button { min-height: 38px; padding: 0 16px; border-radius: 10px; font-size: .84rem; }
 .crm-format-backdrop { position: fixed; inset: 0; z-index: 1500; display: grid; place-items: center; padding: 20px; background: rgba(22,18,15,.48); backdrop-filter: blur(3px); }
-.crm-format-card { width: min(440px,100%); padding: 24px; border: 1px solid #e7d7c6; border-radius: 18px; background: #fffdfa; box-shadow: 0 24px 70px rgba(35,24,15,.22); }
+.crm-format-card { width: min(500px,100%); padding: 24px; border: 1px solid #e7d7c6; border-radius: 18px; background: #fffdfa; box-shadow: 0 24px 70px rgba(35,24,15,.22); }
 .crm-format-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
 .crm-format-head h3 { margin: 3px 0 0; font-size: 1.15rem; }
 .crm-format-card > p { margin: 16px 0; color: var(--text-soft); font-size: .86rem; line-height: 1.55; }
-.crm-format-sheet { display: grid; grid-template-columns: 1fr 1fr; overflow: hidden; border: 1px solid #dfd2c3; border-radius: 11px; background: #fff; }
+.crm-format-sheet { display: grid; grid-template-columns: 1fr 1.4fr 1fr; overflow: hidden; border: 1px solid #dfd2c3; border-radius: 11px; background: #fff; }
 .crm-format-sheet > * { padding: 11px 13px; border-right: 1px solid #e8ded2; border-bottom: 1px solid #e8ded2; font-size: .82rem; }
-.crm-format-sheet > :nth-child(2n) { border-right: 0; }
-.crm-format-sheet > :nth-last-child(-n+2) { border-bottom: 0; }
+.crm-format-sheet > :nth-child(3n) { border-right: 0; }
+.crm-format-sheet > :nth-last-child(-n+3) { border-bottom: 0; }
 .crm-format-sheet strong { color: #fff; background: #87572f; }
 .crm-format-note { margin-bottom: 0 !important; padding: 11px 13px; border-radius: 10px; background: #f7f1e9; color: #6d5a49 !important; }
 
@@ -5564,3 +5567,21 @@ img {
   .admin-overview-stats { grid-template-columns: 1fr; }
   .admin-overview-panel { padding: 18px; }
 }
+
+.admin-attendance-workspace { display: grid; gap: 16px; }
+.admin-attendance-summary { display: grid; grid-template-columns: repeat(6,minmax(0,1fr)); gap: 10px; }
+.admin-attendance-summary>div { display: grid; gap: 5px; padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+.admin-attendance-summary span { color: var(--text-soft); font-size: .75rem; }
+.admin-attendance-summary strong { font-size: 1.35rem; }
+.admin-attendance-filters { display: grid; grid-template-columns: repeat(4,minmax(150px,1fr)) auto auto; align-items: end; gap: 10px; }
+.admin-attendance-filters label { display: grid; gap: 6px; color: var(--text-soft); font-size: .76rem; font-weight: 700; }
+.admin-attendance-filters input,.admin-attendance-filters select { min-height: 40px; width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; }
+.admin-attendance-table { min-width: 1100px; }
+.admin-attendance-table td:first-child small { display: block; margin-top: 3px; color: var(--text-faint); }
+.admin-attendance-table td:nth-child(7) { max-width: 260px; white-space: normal; }
+.admin-attendance-loading { padding: 18px; color: var(--text-soft); text-align: center; }
+.admin-attendance-error { margin: 0; padding: 10px 12px; border: 1px solid #e3b8a8; border-radius: 8px; background: #fff1eb; color: #8c3f27; }
+.admin-attendance-pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--text-soft); }
+.admin-attendance-pagination>div { display: flex; gap: 8px; }
+@media (max-width: 1100px) { .admin-attendance-summary { grid-template-columns: repeat(3,minmax(0,1fr)); } .admin-attendance-filters { grid-template-columns: repeat(2,minmax(0,1fr)); } }
+@media (max-width: 600px) { .admin-attendance-summary,.admin-attendance-filters { grid-template-columns: 1fr; } }

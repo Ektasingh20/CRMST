@@ -54,9 +54,22 @@ test("Admin can assign tasks to any non-student account", async () => {
     assert.equal(response.code, 201);
     assert.equal(response.body.assigneeId, employee.id);
     assert.equal(response.body.assignee, employee.name);
+    assert.equal(response.body.assigneeRole, employee.role);
+    assert.equal(response.body.assigneeDepartment, employee.dept);
   }
   assert.equal(createdTasks.length, 5);
   assert.deepEqual(notifications.map((notification) => notification.recipientId), ["it_01", "ops_01", "ram_01", "admin_02", "former_01"]);
+});
+
+test("HR, IT, Operations, CRM, and Admin employees can create only their own personal tasks", async () => {
+  createdTasks.length = 0;
+  for (const employee of [employees.get("it_01"), employees.get("ops_01"), employees.get("ram_01"), employees.get("admin_02"), employees.get("former_01")]) {
+    const response = await postTask(employee, { title: `${employee.role} personal task`, assigneeId: employee.id });
+    assert.equal(response.code, 201);
+    assert.equal(response.body.assigneeId, employee.id);
+    assert.equal(response.body.assigneeRole, employee.role);
+  }
+  assert.equal(createdTasks.length, 5);
 });
 
 test("Admin task assignment rejects student and unknown accounts", async () => {

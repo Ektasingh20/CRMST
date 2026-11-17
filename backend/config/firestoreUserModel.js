@@ -109,6 +109,22 @@ async function migrateStudentReferences(oldStudentId, newStudentId) {
   }));
 }
 
+async function moveNotificationSubcollection(sourceOwner, targetOwner, recipientId) {
+  if (sourceOwner.path === targetOwner.path) return;
+  const snapshot = await sourceOwner.collection("notifications").get();
+  for (let offset = 0; offset < snapshot.docs.length; offset += 200) {
+    const batch = getFirestore().batch();
+    snapshot.docs.slice(offset, offset + 200).forEach((notification) => {
+      batch.set(targetOwner.collection("notifications").doc(notification.id), {
+        ...notification.data(),
+        recipientId: String(recipientId),
+      });
+      batch.delete(notification.ref);
+    });
+    await batch.commit();
+  }
+}
+
 // Reads scan every users/<dept>/members/<username> doc via a collectionGroup query,
 // then filter client-side exactly like the old flat model did.
 class Query {
@@ -151,7 +167,9 @@ class Query {
 }
 
 export function createUserModel() {
-  const cacheTtlMs = 60 * 1000;
+  // All model writes invalidate this cache, so a longer TTL avoids repeatedly
+  // scanning every department's members for unchanged lookup data.
+  const cacheTtlMs = 5 * 60 * 1000;
   let cachedDocuments = null;
   let cachedAt = 0;
   let cachePromise = null;
@@ -230,6 +248,13 @@ export function createUserModel() {
           transaction.delete(item._ref);
         });
         if (nextSlug === "students") await migrateStudentReferences(String(item._id), String(targetRef.id));
+        const oldNotificationOwner = currentSlug === "students"
+          ? getFirestore().collection("students").doc(String(item._id))
+          : item._ref;
+        const newNotificationOwner = nextSlug === "students"
+          ? getFirestore().collection("students").doc(String(targetRef.id))
+          : targetRef;
+        await moveNotificationSubcollection(oldNotificationOwner, newNotificationOwner, targetRef.id);
         Model._invalidateCache();
         return new Document(Model, targetRef, payload);
       }

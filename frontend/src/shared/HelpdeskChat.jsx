@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowRight, BellRing, MessageCircle, Plus, Search, Trash2, X } from "lucide-react";
+import { BellRing, MessageCircle, Plus, Search, Send, Trash2, X } from "lucide-react";
 import { createHelpdeskConversation, deleteHelpdeskConversation, fetchHelpdeskConversations, fetchHelpdeskMessages, fetchUsers, sendHelpdeskMessage } from "../../backendApi.js";
 import "./helpdeskChat.css";
 
@@ -84,6 +84,7 @@ export default function HelpdeskChat({ user, displayName }) {
   const [draft, setDraft] = useState("");
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
+  const [sendAnimating, setSendAnimating] = useState(false);
   const [deletingId, setDeletingId] = useState("");
   const [error, setError] = useState("");
   const messageEndRef = useRef(null);
@@ -148,7 +149,7 @@ export default function HelpdeskChat({ user, displayName }) {
       if (pending || document.visibilityState === "hidden") return;
       pending = true;
       try {
-        const rows = await fetchHelpdeskMessages(selected.id);
+        const rows = await fetchHelpdeskMessages(selected.id, selected.employeeId);
         if (active && Array.isArray(rows)) setMessages(rows);
       } catch (requestError) {
         if (active) setError(requestError.message || "Could not load conversation messages.");
@@ -203,7 +204,7 @@ export default function HelpdeskChat({ user, displayName }) {
     setDeletingId(conversation.id);
     setError("");
     try {
-      await deleteHelpdeskConversation(conversation.id);
+      await deleteHelpdeskConversation(conversation.id, conversation.employeeId);
       const remaining = conversations.filter((item) => item.id !== conversation.id);
       setConversations(remaining);
       if (selectedId === conversation.id) {
@@ -222,9 +223,9 @@ export default function HelpdeskChat({ user, displayName }) {
     event.preventDefault();
     const text = draft.trim();
     if (!selected || !text || sending) return;
-    setSending(true); setError("");
+    setSending(true); setSendAnimating(true); setError("");
     try {
-      const item = await sendHelpdeskMessage(selected.id, text);
+      const item = await sendHelpdeskMessage(selected.id, text, selected.employeeId);
       setMessages((current) => [...current, item]);
       setConversations((current) => current.map((row) => row.id === selected.id ? {
         ...row, lastMessage: item.text, lastMessageAt: item.createdAt, lastSenderId: item.senderId,
@@ -233,7 +234,10 @@ export default function HelpdeskChat({ user, displayName }) {
       setDraft("");
     } catch (requestError) {
       setError(requestError.message || "Could not send this message.");
-    } finally { setSending(false); }
+    } finally {
+      setSending(false);
+      window.setTimeout(() => setSendAnimating(false), 520);
+    }
   };
 
   return <main className="eh-helpdesk">
@@ -262,7 +266,7 @@ export default function HelpdeskChat({ user, displayName }) {
               const mine = item.senderId === meId;
               return <div key={item.id || `${item.createdAt}-${index}`} className={`eh-message-row${mine ? " is-mine" : ""}`}><article className="eh-bubble"><small>{item.senderName} · {formatTime(item.createdAt)}</small><p>{item.text}</p></article></div>;
             })}{!messages.length && <p className="eh-loading">Loading messages…</p>}<div ref={messageEndRef} /></div>
-            <form className="eh-message-composer" onSubmit={send}><textarea rows="2" maxLength={5000} value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form.requestSubmit(); } }} placeholder="Write a reply…" aria-label="Write a reply" /><button type="submit" disabled={sending || !draft.trim()} aria-label="Send reply" title="Send reply"><ArrowRight size={17} /><span>Reply</span></button><small>Press Enter to send · Shift+Enter for a new line</small></form>
+            <form className="eh-message-composer" onSubmit={send}><textarea rows="2" maxLength={5000} value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form.requestSubmit(); } }} placeholder="Write a reply…" aria-label="Write a reply" /><button type="submit" className={sendAnimating ? "is-sending" : ""} disabled={sending || !draft.trim()} aria-label={sending ? "Sending reply" : "Send reply"} title="Send reply"><Send className="eh-send-plane" size={23} aria-hidden="true" /></button><small>Press Enter to send · Shift+Enter for a new line</small></form>
           </> : <div className="eh-no-selection"><span className="eh-empty-icon"><MessageCircle size={22} /></span><h3>{hr ? "Employee helpdesk" : "Your HR chats"}</h3><p>{hr ? "Select a conversation or start a chat with an employee." : "Select a conversation or start a new chat."}</p><button type="button" onClick={() => { setNewConversation(true); setRecipientId(""); }}><Plus size={15} /> New chat</button></div>}
       </section>
     </section>

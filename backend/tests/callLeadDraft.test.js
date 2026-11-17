@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { isApprovedCallCompletionUpdate, normalizeCallLeadDraft } from "../config/firestoreCallListModel.js";
+import { isApprovedCallCompletionUpdate, normalizeCallLeadDraft, uploadDayInIndia } from "../config/firestoreCallListModel.js";
 
 const validDraft = {
   name: "Ekta Singh", phone: "9545678033", city: "Mumbai", type: "Training",
@@ -45,4 +45,8 @@ test("approved call contacts allow only Follow Up to Completed status changes", 
   assert.equal(isApprovedCallCompletionUpdate(record, { callStatus: "Completed" }), true);
   assert.equal(isApprovedCallCompletionUpdate(record, { callStatus: "Completed", remark: "updated" }), false);
   assert.equal(isApprovedCallCompletionUpdate({ callStatus: "Completed" }, { callStatus: "Follow Up" }), false);
+});
+
+test("upload date follows the CRM's India calendar day", () => {
+  assert.equal(uploadDayInIndia("2026-11-13T20:00:00.000Z"), "2026-11-14");
 });

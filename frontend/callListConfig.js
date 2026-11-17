@@ -59,8 +59,9 @@ const stableDateValue = (...values) => String(values.find(Boolean) || "").slice(
 export const callListRecordDate = (row) => stableDateValue(row?.date, row?.createdAt, row?.createdLeadDate);
 export const callLeadRecordDate = (row) => stableDateValue(row?.createdLeadDate, row?.date, row?.createdAt);
 export const callListStableSortDate = (row) => stableDateValue(row?.date, row?.createdAt, row?.createdLeadDate);
-export const isCallContactLocked = (row) => normalizeCallStatus(row.callStatus) === "Completed"
-  && normalizeInterestStatus(row.interestStatus) === "Interested";
+export const isCallContactLocked = (row) => Boolean(row?.leadDraft || row?.leadCreated || row?.callLeadStatus === "Approved")
+  || (normalizeCallStatus(row?.callStatus) === "Completed"
+    && normalizeInterestStatus(row?.interestStatus) === "Interested");
 export const normalizeCallProgram = (value) => /^(?:it services?|it training|-|select (?:a )?(?:course|training|service|program)|not selected)$/i.test(String(value || "").trim()) ? "" : String(value || "").trim();
 export const callListPrograms = (type) => type === "training" ? TRAINING_CALL_LIST_PROGRAMS : type === "services" ? SERVICE_CALL_LIST_SERVICES : [...new Set([...SERVICE_CALL_LIST_SERVICES, ...TRAINING_CALL_LIST_PROGRAMS])];
 export function matchesCallListFilters(row, { search = "", program = "All", callStatus = "All", interest = "All", date = "", employee = "All", listType = "All" } = {}) {

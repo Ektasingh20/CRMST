@@ -77,6 +77,19 @@ import {
   isAuthenticated,
   logout as apiLogout,
 } from "./backendApi";
+import { createCallSaveQueue } from "./callSaveQueue.js";
+
+const callSaveQueue = createCallSaveQueue(updateCallListData, {
+  onStatus: (detail) => window.dispatchEvent(new CustomEvent("crm:call-save-status", { detail })),
+});
+if (typeof window !== "undefined") {
+  window.addEventListener("online", () => callSaveQueue.flushAll());
+  window.addEventListener("crmst:auth-required", () => { callSaveQueue.clear(); removeCallListCache(); catalogCache.clear(); });
+  window.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") callSaveQueue.flushAll(); });
+  window.addEventListener("beforeunload", (event) => {
+    if (callSaveQueue.hasPending()) { callSaveQueue.flushAll(); event.preventDefault(); event.returnValue = ""; }
+  });
+}
 
 function isMongoObjectId(value) {
   return (
@@ -142,8 +155,13 @@ const COURSES_CACHE_KEY = "crmst-courses-cache-v2";
 // duplicate reads from refreshes, navigation, and React development renders.
 const COURSES_CACHE_TTL_MS = 60 * 1000;
 const COURSES_SUMMARY_CACHE_TTL_MS = 60 * 1000;
-const CALL_LIST_CACHE_KEY = "crmst-call-list-cache-v1";
-const CALL_LIST_CACHE_TTL_MS = 2 * 60 * 1000;
+const CALL_LIST_CACHE_KEY = "crmst-call-list-cache-v2";
+// The live call-list stream keeps a warm snapshot current. Keeping that
+// snapshot across reloads prevents every tab refresh from downloading every
+// call document again. The TTL bounds how long a browser that missed stream
+// events can use its snapshot.
+const CALL_LIST_CACHE_TTL_MS = 5 * 60 * 1000;
+const callListMemoryCache = new Map();
 
 function formatDurationTime(totalSeconds) {
   const seconds = Math.max(0, Math.round(Number(totalSeconds) || 0));
@@ -236,24 +254,75 @@ function callListCacheKey(type = "") {
 }
 
 function readCallListCache(type = "") {
+  const key = callListCacheKey(type);
+  const memory = callListMemoryCache.get(key);
+  if (memory) return memory;
   try {
-    const parsed = JSON.parse(window.localStorage.getItem(callListCacheKey(type)) || "null");
-    return { items: Array.isArray(parsed?.items) ? parsed.items : [], fetchedAt: Number(parsed?.fetchedAt || 0) };
-  } catch {
-    return { items: [], fetchedAt: 0 };
-  }
+    const parsed = JSON.parse(window.localStorage.getItem(key) || "null");
+    if (Array.isArray(parsed?.items) && Number.isFinite(Number(parsed?.fetchedAt))) {
+      const cached = { items: parsed.items, fetchedAt: Number(parsed.fetchedAt) };
+      callListMemoryCache.set(key, cached);
+      return cached;
+    }
+  } catch {}
+  return { items: [], fetchedAt: 0 };
 }
 
-function writeCallListCache(items, type = "") {
-  try { window.localStorage.setItem(callListCacheKey(type), JSON.stringify({ items, fetchedAt: Date.now() })); } catch {}
+function writeCallListCache(items, type = "", fetchedAt = Date.now()) {
+  const key = callListCacheKey(type);
+  const cached = { items, fetchedAt };
+  callListMemoryCache.set(key, cached);
+  try { window.localStorage.setItem(key, JSON.stringify(cached)); } catch {}
 }
 
 function removeCallListCache() {
+  callListMemoryCache.clear();
   try {
     Object.keys(window.localStorage)
       .filter((key) => key.startsWith(`${CALL_LIST_CACHE_KEY}:`))
       .forEach((key) => window.localStorage.removeItem(key));
   } catch {}
+}
+export const invalidateCallListCache = removeCallListCache;
+
+export function applyCallListChangeToCache(record, deleted = false) {
+  if (!record?.id || !record?.listType) return;
+  const user = getSavedUser();
+  const userKey = String(user?.id || user?._id || user?.username || "anonymous");
+  const prefix = `${CALL_LIST_CACHE_KEY}:${userKey}:`;
+  const role = String(user?.role || "").trim().toLowerCase();
+  const isAdmin = role === "admin" || role.includes("administrator");
+  const visibleToUser = isAdmin
+    || String(record.assignedTo || "") === userKey
+    || String(record.callLeadAssignedTo || "") === userKey;
+  const keys = new Set([...callListMemoryCache.keys()].filter((key) => key.startsWith(prefix)));
+  try {
+    Object.keys(window.localStorage)
+      .filter((key) => key.startsWith(prefix))
+      .forEach((key) => keys.add(key));
+  } catch {}
+  for (const key of keys) {
+    const type = key.slice(prefix.length);
+    if (type !== "all" && type !== record.listType) continue;
+    let cached = callListMemoryCache.get(key);
+    if (!cached) {
+      try { cached = JSON.parse(window.localStorage.getItem(key) || "null"); } catch { cached = null; }
+    }
+    if (!Array.isArray(cached?.items)) continue;
+    const index = cached.items.findIndex((item) => item.id === record.id && item.listType === record.listType);
+    let items = cached.items;
+    if (deleted || !visibleToUser) {
+      if (index < 0) continue;
+      items = items.filter((_, itemIndex) => itemIndex !== index);
+    } else if (index >= 0) {
+      items = items.map((item, itemIndex) => itemIndex === index ? record : item);
+    } else {
+      items = [...items, record];
+    }
+    const updated = { items, fetchedAt: Number(cached.fetchedAt || 0) };
+    callListMemoryCache.set(key, updated);
+    try { window.localStorage.setItem(key, JSON.stringify(updated)); } catch {}
+  }
 }
 
 export function invalidateCoursesCache() {
@@ -420,10 +489,20 @@ export async function saveLeadsToBackend(leads) {
   });
 }
 
+const CATALOG_CACHE_TTL_MS = 5 * 60 * 1000;
+const catalogCache = new Map();
+async function loadCatalog(key, fetcher) {
+  const scopedKey = `${String(getSavedUser()?.id || getSavedUser()?._id || "anonymous")}:${key}`;
+  const cached = catalogCache.get(scopedKey);
+  if (cached && Date.now() - cached.fetchedAt < CATALOG_CACHE_TTL_MS) return cached.items.map((item) => ({ ...item }));
+  const items = normalizeCollection(await fetcher());
+  catalogCache.set(scopedKey, { items, fetchedAt: Date.now() });
+  return items.map((item) => ({ ...item }));
+}
+
 export async function loadServices() {
   try {
-    const result = await fetchServices();
-    return normalizeCollection(result);
+    return await loadCatalog("services", fetchServices);
   } catch (err) {
     console.warn("Failed loading services", err);
     return [];
@@ -431,18 +510,19 @@ export async function loadServices() {
 }
 
 export async function saveServicesToBackend(services) {
-  return saveCollection({
-    items: services,
-    update: updateService,
-    create: createService,
-    label: "service",
-  });
+  try {
+    return await saveCollection({
+      items: services,
+      update: updateService,
+      create: createService,
+      label: "service",
+    });
+  } finally { catalogCache.clear(); }
 }
 
 export async function loadTrainings() {
   try {
-    const result = await fetchTrainings();
-    return normalizeCollection(result);
+    return await loadCatalog("trainings", fetchTrainings);
   } catch (err) {
     console.warn("Failed loading trainings", err);
     return [];
@@ -605,34 +685,41 @@ export async function saveStudentLessonProgress(courseId, lessonId, progress, st
 
 export async function loadCallListData(type = "", force = false) {
   const cached = readCallListCache(type);
-  if (!force && cached.items.length && Date.now() - cached.fetchedAt < CALL_LIST_CACHE_TTL_MS) return cached.items;
-  const records = await fetchCallListData(type);
+  // Empty snapshots are valid too; otherwise an employee with no assigned
+  // contacts would hit Firestore on every render/navigation.
+  if (!force && cached.fetchedAt && Date.now() - cached.fetchedAt < CALL_LIST_CACHE_TTL_MS) return cached.items;
+  const records = await fetchCallListData(type, force);
   if (Array.isArray(records)) writeCallListCache(records, type);
   return records;
 }
 export async function uploadCallListData(payload) {
   const result = await importCallListData(payload);
-  removeCallListCache();
+  if (Array.isArray(result?.rows)) result.rows.forEach((record) => applyCallListChangeToCache(record));
   return result;
 }
 export async function addCallListContact(type, contact) {
   const result = await createCallListData(type, contact);
-  removeCallListCache();
+  applyCallListChangeToCache(result);
   return result;
 }
-export async function saveCallListData(type, id, patch, assignedTo = "") {
-  const result = await updateCallListData(type, id, patch, assignedTo);
-  removeCallListCache();
+export async function saveCallListData(type, id, patch, assignedTo = "", expectedUpdatedAt = "", expectedRevision = undefined) {
+  const result = await callSaveQueue.save(type, id,
+    { ...patch, ...(typeof expectedUpdatedAt === "string" && expectedUpdatedAt ? { expectedUpdatedAt } : {}),
+      ...(Number.isInteger(expectedRevision) ? { expectedRevision } : {}) },
+    assignedTo, patch.callClicked === true || patch.whatsappClicked === true);
+  applyCallListChangeToCache(result);
   return result;
 }
 export async function approveCallLead(type, id, assignedTo = "") {
+  await callSaveQueue.flush(type, id);
   const result = await approveCallListLead(type, id, assignedTo);
-  removeCallListCache();
+  applyCallListChangeToCache(result?.record);
   return result;
 }
 export async function removeCallListData(type, id, assignedTo = "") {
+  await callSaveQueue.flush(type, id);
   const result = await deleteCallListData(type, id, assignedTo);
-  removeCallListCache();
+  applyCallListChangeToCache({ id, listType: type, assignedTo }, true);
   return result;
 }
 
@@ -692,12 +779,14 @@ export async function deleteImage(publicId) {
 }
 
 export async function saveTrainingsToBackend(trainings) {
-  return saveCollection({
-    items: trainings,
-    update: updateTraining,
-    create: createTraining,
-    label: "training",
-  });
+  try {
+    return await saveCollection({
+      items: trainings,
+      update: updateTraining,
+      create: createTraining,
+      label: "training",
+    });
+  } finally { catalogCache.clear(); }
 }
 
 export async function loadStipPrograms() {
@@ -828,6 +917,9 @@ export function logoutUser() {
   try {
     apiLogout();
   } finally {
+    catalogCache.clear();
+    removeCallListCache();
+    callSaveQueue.clear();
     clearUserSession();
   }
 }

@@ -1,4 +1,5 @@
 import express from "express";
+import { randomUUID } from "node:crypto";
 import { authenticate } from "../middleware/auth.js";
 import Task from "../models/Task.js";
 import User from "../models/User.js";
@@ -20,15 +21,7 @@ function taskDateKey(date = new Date()) {
   return `${parts.year}${parts.month}${parts.day}`;
 }
 
-async function nextTaskId() {
-  const prefix = `TASK-${taskDateKey()}-`;
-  const sameDayTasks = await Task.find({ id: { $regex: `^${prefix}` } });
-  const highestSequence = sameDayTasks.reduce((highest, task) => {
-    const sequence = Number(String(task.id || "").slice(prefix.length));
-    return Number.isInteger(sequence) ? Math.max(highest, sequence) : highest;
-  }, 0);
-  return `${prefix}${String(highestSequence + 1).padStart(3, "0")}`;
-}
+const nextTaskId = () => `TASK-${taskDateKey()}-${randomUUID().slice(0, 8).toUpperCase()}`;
 
 function isAssignableEmployee(user) {
   const role = String(user?.role || "").trim().toLowerCase();
@@ -53,10 +46,10 @@ router.post("/", async (req, res) => {
   try {
     const payload = { ...(req.body || {}) };
     if (!String(payload.title || "").trim()) return res.status(400).json({ error: "Task title is required." });
-    const assignee = canManageTasks(req.user) ? await resolveEmployee(payload.assigneeId) : isCrmExecutive(req.user) ? req.user : null;
-    if (!assignee) return res.status(canManageTasks(req.user) ? 400 : 403).json({ error: canManageTasks(req.user) ? "Choose an active employee assignee." : "Only CRM Executives can create personal tasks." });
+    const assignee = canManageTasks(req.user) ? await resolveEmployee(payload.assigneeId) : isAssignableEmployee(req.user) ? req.user : null;
+    if (!assignee) return res.status(canManageTasks(req.user) ? 400 : 403).json({ error: canManageTasks(req.user) ? "Choose an active employee assignee." : "Only employees can create personal tasks." });
     const now = new Date().toISOString();
-    const task = await Task.create({ id: await nextTaskId(), title: String(payload.title).trim(), description: String(payload.description || "").trim(), priority: payload.priority || "Medium", status: payload.status || "To Do", dueDate: payload.dueDate || "", reminder: payload.reminder || "", assigneeId: userId(assignee), assignee: assignee.name || assignee.username || "CRM Executive", createdById: userId(req.user), createdBy: req.user.name || req.user.username || "Admin", createdAt: now, updatedAt: now });
+    const task = await Task.create({ id: await nextTaskId(), title: String(payload.title).trim(), description: String(payload.description || "").trim(), priority: payload.priority || "Medium", status: payload.status || "To Do", dueDate: payload.dueDate || "", reminder: payload.reminder || "", assigneeId: userId(assignee), assignee: assignee.name || assignee.username || "Employee", assigneeRole: assignee.role || "", assigneeDepartment: assignee.dept || assignee.department || "", createdById: userId(req.user), createdBy: req.user.name || req.user.username || "Admin", createdAt: now, updatedAt: now });
     await notifyUser(task.assigneeId, { type: "task_assigned", message: `You were assigned a task: ${task.title}.` });
     res.status(201).json(taskJson(task));
   } catch (error) { res.status(400).json({ error: error.message || "Unable to create task." }); }
@@ -73,6 +66,7 @@ router.put("/:id", async (req, res) => {
       const assignee = await resolveEmployee(payload.assigneeId);
       if (!assignee) return res.status(400).json({ error: "Choose an active employee assignee." });
       payload.assigneeId = userId(assignee); payload.assignee = assignee.name || assignee.username || "Employee";
+      payload.assigneeRole = assignee.role || ""; payload.assigneeDepartment = assignee.dept || assignee.department || "";
     }
     const wasCompleted = String(task.status || "") === "Done";
     Object.assign(task, payload, { updatedAt: new Date().toISOString() }); await task.save();

@@ -66,7 +66,10 @@ test("saved status variants retain Follow Up and Interested when read back", () 
   assert.equal(normalizeCallProgram("Select Training"), "");
 });
 
-test("only completed contacts marked Interested are locked from editing", () => {
+test("saved lead forms and completed interested contacts are locked from editing", () => {
+  assert.equal(isCallContactLocked({ callStatus: "Follow Up", interestStatus: "Interested", leadDraft: { name: "Ekta" } }), true);
+  assert.equal(isCallContactLocked({ callStatus: "Pending", interestStatus: "Not Interested", leadCreated: true }), true);
+  assert.equal(isCallContactLocked({ callStatus: "Pending", interestStatus: "Not Interested", callLeadStatus: "Approved" }), true);
   assert.equal(isCallContactLocked({ callStatus: "Completed", interestStatus: "Interested" }), true);
   assert.equal(isCallContactLocked({ callStatus: "Completed", interestStatus: "Not Interested" }), false);
   assert.equal(isCallContactLocked({ callStatus: "Follow Up", interestStatus: "Interested" }), false);

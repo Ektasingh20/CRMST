@@ -4,11 +4,11 @@ import assert from "node:assert/strict";
 const conversations = new Map();
 const arrayUnion = (...values) => ({ __arrayUnion: values });
 
-function makeDocument(id) {
-  const record = conversations.get(id);
+function makeDocument(owner, id) {
+  const record = conversations.get(`${owner}/${id}`);
   const ref = {
-    path: `hrHelpdeskConversations/${id}`,
-    get: async () => makeDocument(id),
+    path: `hrHelpdeskEmployees/${owner}/hrHelpdeskThreads/${id}`,
+    get: async () => makeDocument(owner, id),
     update: async (updates) => {
       for (const [key, value] of Object.entries(updates)) {
         record[key] = value?.__arrayUnion
@@ -22,27 +22,26 @@ function makeDocument(id) {
       get: async () => ({ docs: [] }),
     }),
   };
-  return {
-    id,
-    exists: Boolean(record),
-    data: () => record,
-    ref,
-  };
+  return { id, exists: Boolean(record), data: () => record, ref };
 }
 
-function makeQuery(filters = []) {
+function makeQuery(owner = null, filters = []) {
   return {
     where(field, operation, value) {
-      return makeQuery([...filters, [field, operation, value]]);
+      return makeQuery(owner, [...filters, [field, operation, value]]);
     },
     orderBy() { return this; },
     limit() { return this; },
     get: async () => ({
       docs: [...conversations.entries()]
-        .filter(([, record]) => filters.every(([field, operation, value]) => operation === "array-contains"
-          ? (record[field] || []).includes(value)
-          : record[field] === value))
-        .map(([id]) => makeDocument(id)),
+        .filter(([key, record]) => (!owner || key.startsWith(`${owner}/`))
+          && filters.every(([field, operation, value]) => operation === "array-contains"
+            ? (record[field] || []).includes(value)
+            : record[field] === value))
+        .map(([key]) => {
+          const [employeeId, id] = key.split("/");
+          return makeDocument(employeeId, id);
+        }),
     }),
   };
 }
@@ -50,10 +49,13 @@ function makeQuery(filters = []) {
 mock.module("firebase-admin/firestore", { namedExports: {
   FieldValue: { arrayUnion },
   getFirestore: () => ({
-    collection: () => ({
-      doc: (id) => makeDocument(id).ref,
+    collection: (name) => ({
+      doc: (owner) => name === "hrHelpdeskEmployees"
+        ? { collection: () => ({ doc: (id) => makeDocument(owner, id).ref, ...makeQuery(owner) }) }
+        : { get: async () => ({ exists: false }) },
       ...makeQuery(),
     }),
+    collectionGroup: () => makeQuery(),
   }),
 } });
 mock.module("../middleware/auth.js", { namedExports: { authenticate: (req, res, next) => next() } });
@@ -77,16 +79,18 @@ function response() {
   };
 }
 
-async function callRoute(path, method, user, params = {}) {
-  const layer = router.stack.find((item) => item.route?.path === path && item.route.methods[method]);
+async function callRoute(routePath, method, user, params = {}, query = {}) {
+  const layer = router.stack.find((item) => item.route?.path === routePath && item.route.methods[method]);
   const res = response();
-  await layer.route.stack[0].handle({ user, params }, res);
+  await layer.route.stack[0].handle({ user, params, query, body: {} }, res);
   return res;
 }
 
 test("deleting a conversation hides it only for the signed-in participant", async () => {
   conversations.clear();
-  conversations.set(conversationId, {
+  conversations.set(`${employee.id}/${conversationId}`, {
+    conversationId,
+    employeeId: employee.id,
     subject: "Schedule question",
     createdById: employee.id,
     participantIds: [employee.id, hr.id],
@@ -94,27 +98,46 @@ test("deleting a conversation hides it only for the signed-in participant", asyn
     updatedAt: new Date().toISOString(),
   });
 
-  const deleted = await callRoute("/conversations/:id", "delete", employee, { id: conversationId });
+  const deleted = await callRoute("/conversations/:id", "delete", employee, { id: conversationId }, { employeeId: employee.id });
   const employeeList = await callRoute("/conversations", "get", employee);
   const hrList = await callRoute("/conversations", "get", hr);
 
   assert.equal(deleted.code, 200);
-  assert.deepEqual(conversations.get(conversationId).hiddenFor, [employee.id]);
+  assert.deepEqual(conversations.get(`${employee.id}/${conversationId}`).hiddenFor, [employee.id]);
   assert.deepEqual(employeeList.body, []);
   assert.equal(hrList.body.length, 1);
 });
 
 test("a participant cannot reopen a conversation after hiding it", async () => {
   conversations.clear();
-  conversations.set(conversationId, {
+  conversations.set(`${employee.id}/${conversationId}`, {
+    conversationId,
+    employeeId: employee.id,
     subject: "Schedule question",
     createdById: employee.id,
     participantIds: [employee.id, hr.id],
     hiddenFor: [employee.id],
   });
 
-  const result = await callRoute("/conversations/:id/messages", "get", employee, { id: conversationId });
-
+  const result = await callRoute("/conversations/:id/messages", "get", employee, { id: conversationId }, { employeeId: employee.id });
   assert.equal(result.code, 404);
   assert.equal(result.body.error, "Helpdesk conversation not found.");
+});
+
+test("an employee cannot read another employee's nested conversation", async () => {
+  conversations.clear();
+  conversations.set(`${employee.id}/${conversationId}`, {
+    conversationId,
+    employeeId: employee.id,
+    createdById: employee.id,
+    participantIds: [employee.id, hr.id],
+  });
+
+  const other = { id: "crm-2", role: "CRM Executive", dept: "CRM" };
+  const list = await callRoute("/conversations", "get", other);
+  const messages = await callRoute("/conversations/:id/messages", "get", other, { id: conversationId }, { employeeId: employee.id });
+
+  assert.deepEqual(list.body, []);
+  assert.equal(messages.code, 403);
+  assert.equal(messages.body.error, "You can only access your own helpdesk conversations.");
 });

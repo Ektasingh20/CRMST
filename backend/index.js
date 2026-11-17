@@ -5,6 +5,7 @@ import "express-async-errors";
 import serverless from "serverless-http";
 import { connectDatabase } from "./config/db.js";
 import { seedDefaultAdmin } from "./utils/seedAdmin.js";
+import { startAttendanceAutoMarkScheduler } from "./services/attendanceAutomation.js";
 import authRoutes from "./routes/auth.js";
 import usersRoutes from "./routes/users.js";
 import hrHelpdeskRoutes from "./routes/hrHelpdesk.js";
@@ -88,12 +89,23 @@ async function startServer() {
 
   tryListen(port);
 
-  connectDatabase()
-    .then(() => seedDefaultAdmin())
+  let databaseReady = false;
+  let retryDelayMs = 5000;
+  const initializeDatabase = () => connectDatabase()
+    .then(async () => {
+      if (databaseReady) return;
+      databaseReady = true;
+      startAttendanceAutoMarkScheduler();
+      await seedDefaultAdmin();
+    })
     .catch((error) => {
       console.warn("Firebase initialization failed. API is running in degraded mode.");
-      console.warn(error.message || "Unknown database startup error.");
+      console.warn(`${error.message || "Unknown database startup error."} Retrying in ${Math.round(retryDelayMs / 1000)} seconds.`);
+      const timer = setTimeout(initializeDatabase, retryDelayMs);
+      timer.unref?.();
+      retryDelayMs = Math.min(retryDelayMs * 2, 5 * 60 * 1000);
     });
+  initializeDatabase();
 }
 
 if (!process.env.VERCEL) {

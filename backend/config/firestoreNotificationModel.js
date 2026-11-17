@@ -82,7 +82,11 @@ export async function notifyStudent(studentId, { type, message, courseId = null,
     ? `assignment-${String(courseId)}-${String(assignmentId)}`.replace(/[^a-zA-Z0-9_-]/g, "-")
     : null;
   const ref = stableId ? notificationsRef(studentId).doc(stableId) : notificationsRef(studentId).doc();
-  await ref.set({ type, message, courseId, assignmentId, read: false, createdAt: FieldValue.serverTimestamp() }, { merge: true });
+  const parent = getFirestore().collection("students").doc(String(studentId));
+  const batch = getFirestore().batch();
+  batch.set(parent, { studentId: String(studentId) }, { merge: true });
+  batch.set(ref, { recipientId: String(studentId), type, message, courseId, assignmentId, read: false, createdAt: FieldValue.serverTimestamp() }, { merge: true });
+  await batch.commit();
   notificationCache.delete(String(studentId));
   return ref.id;
 }

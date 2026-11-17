@@ -236,37 +236,65 @@ export async function fetchUsers() {
   return request("/users");
 }
 
-export async function uploadPriorExperienceDocument(id, key, file) {
-  const data = await new Promise((resolve, reject) => {
+export const fetchMyProfile = () => request("/users/me/profile");
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => typeof reader.result === "string" ? resolve(reader.result) : reject(new Error("Unable to read this file."));
     reader.onerror = () => reject(new Error("Unable to read this file."));
     reader.readAsDataURL(file);
   });
+}
+
+export async function uploadPriorExperienceDocument(id, key, file) {
+  const data = await readFileAsDataUrl(file);
   return request(`/users/${encodeURIComponent(id)}/prior-experience-documents/${encodeURIComponent(key)}`, {
     method: "POST",
     body: JSON.stringify({ name: file.name, data }),
   });
 }
 
-export async function downloadPriorExperienceDocument(id, key) {
+export async function uploadMyProfileDocument(key, file) {
+  const form = new FormData();
+  form.append("file", file);
+  return request(`/users/me/documents/${encodeURIComponent(key)}`, {
+    method: "POST",
+    contentType: null,
+    body: form,
+  });
+}
+
+export async function uploadMyProfilePhoto(file) {
+  const form = new FormData();
+  form.append("file", file);
+  return request("/users/me/photo", { method: "POST", contentType: null, body: form });
+}
+
+async function downloadAuthenticatedFile(path, fallbackMessage) {
   if (!getToken()) {
     handleUnauthorized("Please log in to continue.");
     const authError = new Error("Authentication required");
     authError.status = 401;
     throw authError;
   }
-  const response = await fetch(`${API_BASE}/users/${encodeURIComponent(id)}/prior-experience-documents/${encodeURIComponent(key)}`, {
-    headers: buildHeaders(true),
-  });
+  const response = await fetch(`${API_BASE}${path}`, { headers: buildHeaders(true) });
   if (!response.ok) {
     const body = await response.json().catch(() => null);
-    const error = new Error(body?.error || response.statusText || "Unable to download document.");
+    const error = new Error(body?.error || response.statusText || fallbackMessage);
     error.status = response.status;
     if (response.status === 401) handleUnauthorized(error.message);
     throw error;
   }
   return response.blob();
+}
+
+export async function downloadPriorExperienceDocument(id, key) {
+  return downloadAuthenticatedFile(`/users/${encodeURIComponent(id)}/prior-experience-documents/${encodeURIComponent(key)}`, "Unable to download document.");
+}
+
+export async function downloadMyProfileDocument(key) {
+  return downloadAuthenticatedFile(`/users/me/documents/${encodeURIComponent(key)}`, "Unable to download account document.");
 }
 
 export const fetchHelpdeskConversations = () => request("/hr-helpdesk/conversations");
@@ -278,16 +306,18 @@ export async function createHelpdeskConversation(subject, message, employeeId = 
   });
 }
 
-export const fetchHelpdeskMessages = (conversationId) => request(`/hr-helpdesk/conversations/${encodeURIComponent(conversationId)}/messages`);
+const helpdeskOwnerQuery = (employeeId) => employeeId ? `?employeeId=${encodeURIComponent(employeeId)}` : "";
 
-export const deleteHelpdeskConversation = (conversationId) => request(`/hr-helpdesk/conversations/${encodeURIComponent(conversationId)}`, {
+export const fetchHelpdeskMessages = (conversationId, employeeId = "") => request(`/hr-helpdesk/conversations/${encodeURIComponent(conversationId)}/messages${helpdeskOwnerQuery(employeeId)}`);
+
+export const deleteHelpdeskConversation = (conversationId, employeeId = "") => request(`/hr-helpdesk/conversations/${encodeURIComponent(conversationId)}${helpdeskOwnerQuery(employeeId)}`, {
   method: "DELETE",
 });
 
-export async function sendHelpdeskMessage(conversationId, text) {
+export async function sendHelpdeskMessage(conversationId, text, employeeId = "") {
   return request(`/hr-helpdesk/conversations/${encodeURIComponent(conversationId)}/messages`, {
     method: "POST",
-    body: JSON.stringify({ text }),
+    body: JSON.stringify({ text, employeeId }),
   });
 }
 
@@ -517,8 +547,31 @@ export async function updateMyProfile(profile) {
 export async function fetchAppNotifications() { return request("/notifications/me"); }
 export async function markAppNotificationRead(id) { return request(`/notifications/me/${encodeURIComponent(id)}/read`, { method: "PATCH" }); }
 
-export async function fetchCallListData(type = "") {
-  return request(`/calling/list-data${type ? `?type=${encodeURIComponent(type)}` : ""}`);
+export async function fetchCallListData(type = "", fresh = false) {
+  const params = new URLSearchParams();
+  if (type) params.set("type", type);
+  if (fresh) params.set("fresh", "1");
+  const query = params.toString();
+  return request(`/calling/list-data${query ? `?${query}` : ""}`);
+}
+
+export async function fetchCallListCount() {
+  return request("/calling/list-data/count");
+}
+
+export async function fetchCallListPage({ type = "", assignedTo = "", cursor = "", limit = 25,
+  search = "", program = "All", callStatus = "All", interest = "All", fromDate = "", toDate = "" } = {}) {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (type) params.set("type", type);
+  if (assignedTo) params.set("assignedTo", assignedTo);
+  if (cursor) params.set("cursor", cursor);
+  if (search) params.set("search", search);
+  if (program !== "All") params.set("program", program);
+  if (callStatus !== "All") params.set("callStatus", callStatus);
+  if (interest !== "All") params.set("interest", interest);
+  if (fromDate) params.set("fromDate", fromDate);
+  if (toDate) params.set("toDate", toDate);
+  return request(`/calling/list-data/page?${params}`);
 }
 
 export async function importCallListData(payload) {
@@ -653,6 +706,52 @@ export async function fetchAttendance() {
   return request("/attendance");
 }
 
+export async function fetchTodayAttendance() {
+  return request("/attendance/today");
+}
+
+export async function fetchAttendanceMonth(month) {
+  return request(`/attendance/month?month=${encodeURIComponent(month)}`);
+}
+
+export async function fetchAttendanceCalendar() {
+  return request("/attendance/calendar");
+}
+
+export async function updateAttendanceCalendar(calendar) {
+  return request("/attendance/calendar", {
+    method: "PUT",
+    body: JSON.stringify(calendar),
+  });
+}
+
+export async function fetchAdminAttendanceMonth(month) {
+  return request(`/attendance/admin/month?month=${encodeURIComponent(month)}`);
+}
+
+export async function fetchAdminAttendance(filters = {}) {
+  const query = new URLSearchParams();
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== "") query.set(key, String(value));
+  });
+  return request(`/attendance/admin${query.size ? `?${query}` : ""}`);
+}
+
+export async function fetchAdminAttendanceSummary(date = "") {
+  return request(`/attendance/admin/summary${date ? `?date=${encodeURIComponent(date)}` : ""}`);
+}
+
+export async function checkInAttendance(record = {}) {
+  return request("/attendance/check-in", {
+    method: "POST",
+    body: JSON.stringify({ status: record.status, remark: record.remark }),
+  });
+}
+
+export async function checkOutAttendance() {
+  return request("/attendance/check-out", { method: "POST", body: "{}" });
+}
+
 export async function createAttendance(record) {
   return request("/attendance", {
     method: "POST",
@@ -663,6 +762,13 @@ export async function createAttendance(record) {
 export async function updateAttendance(id, record) {
   return request(`/attendance/${encodeURIComponent(id)}`, {
     method: "PUT",
+    body: JSON.stringify(record),
+  });
+}
+
+export async function correctAttendance(id, record) {
+  return request(`/attendance/${encodeURIComponent(id)}`, {
+    method: "PATCH",
     body: JSON.stringify(record),
   });
 }

@@ -7,7 +7,7 @@ import "./crmPerformanceReport.css";
 
 const norm = (value) => String(value || "").trim().toLowerCase();
 const statusOf = (row) => String(row.callStatus || "Pending").trim().toLowerCase();
-const rowDate = (row) => String(row.createdAt || row.date || row.updatedAt || "").slice(0, 10);
+const rowDate = (row) => String(row.date || row.createdAt || row.updatedAt || "").slice(0, 10);
 const userId = (user) => String(user?._id || user?.id || "");
 const dateTimeOf = (row) => row.callTime || row.time || row.updatedAt || row.createdAt || row.date || "";
 const latestDateOf = (row) => row.updatedAt || row.createdAt || row.date || "";

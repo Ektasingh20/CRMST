@@ -1,8 +1,8 @@
 import express from "express";
 import { authenticate } from "../middleware/auth.js";
-import Attendance from "../models/Attendance.js";
 import { listLeaves } from "../models/Leave.js";
 import User from "../models/User.js";
+import { isOfficialAttendanceRecord, listAttendanceForDate } from "../services/attendanceStore.js";
 import { isAdmin, isHrUser } from "../utils/roles.js";
 
 const router = express.Router();

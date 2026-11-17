@@ -5,7 +5,7 @@ import User from "../models/User.js";
 import { isMongoConnected } from "../config/db.js";
 
 import { buildAutoMapping, detectDuplicateCandidates, normalizeImportPayload } from "../utils/callingImport.js";
-import { approveCallRecord, createCallRecord, deleteCallRecord, importCallRecords, listCallRecords, normalizeListType, updateCallRecord } from "../config/firestoreCallListModel.js";
+import { approveCallRecord, clearCallListReadCache, countAllCallRecords, createCallRecord, deleteCallRecord, importCallRecords, listCallRecords, normalizeListType, pageAdminCallRecords, updateCallRecord } from "../config/firestoreCallListModel.js";
 import { notifyUser } from "../services/appNotifications.js";
 
 const router = express.Router();
@@ -37,9 +37,22 @@ router.get("/list-data/events", (req, res) => {
 router.get("/list-data", async (req, res) => {
   try {
     const assignedTo = isAdmin(req.user) ? String(req.query.assignedTo || "") : String(req.user.id || req.user._id || "");
+    if (String(req.query.fresh || "") === "1") clearCallListReadCache(req.query.type || "", assignedTo);
     const records = await listCallRecords(req.query.type || "", assignedTo);
     res.json(records);
-  } catch (error) { res.status(400).json({ error: error.message }); }
+  } catch (error) { res.status(error.status || 400).json({ error: error.message, ...(error.issues ? { issues: error.issues } : {}) }); }
+});
+
+router.get("/list-data/count", async (req, res) => {
+  if (!isAdmin(req.user)) return res.status(403).json({ error: "Admin access required." });
+  try { res.json(await countAllCallRecords()); }
+  catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+router.get("/list-data/page", async (req, res) => {
+  if (!isAdmin(req.user)) return res.status(403).json({ error: "Admin access required." });
+  try { res.json(await pageAdminCallRecords(req.query)); }
+  catch (error) { res.status(error.status || 400).json({ error: error.message }); }
 });
 
 router.post("/list-data/import", async (req, res) => {
@@ -47,23 +60,26 @@ router.post("/list-data/import", async (req, res) => {
   try {
     if (!req.body.assignedTo) return res.status(400).json({ error: "Please select an employee." });
     const assignee = await User.findOne({ $or: [{ id: String(req.body.assignedTo) }, { _id: String(req.body.assignedTo) }] });
-    const assigneeRole = String(assignee?.role || "").trim().toLowerCase();
-    const assigneeStatus = String(assignee?.status || "Active").trim().toLowerCase();
-    const assigneeDepartment = String(assignee?.dept || assignee?.department || "").trim().toLowerCase();
-    const assigneePosition = String(assignee?.position || "").trim().toLowerCase();
-    if (!assignee || assigneeStatus !== "active" || !(assigneeRole === "admin" || assigneeRole.includes("crm") || assigneeDepartment.includes("crm") || assigneePosition.includes("crm"))) {
-      return res.status(400).json({ error: "Call lists can only be assigned to active Admin or CRM Executive users." });
+    if (!isAssignableCrmUser(assignee)) {
+      return res.status(400).json({ error: "Call lists can only be assigned to active CRM employees." });
     }
     const rows = Array.isArray(req.body.rows) ? req.body.rows : [];
     const created = await importCallRecords({ ...req.body, rows, uploadedBy: req.user.id || req.user._id });
-    created.forEach((record) => publishCallChange(record));
-    if (created.length) await notifyUser(req.body.assignedTo, { type: "call_list_uploaded", message: `${created.length} new ${String(req.body.listType || "call").toLowerCase()} contact${created.length === 1 ? " was" : "s were"} assigned to you.` });
+    const newlyCreated = new Set(created.newlyCreatedIds || []);
+    if (!created.alreadyProcessed) created.filter((record) => newlyCreated.has(record.id)).forEach((record) => publishCallChange(record));
+    if (newlyCreated.size && !created.alreadyProcessed) {
+      await notifyUser(req.body.assignedTo, { type: "call_list_uploaded", message: `${newlyCreated.size} new ${String(req.body.listType || "call").toLowerCase()} contact${newlyCreated.size === 1 ? " was" : "s were"} assigned to you.` })
+        .catch((error) => console.warn("Call list import notification failed:", error));
+    }
     res.status(201).json({
       created: created.length,
       duplicates: created.duplicates || [],
+      invalidCount: created.invalidCount || 0,
+      uploadBatchId: created.uploadBatchId,
+      alreadyProcessed: Boolean(created.alreadyProcessed),
       rows: created,
     });
-  } catch (error) { res.status(400).json({ error: error.message }); }
+  } catch (error) { res.status(error.status || 500).json({ error: error.message, ...(error.issues ? { issues: error.issues } : {}) }); }
 });
 
 router.post("/list-data/:type", async (req, res) => {
@@ -112,12 +128,8 @@ router.put("/list-data/:type/:id", async (req, res) => {
       delete patch.assignedToName;
     } else if (patch.assignedTo) {
       const assignee = await User.findOne({ $or: [{ id: String(patch.assignedTo) }, { _id: String(patch.assignedTo) }] });
-      const role = String(assignee?.role || "").trim().toLowerCase();
-      const status = String(assignee?.status || "Active").trim().toLowerCase();
-      const department = String(assignee?.dept || assignee?.department || "").trim().toLowerCase();
-      const position = String(assignee?.position || "").trim().toLowerCase();
-      if (!assignee || status !== "active" || !(role === "admin" || role.includes("crm") || department.includes("crm") || position.includes("crm"))) {
-        return res.status(400).json({ error: "Call lists can only be assigned to active Admin or CRM Executive users." });
+      if (!isAssignableCrmUser(assignee)) {
+        return res.status(400).json({ error: "Call lists can only be assigned to active CRM employees." });
       }
       patch.assignedToName = assignee.name || assignee.username || "";
     }
@@ -154,6 +166,14 @@ function isAdmin(user) {
 
 function isCrmExecutive(user) {
   return ["crm executive", "crm_executive"].includes(String(user?.role || "").trim().toLowerCase());
+}
+
+function isAssignableCrmUser(user) {
+  if (!user || String(user.status || "Active").trim().toLowerCase() !== "active") return false;
+  const role = String(user.role || "").trim().toLowerCase();
+  const department = String(user.dept || user.department || "").trim().toLowerCase();
+  const position = String(user.position || "").trim().toLowerCase();
+  return !role.includes("admin") && (role.includes("crm") || department.includes("crm") || position.includes("crm"));
 }
 
 function normalizeId(value) {

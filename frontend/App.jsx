@@ -1,5 +1,6 @@
 import { IT_ROLES, defaultProjectEligibility, canReceiveProject } from "./src/itUserRoles.js";
 import CallLeadsPanel from "./CallLeadsPanel.jsx";
+import AttendanceAdminPanel from "./src/admin/AttendanceAdminPanel.jsx";
 import RemarkField from "./RemarkField.jsx";
 import { callLeadForm, callLeadProgram, isCallLead } from "./callLeads.js";
 import {
@@ -10,14 +11,19 @@ import {
   fetchAttendance as fetchAttendanceForMonitor,
   fetchLeaves as fetchLeavesForMonitor,
   fetchEmployees as fetchEmployeesForMonitor,
-  fetchCallListData as fetchCallListDataForMonitor,
+  fetchCallListCount,
+  fetchCallListPage,
   fetchPendingEnrollmentRequests as fetchEnrollmentRequestsForMonitor,
   fetchStudentTaskSubmissions as fetchTaskSubmissionsForMonitor,
   fetchCourses as fetchCoursesForMonitor,
   createProject,
+  correctAttendance,
   subscribeCallListChanges,
 } from "./backendApi.js";
 import { mergeCallListRows } from "./callListConfig.js";
+import { normalizeCallListDate } from "./callListDate.js";
+import { validateCallImportRows } from "./callListImportValidation.js";
+import SalesDropdown from "./SalesDropdown.jsx";
 import { TRAINING_CALL_LIST_PROGRAMS, SERVICE_CALL_LIST_SERVICES, CALL_STATUS_OPTIONS, CALL_LIST_INTEREST_STATUS_OPTIONS, normalizeCallStatus, normalizeInterestStatus, normalizeCallProgram, callListPrograms, matchesCallListFilters } from "./callListConfig.js";
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
@@ -169,6 +175,7 @@ import {
   getCurrentUser,
   logoutUser,
   loadCallListData,
+  applyCallListChangeToCache,
   uploadCallListData,
   addCallListContact,
   saveCallListData,
@@ -199,7 +206,7 @@ const STUDENT_DASHBOARD_URL = "http://localhost:5175";
 
 const USERS_STORAGE_KEY = "crmst-users.txt";
 const LEADS_STORAGE_KEY = "crmst-leads.txt";
-const LEADS_CACHE_VERSION = 4;
+const CALL_LIST_DATA_PAGES = new Set(["crm-reports", "sales-approved", "co-approved", "sales-report", "crm", "crm-approved"]);
 const SESSION_STORAGE_KEY = "crmst-current-user";
 const SAVED_LOGIN_STORAGE_KEY = "crmst-saved-login";
 const SERVICES_STORAGE_KEY = "crmst-services.txt";
@@ -1057,25 +1064,8 @@ function getLeadCacheUserKey(user) {
 }
 
 function readLeadsFromStorage(user) {
-  const raw = safeStorageGet(LEADS_STORAGE_KEY);
-  if (!raw) return { items: [], hasCache: false };
-  try {
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) {
-      return { items: [], hasCache: false };
-    }
-    if (
-      parsed?.version === LEADS_CACHE_VERSION
-      && parsed.userKey === getLeadCacheUserKey(user)
-      && Array.isArray(parsed.items)
-    ) {
-      const items = sanitizeImageCollection(parsed.items);
-      return { items, hasCache: items.length > 0 };
-    }
-  } catch (error) {
-    console.warn("Ignoring invalid cached leads.", error);
-    return { items: [], hasCache: false };
-  }
+  // Customer leads are loaded from the authenticated API, never browser storage.
+  void user;
   return { items: [], hasCache: false };
 }
 
@@ -1172,6 +1162,8 @@ function App() {
   const [appView, setAppView] = useState("home");
   const [authMode, setAuthMode] = useState("login");
   const [activePage, setActivePage] = useState("dashboard");
+  const activePageRef = useRef(activePage);
+  activePageRef.current = activePage;
   const [leadManagementOpen, setLeadManagementOpen] = useState(false);
   const [employeeManagementOpen, setEmployeeManagementOpen] = useState(false);
   const [crmManagementOpen, setCrmManagementOpen] = useState(false);
@@ -1212,7 +1204,10 @@ function App() {
   const [openSectionIds, setOpenSectionIds] = useState([]);
   const [focusedLessonId, setFocusedLessonId] = useState("");
   const [crmUploadRows, setCrmUploadRows] = useState([]);
+  const [crmCallListCount, setCrmCallListCount] = useState(null);
   const [crmCallListsReadyFor, setCrmCallListsReadyFor] = useState("");
+  const crmCallListsReadyRef = useRef("");
+  useEffect(() => { crmCallListsReadyRef.current = crmCallListsReadyFor; }, [crmCallListsReadyFor]);
   const [crmLeadsReadyFor, setCrmLeadsReadyFor] = useState("");
 
   const [settingsForm, setSettingsForm] = useState({ name: "", email: "", phone: "", emergencyContact: "", maritalStatus: "", education: "", dept: "", position: "", role: "", joined: "", state: "", branch: "", branchCode: "", address: "", username: "", imageUrl: "", imagePublicId: "" });
@@ -1300,7 +1295,7 @@ function App() {
       requireMonitorRows(fetchLeavesForMonitor(), "Leave requests"),
       requireMonitorRows(fetchProjects(), "IT projects"),
       requireMonitorRows(fetchEmployeesForMonitor(), "Employee records"),
-      requireMonitorRows(fetchCallListDataForMonitor(""), "CRM call lists"),
+      requireMonitorRows(fetchCallListCount().then((counts) => [counts]), "CRM call counts"),
       requireMonitorRows(fetchEnrollmentRequestsForMonitor(true), "Enrollment requests"),
       requireMonitorRows(fetchTaskSubmissionsForMonitor(), "Student submissions"),
       requireMonitorRows(fetchCoursesForMonitor(true), "Courses"),
@@ -1313,7 +1308,7 @@ function App() {
       setLeaves,
       setMonitorProjects,
       setMonitorEmployees,
-      (rows) => setCrmUploadRows(mergeCallListRows(rows)),
+      (rows) => setCrmCallListCount(rows[0]),
       setAllEnrollmentRequests,
       setTaskSubmissions,
       setMonitorCourses,
@@ -1386,25 +1381,47 @@ function App() {
   useEffect(() => {
     try { window.localStorage.removeItem("admin-crm-upload-rows"); }
     catch { /* Ignore unavailable browser storage. */ }
+    safeStorageRemove(LEADS_STORAGE_KEY);
+    safeStorageRemove(USERS_STORAGE_KEY);
+    safeStorageRemove(CRM_EXEC_LEADS_STORAGE_KEY);
   }, []);
 
   useEffect(() => {
     if (!currentUser || !(isLeadAssignmentUser(currentUser) || isCrmExecutive(currentUser.role))) return;
     let cancelled = false;
+    let countTimer;
+    const admin = isAdminUser(currentUser);
+    const refreshCount = () => {
+      if (!admin) return;
+      fetchCallListCount().then((counts) => { if (!cancelled) setCrmCallListCount(counts); }).catch(() => {});
+    };
     const userKey = String(currentUser.id || currentUser._id || "");
     if (crmCallListsReadyFor !== userKey) setCrmUploadRows([]);
-    const refreshCallLists = () => loadCallListData("", true).then((records) => {
+    const refreshCallLists = (force = false) => loadCallListData("", force).then((records) => {
       if (!cancelled && Array.isArray(records)) {
         setCrmUploadRows(mergeCallListRows(records));
-
+        setCrmCallListsReadyFor(userKey);
       }
-    }).catch(() => { /* Keep the last snapshot if a later refresh fails. */ })
-      .finally(() => { if (!cancelled) setCrmCallListsReadyFor(userKey); });
+    }).catch((error) => {
+      if (!cancelled && !admin) {
+        setToast(error.message || "Could not load your call list.");
+        setCrmCallListsReadyFor(userKey);
+      }
+    });
     let streamConnected = false;
     const unsubscribe = subscribeCallListChanges(({ record, deleted }) => {
       if (cancelled) return;
+      if (admin) {
+        const structural = deleted || Number(record.revision) === 0;
+        if (structural) {
+          window.clearTimeout(countTimer);
+          countTimer = window.setTimeout(refreshCount, 800);
+        }
+        window.dispatchEvent(new CustomEvent("crm:call-list-changed", { detail: { record, deleted, structural } }));
+      }
+      applyCallListChangeToCache(record, deleted);
       if (!deleted && isAdminUser(currentUser) && record.callLeadStatus === "Approved") {
-        loadLeads(true).then((remoteLeads) => {
+        loadLeads(false).then((remoteLeads) => {
           if (!cancelled && Array.isArray(remoteLeads)) setLeads(remoteLeads.map(normalizeLeadForUi));
         }).catch(() => {});
       }
@@ -1414,18 +1431,34 @@ function App() {
         // Live activity updates replace a row in place. They must not push a
         // lead to the top or bottom of the CRM executive's working list.
         if (recordIndex >= 0) return current.map((row, index) => index === recordIndex ? record : row);
+        if (admin && crmCallListsReadyRef.current !== userKey) return current;
         return [...current, record];
       });
     }, () => {
-      if (streamConnected) refreshCallLists();
+      if (streamConnected && (!admin || CALL_LIST_DATA_PAGES.has(activePageRef.current))) refreshCallLists();
       streamConnected = true;
     });
-    refreshCallLists();
+    if (!admin) refreshCallLists(false);
+    if (admin) refreshCount();
     return () => {
       cancelled = true;
+      window.clearTimeout(countTimer);
       unsubscribe();
     };
   }, [currentUser]);
+
+  useEffect(() => {
+    if (!currentUser || !isAdminUser(currentUser) || !CALL_LIST_DATA_PAGES.has(activePage)) return;
+    let active = true;
+    const userKey = String(currentUser.id || currentUser._id || "");
+    loadCallListData("", false).then((records) => {
+      if (active && Array.isArray(records)) {
+        setCrmUploadRows(mergeCallListRows(records));
+        setCrmCallListsReadyFor(userKey);
+      }
+    }).catch(() => {});
+    return () => { active = false; };
+  }, [currentUser, activePage]);
 
   useEffect(() => {
     if (!currentUser || !isCrmExecutive(currentUser.role)) return;
@@ -1504,7 +1537,7 @@ function App() {
         }
         const [remoteUsers, remoteLeads, remoteServices, remoteCourses, remoteStip, remoteInterns, remoteTasks, remoteAttendance, remoteLeaves] = await Promise.all([
           loadUsers(),
-          loadLeads(true),
+          loadLeads(false),
           loadServices(),
           loadCourses(),
           loadStipPrograms(),
@@ -1557,7 +1590,7 @@ function App() {
   }, [activePage, currentUser]);
 
   useEffect(() => {
-    if (activePage !== "dashboard" || !isAdminUser(currentUser)) return;
+    if (!["dashboard", "hr-attendance"].includes(activePage) || !isAdminUser(currentUser)) return;
     refreshDashboardMonitor();
   }, [activePage, currentUser]);
 
@@ -1821,7 +1854,7 @@ function App() {
     if (crmUser) {
       leadsCacheHydrated.current = false;
       setLeads([]);
-      loadLeads().then((remoteLeads) => {
+      loadLeads(false).then((remoteLeads) => {
         setLeads(Array.isArray(remoteLeads) ? remoteLeads.map(normalizeLeadForUi) : []);
         if (Array.isArray(remoteLeads)) {
           leadsCacheHydrated.current = true;
@@ -1845,26 +1878,6 @@ function App() {
       setLeadsLoadedFromBackend(true);
     });
   }, [currentUser, crmLeadsReadyFor]);
-
-  useEffect(() => {
-    const sanitizedUsers = sanitizeImageCollection(users);
-    if (!safeStorageSet(USERS_STORAGE_KEY, JSON.stringify(sanitizedUsers))) {
-      notify("Browser storage is full. Continuing without caching large local data.");
-    }
-  }, [users]);
-
-  useEffect(() => {
-    if (!leadsCacheHydrated.current || !leadCacheUserKey.current) return;
-    const sanitizedLeads = sanitizeImageCollection(leads);
-    const cache = {
-      version: LEADS_CACHE_VERSION,
-      userKey: leadCacheUserKey.current,
-      items: sanitizedLeads,
-    };
-    if (!safeStorageSet(LEADS_STORAGE_KEY, JSON.stringify(cache))) {
-      notify("Browser storage is full. Lead changes are still kept in memory.");
-    }
-  }, [leads]);
 
   useEffect(() => {
     const sanitizedServices = sanitizeImageCollection(serviceRows);
@@ -2090,6 +2103,17 @@ function App() {
     }
   }
 
+  async function correctAutoAttendance(record) {
+    if (!window.confirm(`Correct ${record.employeeName || "this employee"}'s automatic absence to Present?`)) return;
+    try {
+      const updated = await correctAttendance(record.id, { status: "Present" });
+      setAttendance((current) => current.map((item) => item.id === updated.id ? updated : item));
+      notify(`${record.employeeName || "Employee"}'s attendance was corrected to Present.`);
+    } catch (error) {
+      notify(error.message || "Could not correct attendance.");
+    }
+  }
+
   const navigateToSidebarItem = (item) => {
     if (activePage === "course-add" && item.id !== "course-add") closeTrainingModal();
     setActivePage(item.id);
@@ -2247,6 +2271,9 @@ function App() {
       remark: status?.remark || "",
     };
   }).sort((left, right) => String(right.date).localeCompare(String(left.date)));
+  const autoAttendanceRows = attendance
+    .filter((record) => record.autoMarked)
+    .sort((left, right) => String(right.date).localeCompare(String(left.date)));
   const dashboardOpenTasks = tasks.filter((task) => !["done", "completed", "cancelled"].includes(String(task.status || "").trim().toLowerCase()));
   const leadAssignableUsers = activeUsers.filter(isLeadAssignmentUser);
   const enteredBy = currentUser
@@ -2325,7 +2352,7 @@ function App() {
 
     adminAllLeadsLoadedForUser.current = pageKey;
     let active = true;
-    loadLeads(true).then((remoteLeads) => {
+    loadLeads(false).then((remoteLeads) => {
       if (!active || !Array.isArray(remoteLeads)) return;
       setLeads(remoteLeads.map(normalizeLeadForUi));
       leadsCacheHydrated.current = true;
@@ -2397,7 +2424,7 @@ function App() {
       title: "CRM Executive",
       metrics: [
         ["Active team", monitorUsersFor("crm").length],
-        ["Call-list contacts", crmUploadRows.length],
+        ["Call-list contacts", crmCallListCount?.total ?? crmUploadRows.length],
         ["Leads", leads.length],
         ["Follow-ups", followUps.length],
       ],
@@ -4072,7 +4099,7 @@ function App() {
   }
 
   async function saveCallContact(contact, patch) {
-    const saved = await saveCallListData(contact.listType, contact.id, patch, contact.assignedTo);
+    const saved = await saveCallListData(contact.listType, contact.id, patch, contact.assignedTo, contact.updatedAt, contact.revision ?? 0);
     setCrmUploadRows((current) => current.map((row) => row.id === saved.id && row.listType === saved.listType ? saved : row));
     return saved;
   }
@@ -5238,6 +5265,15 @@ function App() {
 
           {activePage === "crm-upload" && (
             <CrmUploadDataPage rows={crmUploadRows} setRows={setCrmUploadRows} users={users} currentUser={currentUser} isAdmin={isAdminUser(currentUser)}
+              allRowsLoaded={crmCallListsReadyFor === String(currentUser?.id || currentUser?._id || "")}
+              callListCounts={crmCallListCount}
+              onLoadAll={() => loadCallListData("", false).then((records) => {
+                if (Array.isArray(records)) {
+                  setCrmUploadRows(mergeCallListRows(records));
+                  setCrmCallListsReadyFor(String(currentUser?.id || currentUser?._id || ""));
+                }
+                return records;
+              })}
               onCallLeadEdit={addLeadFromCall} onSaveCall={saveCallContact} onApproveCall={approveSavedCallLead} onDeleteCall={deleteCallContact} />
           )}
 
@@ -5898,35 +5934,7 @@ function App() {
 
           {activePage === "hr-attendance" && (
             <Panel title="Attendance report">
-              {hrDashboardDataStatus === "missing" ? <p className="admin-employee-loading">Open the HR Dashboard once to initialize its attendance data.</p> : <>
-              <div className="table-wrap">
-                <table className="table">
-                <thead>
-                  <tr>
-                    <th>Employee</th>
-                    <th>Date</th>
-                    <th>Status</th>
-                    <th>Check In</th>
-                    <th>Check Out</th>
-                    <th>Remark</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {hrAttendanceRows.length === 0 && <tr><td colSpan="6" className="empty-cell">No attendance records yet.</td></tr>}
-                  {hrAttendanceRows.map((record) => (
-                    <tr key={record.id}>
-                      <td><strong>{record.employeeName || "CRM Executive"}</strong></td>
-                      <td>{formatDateDDMMYYYY(record.date)}</td>
-                      <td><span className={badgeClass(record.status)}>{record.status}</span></td>
-                      <td>{record.checkIn || "-"}</td>
-                      <td>{record.checkOut || "-"}</td>
-                      <td>{record.remark || "-"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              </div>
-              </>}
+              <AttendanceAdminPanel employees={employeeUsers} />
             </Panel>
           )}
 
@@ -7385,14 +7393,29 @@ function Panel({ title, children }) {
   );
 }
 
-function CrmUploadDataPage({ rows, setRows, users, currentUser, isAdmin, onCallLeadEdit, onSaveCall, onApproveCall, onDeleteCall }) {
+function CrmUploadDataPage({ rows, setRows, users, currentUser, isAdmin, allRowsLoaded, callListCounts, onLoadAll, onCallLeadEdit, onSaveCall, onApproveCall, onDeleteCall }) {
   const [selectedFile, setSelectedFile] = useState(null);
+  const [saveStatuses, setSaveStatuses] = useState({});
+  useEffect(() => {
+    const handleStatus = (event) => setSaveStatuses((current) => ({ ...current, [`${event.detail.type}:${event.detail.id}`]: event.detail.status }));
+    window.addEventListener("crm:call-save-status", handleStatus);
+    return () => window.removeEventListener("crm:call-save-status", handleStatus);
+  }, []);
+  const uploadAttempt = useRef({ key: "", id: "" });
   const [selectedEmployee, setSelectedEmployee] = useState("");
   const [listType, setListType] = useState("services");
   const [uploading, setUploading] = useState(false);
+  const [uploadStage, setUploadStage] = useState("");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const [page, setPage] = useState(1);
+  const [pageItems, setPageItems] = useState([]);
+  const [pageHasMore, setPageHasMore] = useState(false);
+  const [pageLoading, setPageLoading] = useState(true);
+  const [pageCursors, setPageCursors] = useState({ key: "", 1: "" });
+  const [pageRefresh, setPageRefresh] = useState(0);
+  const leadPanelRef = useRef(null);
+  const [leadPanelVisible, setLeadPanelVisible] = useState(false);
   const [employeeFilter, setEmployeeFilter] = useState("All");
   const [listTypeFilter, setListTypeFilter] = useState("All");
   const [searchDraft, setSearchDraft] = useState("");
@@ -7401,16 +7424,86 @@ function CrmUploadDataPage({ rows, setRows, users, currentUser, isAdmin, onCallL
   const [programFilter, setProgramFilter] = useState("All");
   const [interestFilter, setInterestFilter] = useState("All");
   const [uploadError, setUploadError] = useState("");
+  const [uploadIssues, setUploadIssues] = useState([]);
   const [uploadSuccess, setUploadSuccess] = useState("");
   const [selectedIds, setSelectedIds] = useState([]);
   const [formatOpen, setFormatOpen] = useState(false);
-  const assignableUsers = users.filter((user) => {
+  const useServerPage = isAdmin && !allRowsLoaded;
+  const pageFilterKey = JSON.stringify([listTypeFilter, employeeFilter, searchQuery, programFilter,
+    callStatusFilter, interestFilter, fromDate, toDate]);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setSearchQuery(searchDraft.trim()), 350);
+    return () => window.clearTimeout(timer);
+  }, [searchDraft]);
+  useEffect(() => {
+    if (!useServerPage) { setPageLoading(false); return; }
+    if (page > 1 && pageCursors.key !== pageFilterKey) return;
+    let active = true;
+    setPageLoading(true);
+    setPageItems([]);
+    setPageHasMore(false);
+    fetchCallListPage({
+      type: listTypeFilter === "All" ? "" : listTypeFilter,
+      assignedTo: employeeFilter === "All" ? "" : employeeFilter,
+      search: searchQuery, program: programFilter, callStatus: callStatusFilter,
+      interest: interestFilter, fromDate, toDate,
+      cursor: pageCursors.key === pageFilterKey ? (pageCursors[page] || "") : "", limit: 25,
+    }).then((result) => {
+      if (!active) return;
+      setPageItems(result.items || []);
+      setPageHasMore(Boolean(result.hasMore));
+      if (result.nextCursor) setPageCursors((current) => ({ ...(current.key === pageFilterKey ? current : { 1: "" }), key: pageFilterKey, [page + 1]: result.nextCursor }));
+      setUploadError("");
+    }).catch((error) => { if (active) setUploadError(error.message || "Unable to load call records."); })
+      .finally(() => { if (active) setPageLoading(false); });
+    return () => { active = false; };
+  }, [useServerPage, page, pageFilterKey, pageRefresh]);
+  useEffect(() => {
+    if (!useServerPage || !rows.length) return;
+    const latest = new Map(rows.map((row) => [`${row.listType}:${row.id}`, row]));
+    setPageItems((current) => current.map((row) => latest.get(`${row.listType}:${row.id}`) || row));
+  }, [rows, useServerPage]);
+  useEffect(() => {
+    if (!useServerPage) return;
+    let timer;
+    const onChange = (event) => {
+      const { record, structural } = event.detail || {};
+      const filteredView = pageFilterKey !== JSON.stringify(["All", "All", "", "All", "All", "All", "", ""]);
+      if (!structural && !filteredView && record) {
+        setPageItems((current) => current.map((row) => row.id === record.id && row.listType === record.listType ? record : row));
+        return;
+      }
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => setPageRefresh((current) => current + 1), 800);
+    };
+    window.addEventListener("crm:call-list-changed", onChange);
+    return () => { window.removeEventListener("crm:call-list-changed", onChange); window.clearTimeout(timer); };
+  }, [useServerPage, pageFilterKey]);
+  useEffect(() => {
+    if (allRowsLoaded || !leadPanelRef.current || !onLoadAll) return;
+    if (typeof IntersectionObserver === "undefined") {
+      setLeadPanelVisible(true);
+      onLoadAll().catch((error) => setUploadError(error.message || "Unable to load call leads."));
+      return;
+    }
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting) {
+        setLeadPanelVisible(true);
+        observer.disconnect();
+        onLoadAll().catch((error) => setUploadError(error.message || "Unable to load call leads."));
+      }
+    }, { rootMargin: "200px" });
+    observer.observe(leadPanelRef.current);
+    return () => observer.disconnect();
+  }, [allRowsLoaded]);
+  const crmUsers = users.filter((user) => {
     const role = String(user?.role || "").trim().toLowerCase();
     const department = String(user?.dept || user?.department || "").trim().toLowerCase();
     const position = String(user?.position || "").trim().toLowerCase();
-    const status = String(user?.status || "Active").trim().toLowerCase();
-    return status === "active" && (role === "admin" || role.includes("crm") || department.includes("crm") || position.includes("crm"));
+    return !role.includes("admin") && (role.includes("crm") || department.includes("crm") || position.includes("crm"));
   });
+  const assignableUsers = crmUsers.filter((user) => String(user?.status || "Active").trim().toLowerCase() === "active");
+  const inactiveCrmUsers = crmUsers.filter((user) => String(user?.status || "Active").trim().toLowerCase() !== "active");
 
   const normalizeHeader = (value) => String(value || "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
 
@@ -7418,14 +7511,17 @@ function CrmUploadDataPage({ rows, setRows, users, currentUser, isAdmin, onCallL
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file) return;
+    uploadAttempt.current = { key: "", id: "" };
     setSelectedFile(file);
     setUploadError("");
+    setUploadIssues([]);
     setUploadSuccess("");
   };
 
   const handleUpload = async () => {
     setUploadSuccess("");
     setUploadError("");
+    setUploadIssues([]);
     if (!selectedEmployee) {
       setUploadError("Please select an employee.");
       return;
@@ -7436,58 +7532,67 @@ function CrmUploadDataPage({ rows, setRows, users, currentUser, isAdmin, onCallL
     }
     try {
       setUploading(true);
+      setUploadStage("Reading file…");
       const workbook = XLSX.read(await selectedFile.arrayBuffer(), { type: "array" });
       const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
       const sourceRows = XLSX.utils.sheet_to_json(firstSheet, { defval: "" });
       if (!sourceRows.length) throw new Error("The selected file does not contain any rows.");
 
       const headers = Object.keys(sourceRows[0]);
+      const dateHeader = headers.find((header) => normalizeHeader(header) === "date");
       const nameHeader = headers.find((header) => normalizeHeader(header) === "name");
       const numberHeader = headers.find((header) => ["number", "contact", "phone", "mobile", "phonenumber"].includes(normalizeHeader(header)));
       if (!nameHeader || !numberHeader) throw new Error("The Excel file must contain name and number fields.");
 
-      const importedRows = sourceRows
-        .map((row) => ({
-          name: String(row[nameHeader] || "").trim(),
-          contact: String(row[numberHeader] || "").trim(),
-        }))
-        .filter((row) => {
-          const digits = row.contact.replace(/\D/g, "");
-          const normalized = digits.length === 12 && digits.startsWith("91") ? digits.slice(2) : digits;
-          return row.name && /^[6-9]\d{9}$/.test(normalized);
-        });
-
-      if (!importedRows.length) throw new Error("No usable name and number rows were found.");
+      const prepared = validateCallImportRows(sourceRows.map((row, index) => ({
+        ...(dateHeader ? { date: row[dateHeader] } : {}),
+        name: row[nameHeader], contact: row[numberHeader],
+        excelRow: Number.isInteger(row.__rowNum__) ? row.__rowNum__ + 1 : index + 2,
+      })).filter((row) => String(row.name ?? "").trim() || String(row.contact ?? "").trim()
+        || (dateHeader && String(row.date ?? "").trim())));
+      if (prepared.issues.length) {
+        setUploadIssues(prepared.issues);
+        setUploadError(`Fix ${prepared.issues.length} Excel issue${prepared.issues.length === 1 ? "" : "s"} below, then choose the corrected file. No contacts were saved.`);
+        return;
+      }
+      const importedRows = prepared.rows;
+      setUploadStage(`Uploading ${importedRows.length} row(s)…`);
       const employee = users.find((user) => String(user.id || user._id) === String(selectedEmployee));
-      const result = await uploadCallListData({ listType, assignedTo: selectedEmployee, assignedToName: employee?.name || employee?.username || "", rows: importedRows });
+      const attemptKey = `${selectedFile.name}:${selectedFile.size}:${selectedFile.lastModified}:${selectedEmployee}:${listType}`;
+      if (uploadAttempt.current.key !== attemptKey) uploadAttempt.current = { key: attemptKey, id: globalThis.crypto?.randomUUID?.() || `batch_${Date.now()}_${Math.random().toString(36).slice(2)}` };
+      const result = await uploadCallListData({ listType, assignedTo: selectedEmployee, assignedToName: employee?.name || employee?.username || "", rows: importedRows, uploadBatchId: uploadAttempt.current.id });
       setRows((currentRows) => mergeCallListRows(result.rows, currentRows));
+      setPageRefresh((current) => current + 1);
       const created = result.created ?? result.rows.length;
-      const duplicateMessage = result.duplicates?.length
-        ? ` Skipped ${result.duplicates.length} duplicate contact(s).`
-        : "";
-      setUploadSuccess((created > 0
+      setUploadSuccess((result.alreadyProcessed ? "This upload was already processed." : created > 0
         ? `Data uploaded successfully. ${created} contact(s) uploaded.`
-        : "No new contacts uploaded.") + duplicateMessage);
+        : "No new contacts uploaded."));
       setSelectedFile(null);
       setSelectedEmployee("");
       setUploadError("");
     } catch (error) {
-      setUploadError(error.message || "Unable to read this Excel file.");
-    } finally { setUploading(false); }
+      const canResume = uploadAttempt.current.id && (!error.status || error.status >= 500);
+      setUploadError(`${error.message || "Unable to read this Excel file."}${canResume ? " Upload may be incomplete. Click Upload list again with the same file to finish it." : ""}`);
+      setUploadIssues(Array.isArray(error.issues) ? error.issues : []);
+    } finally { setUploading(false); setUploadStage(""); }
   };
 
-  const filteredRows = rows.filter((row) => matchesCallListFilters(row, {
+  const applyFilters = (sourceRows) => sourceRows.filter((row) => matchesCallListFilters(row, {
     search: searchQuery, program: programFilter, callStatus: callStatusFilter,
     interest: interestFilter, employee: employeeFilter, listType: listTypeFilter,
   })).filter((row) => {
-    const date = String(row.createdAt || row.date || "").slice(0, 10);
+    const date = normalizeCallListDate(row.date) || String(row.createdAt || "").slice(0, 10);
     return (!fromDate || date >= fromDate) && (!toDate || date <= toDate);
   });
-  const pageSize = 15;
-  const totalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize));
-  const visibleRows = filteredRows.slice((page - 1) * pageSize, page * pageSize);
-  useEffect(() => { setPage(1); }, [searchQuery, programFilter, callStatusFilter, interestFilter, employeeFilter, listTypeFilter, fromDate, toDate]);
-  useEffect(() => { setPage((current) => Math.min(current, totalPages)); }, [totalPages]);
+  const filteredRows = applyFilters(rows);
+  const totalCallCount = callListCounts?.total;
+  const serviceCallCount = allRowsLoaded ? rows.filter((row) => row.listType === "services").length : callListCounts?.services;
+  const trainingCallCount = allRowsLoaded ? rows.filter((row) => row.listType === "training").length : callListCounts?.training;
+  const pageSize = 25;
+  const totalPages = useServerPage ? page + Number(pageHasMore) : Math.max(1, Math.ceil(filteredRows.length / pageSize));
+  const visibleRows = useServerPage ? pageItems : !allRowsLoaded ? [] : filteredRows.slice((page - 1) * pageSize, page * pageSize);
+  useEffect(() => { setPage(1); setPageCursors({ key: pageFilterKey, 1: "" }); }, [pageFilterKey]);
+  useEffect(() => { if (!useServerPage) setPage((current) => Math.min(current, totalPages)); }, [totalPages, useServerPage]);
   const showListType = listTypeFilter === "All";
   const directoryTitle = listTypeFilter === "services"
     ? "Daily Service Contacts / Call List"
@@ -7497,25 +7602,29 @@ function CrmUploadDataPage({ rows, setRows, users, currentUser, isAdmin, onCallL
   const allVisibleSelected = visibleRows.length > 0 && visibleRows.every((row) => selectedIds.includes(row.id));
   const serialByRow = new Map();
   const serialCounts = new Map();
-  filteredRows.forEach((row) => {
+  visibleRows.forEach((row, index) => {
     const listKey = listTypeFilter === "All" ? "all" : (row.listType || "list");
-    const serial = (serialCounts.get(listKey) || 0) + 1;
+    const serial = useServerPage ? (page - 1) * pageSize + index + 1 : (serialCounts.get(listKey) || 0) + 1 + (page - 1) * pageSize;
     serialCounts.set(listKey, serial);
     serialByRow.set(row, serial);
   });
 
   const updateRow = (id, patch) => {
-    const currentRow = rows.find((item) => item.id === id);
-    if (!currentRow || Object.entries(patch).every(([key, value]) => String(currentRow[key] ?? "") === String(value ?? ""))) return;
-    if (["Follow Up", "Completed"].includes(patch.callStatus) && !callLeadProgram(currentRow)) {
+    const currentRow = visibleRows.find((item) => item.id === id) || rows.find((item) => item.id === id);
+    const repeatableAction = patch.callClicked === true || patch.whatsappClicked === true;
+    const committedRemark = Object.prototype.hasOwnProperty.call(patch, "remark");
+    if (!currentRow || (!repeatableAction && !committedRemark && Object.entries(patch).every(([key, value]) => String(currentRow[key] ?? "") === String(value ?? "")))) return;
+    if (["Follow Up", "Completed"].includes(patch.callStatus) && !callLeadProgram({ ...currentRow, ...patch })) {
       setUploadError(`Please select a ${currentRow?.listType === "training" ? "program" : "service"} before marking this contact ${patch.callStatus}.`);
       return;
     }
     setRows((currentRows) => currentRows.map((row) => (row.id === id ? { ...row, ...patch } : row)));
+    if (useServerPage) setPageItems((currentRows) => currentRows.map((row) => row.id === id ? { ...row, ...patch } : row));
     const row = currentRow;
-    if (row?.listType) Promise.resolve(onSaveCall ? onSaveCall(row, patch) : saveCallListData(row.listType, id, patch, row.assignedTo))
+    if (row?.listType) Promise.resolve(onSaveCall ? onSaveCall(row, patch) : saveCallListData(row.listType, id, patch, row.assignedTo, row.updatedAt, row.revision ?? 0))
       .then((saved) => {
         setRows((currentRows) => currentRows.map((item) => item.id === saved.id ? saved : item));
+        if (useServerPage) setPageItems((currentRows) => currentRows.map((item) => item.id === saved.id ? saved : item));
 
       })
       .catch((error) => setUploadError(error.message));
@@ -7523,6 +7632,7 @@ function CrmUploadDataPage({ rows, setRows, users, currentUser, isAdmin, onCallL
 
   const stageRow = (id, patch) => {
     setRows((currentRows) => currentRows.map((row) => (row.id === id ? { ...row, ...patch } : row)));
+    if (useServerPage) setPageItems((currentRows) => currentRows.map((row) => row.id === id ? { ...row, ...patch } : row));
   };
 
   const editRow = (row) => {
@@ -7537,6 +7647,7 @@ function CrmUploadDataPage({ rows, setRows, users, currentUser, isAdmin, onCallL
     if (!window.confirm(`Delete ${row.name || "this contact"}?`)) return;
     try { if (row.listType) await removeCallListData(row.listType, row.id, row.assignedTo); } catch (error) { setUploadError(error.message); return; }
     setRows((currentRows) => currentRows.filter((item) => item.id !== row.id));
+    if (useServerPage) { setPageItems((currentRows) => currentRows.filter((item) => item.id !== row.id)); setPageRefresh((current) => current + 1); }
     setSelectedIds((currentIds) => currentIds.filter((id) => id !== row.id));
   };
 
@@ -7555,20 +7666,29 @@ function CrmUploadDataPage({ rows, setRows, users, currentUser, isAdmin, onCallL
     if (!selectedIds.length) return;
     if (!window.confirm(`Delete ${selectedIds.length} selected record${selectedIds.length === 1 ? "" : "s"}?`)) return;
     try {
-      await Promise.all(rows.filter((row) => selectedIds.includes(row.id) && row.listType).map((row) => removeCallListData(row.listType, row.id, row.assignedTo)));
+      await Promise.all(visibleRows.filter((row) => selectedIds.includes(row.id) && row.listType).map((row) => removeCallListData(row.listType, row.id, row.assignedTo)));
       setRows((currentRows) => currentRows.filter((row) => !selectedIds.includes(row.id)));
+      if (useServerPage) { setPageItems((currentRows) => currentRows.filter((row) => !selectedIds.includes(row.id))); setPageRefresh((current) => current + 1); }
       setSelectedIds([]);
     } catch (error) { setUploadError(error.message || "Could not delete selected records."); }
   };
 
-  const exportCallListPdf = () => {
+  const exportCallListPdf = async () => {
+    let exportRows = filteredRows;
+    if (!allRowsLoaded) {
+      try {
+        const completeRows = await onLoadAll();
+        if (!Array.isArray(completeRows)) throw new Error("Unable to load all records for export.");
+        exportRows = applyFilters(completeRows);
+      } catch (error) { setUploadError(error.message || "Unable to export call list."); return; }
+    }
     const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
     pdf.setFontSize(16); pdf.text(directoryTitle, 14, 14);
-    pdf.setFontSize(9); pdf.setTextColor(100); pdf.text(`${filteredRows.length} filtered contact(s)`, 14, 20);
+    pdf.setFontSize(9); pdf.setTextColor(100); pdf.text(`${exportRows.length} filtered contact(s)`, 14, 20);
     autoTable(pdf, {
       startY: 25,
       head: [["S. No.", "Date", "Name", "Contact", "Call Status", "Interest", "Service / Program", "Remark", "Assigned To"]],
-      body: filteredRows.map((row, index) => [index + 1, formatAdminDate(row.createdAt || row.date), row.name || "-", row.contact || row.number || "-", normalizeCallStatus(row.callStatus) || "Choose", normalizeInterestStatus(row.interestStatus), normalizeCallProgram(row.program) || "-", row.remark || "-", row.assignedToName || users.find((user) => String(user.id || user._id) === String(row.assignedTo))?.name || "Unassigned"]),
+      body: exportRows.map((row, index) => [index + 1, formatAdminDate(normalizeCallListDate(row.date) || row.createdAt), row.name || "-", row.contact || row.number || "-", normalizeCallStatus(row.callStatus) || "Choose", normalizeInterestStatus(row.interestStatus), normalizeCallProgram(row.program) || "-", row.remark || "-", row.assignedToName || users.find((user) => String(user.id || user._id) === String(row.assignedTo))?.name || "Unassigned"]),
       styles: { fontSize: 7, cellPadding: 2, overflow: "linebreak" }, headStyles: { fillColor: [127, 78, 43] },
     });
     pdf.save(`call-list-${new Date().toISOString().slice(0, 10)}.pdf`);
@@ -7584,17 +7704,18 @@ function CrmUploadDataPage({ rows, setRows, users, currentUser, isAdmin, onCallL
         <div className="crm-upload-form">
           <label className="field">
             <span>List type</span>
-            <select value={listType} onChange={(event) => setListType(event.target.value)}>
+            <SalesDropdown aria-label="List type" value={listType} onChange={(event) => setListType(event.target.value)}>
               <option value="services">Service</option>
               <option value="training">Training</option>
-            </select>
+            </SalesDropdown>
           </label>
           <label className="field">
             <span>Assign to employee</span>
-            <select value={selectedEmployee} onChange={(event) => setSelectedEmployee(event.target.value)}>
+            <SalesDropdown searchable aria-label="Assign to employee" value={selectedEmployee} onChange={(event) => setSelectedEmployee(event.target.value)}>
               <option value="">Select Employee</option>
               {assignableUsers.map((user) => <option key={user.id || user._id} value={user.id || user._id}>{user.name || user.username}</option>)}
-            </select>
+              {inactiveCrmUsers.map((user) => <option key={user.id || user._id} value={user.id || user._id} disabled>{user.name || user.username} (Inactive)</option>)}
+            </SalesDropdown>
           </label>
           <label className="field">
             <span>Excel or CSV file</span>
@@ -7603,7 +7724,14 @@ function CrmUploadDataPage({ rows, setRows, users, currentUser, isAdmin, onCallL
           <button type="button" className="primary-button crm-upload-button" onClick={handleUpload} disabled={uploading}>
             <Upload size={17} /> {uploading ? "Uploading…" : "Upload list"}
           </button>
+          {uploadStage && <p role="status" aria-live="polite">{uploadStage}</p>}
           {uploadError && <p className="field-error crm-upload-error">{uploadError}</p>}
+          {uploadIssues.length > 0 && <div className="crm-upload-issues" role="alert" aria-label="Excel rows to fix">
+            <strong>Rows to fix in Excel</strong>
+            <ol>{uploadIssues.map((issue, index) => <li key={`${issue.row}-${issue.field}-${index}`}>
+              {issue.row ? `Row ${issue.row}, ${issue.field}: ` : `${issue.field}: `}{issue.message}
+            </li>)}</ol>
+          </div>}
           {uploadSuccess && <p className="crm-upload-success" role="status">{uploadSuccess}</p>}
         </div>
       </section>
@@ -7612,15 +7740,15 @@ function CrmUploadDataPage({ rows, setRows, users, currentUser, isAdmin, onCallL
         <div className="crm-format-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setFormatOpen(false); }}>
           <div className="crm-format-card" role="dialog" aria-modal="true" aria-labelledby="crm-format-title">
             <div className="crm-format-head">
-              <div><span className="crm-upload-eyebrow">EXCEL / CSV FORMAT</span><h3 id="crm-format-title">Use only two columns</h3></div>
+              <div><span className="crm-upload-eyebrow">EXCEL / CSV FORMAT</span><h3 id="crm-format-title">Date, Name and Number</h3></div>
               <button type="button" className="icon-button" aria-label="Close file format" onClick={() => setFormatOpen(false)}><X size={18} /></button>
             </div>
-            <p>Your first row must contain these exact headings. Every contact row needs both values.</p>
+            <p>Use Date, Name and Number as headings. Enter a date for each contact as DD-MM-YYYY. Files with only Name and Number still use the upload day. Every row is checked before upload; fix any listed row and select the corrected file again.</p>
             <div className="crm-format-sheet" aria-label="File format example">
-              <strong>Name</strong><strong>Number</strong>
-              <span>Rohit Malhotra</span><span>9820011223</span>
+              <strong>Date</strong><strong>Name</strong><strong>Number</strong>
+              <span>01-08-2026</span><span>Rohit Malhotra</span><span>9820011223</span>
             </div>
-            <p className="crm-format-note">Date, call status, interest, source and all other fields are added automatically with default values.</p>
+            <p className="crm-format-note">Call status, interest, source and all other fields are added automatically with default values.</p>
           </div>
         </div>
       )}
@@ -7632,18 +7760,18 @@ function CrmUploadDataPage({ rows, setRows, users, currentUser, isAdmin, onCallL
             <p>{showListType ? "Service and training contacts" : listTypeFilter === "services" ? "Daily contacts for services" : "Daily contacts for training programs"}</p>
           </div>
           <div className="crm-directory-head-actions">
-            <button type="button" className="primary-button" onClick={exportCallListPdf} disabled={!filteredRows.length}><FileText size={15} /> Export PDF ({filteredRows.length})</button>
+            <button type="button" className="primary-button" onClick={exportCallListPdf} disabled={pageLoading || (!visibleRows.length && !allRowsLoaded)}><FileText size={15} /> Export PDF {allRowsLoaded ? `(${filteredRows.length})` : ""}</button>
             {selectedIds.length > 0 && <button type="button" className="crm-upload-delete-selected" onClick={deleteSelected}><Trash2 size={15} /> Delete Selected ({selectedIds.length})</button>}
           </div>
         </div>
         <div className="crm-list-type-switch" aria-label="Choose call list">
           <button type="button" className={listTypeFilter === "services" ? "active" : ""} onClick={() => { setListTypeFilter((current) => current === "services" ? "All" : "services"); setProgramFilter("All"); }}>
             <span className="crm-list-type-icon"><PhoneCall size={19} /></span>
-            <span><strong>Service Call List</strong><small>{rows.filter((row) => row.listType === "services").length} contacts</small></span>
+            <span><strong>Service Call List</strong><small>{serviceCallCount ?? "…"} contacts</small></span>
           </button>
           <button type="button" className={listTypeFilter === "training" ? "active" : ""} onClick={() => { setListTypeFilter((current) => current === "training" ? "All" : "training"); setProgramFilter("All"); }}>
             <span className="crm-list-type-icon"><ContactRound size={19} /></span>
-            <span><strong>Training Call List</strong><small>{rows.filter((row) => row.listType === "training").length} contacts</small></span>
+            <span><strong>Training Call List</strong><small>{trainingCallCount ?? "…"} contacts</small></span>
           </button>
         </div>
         <div className="crm-directory-toolbar">
@@ -7651,27 +7779,27 @@ function CrmUploadDataPage({ rows, setRows, users, currentUser, isAdmin, onCallL
             <label><Search size={16} /><input value={searchDraft} onChange={(event) => { setSearchDraft(event.target.value); setSearchQuery(event.target.value.trim()); }} placeholder="Search by name or contact number" /></label>
             <button type="submit">Search</button>
           </form>
-          <select aria-label="Service or training program" value={programFilter} onChange={(event) => setProgramFilter(event.target.value)}>
+          <SalesDropdown searchable aria-label="Service or training program" value={programFilter} onChange={(event) => setProgramFilter(event.target.value)}>
             <option value="All">{listTypeFilter === "training" ? "All Training Programs" : listTypeFilter === "services" ? "All Services" : "All Services / Programs"}</option>
             <option value="">Unspecified</option>
             {[...new Set([...callListPrograms(listTypeFilter), ...rows.filter((row) => listTypeFilter === "All" || row.listType === listTypeFilter).map((row) => normalizeCallProgram(row.program)).filter(Boolean)])].map((program) => <option key={program}>{program}</option>)}
-          </select>
-          <select aria-label="Call status" value={callStatusFilter} onChange={(event) => setCallStatusFilter(event.target.value)}>
+          </SalesDropdown>
+          <SalesDropdown aria-label="Call status" value={callStatusFilter} onChange={(event) => setCallStatusFilter(event.target.value)}>
             <option value="All">All Call Status</option>
             <option value="">Choose</option>
             {CALL_STATUS_OPTIONS.map((status) => <option key={status}>{status}</option>)}
-          </select>
-          <select aria-label="Interest status" value={interestFilter} onChange={(event) => setInterestFilter(event.target.value)}>
+          </SalesDropdown>
+          <SalesDropdown aria-label="Interest status" value={interestFilter} onChange={(event) => setInterestFilter(event.target.value)}>
             <option value="All">All Interest</option>
             {CALL_LIST_INTEREST_STATUS_OPTIONS.map((status) => <option key={status}>{status}</option>)}
-          </select>
-          <select aria-label="CRM employee" value={employeeFilter} onChange={(event) => setEmployeeFilter(event.target.value)}>
+          </SalesDropdown>
+          <SalesDropdown searchable aria-label="CRM employee" value={employeeFilter} onChange={(event) => setEmployeeFilter(event.target.value)}>
             <option value="All">All Employees</option>
             {users.map((user) => <option key={user.id || user._id} value={user.id || user._id}>{user.name || user.username}</option>)}
-          </select>
+          </SalesDropdown>
         </div>
         <div className="crm-directory-date-row">
-          <span>Lead creation date</span>
+          <span>Contact date</span>
           <label className="table-date-filter"><span>From</span><input aria-label="From date" type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} /></label>
           <label className="table-date-filter"><span>To</span><input aria-label="To date" type="date" min={fromDate} value={toDate} onChange={(event) => setToDate(event.target.value)} /></label>
           <button type="button" className="crm-directory-reset" onClick={() => { setSearchDraft(""); setSearchQuery(""); setProgramFilter("All"); setListTypeFilter("All"); setCallStatusFilter("All"); setInterestFilter("All"); setEmployeeFilter("All"); setFromDate(""); setToDate(""); }}>Reset</button>
@@ -7698,7 +7826,7 @@ function CrmUploadDataPage({ rows, setRows, users, currentUser, isAdmin, onCallL
             </thead>
             <tbody>
               {!visibleRows.length && (
-                <tr><td colSpan={12} className="panel-empty">No call list records found.</td></tr>
+                <tr><td colSpan={12} className="panel-empty">{pageLoading ? "Loading call records…" : "No call list records found."}</td></tr>
               )}
               {visibleRows.map((row) => (
                 <tr key={`${row.listType || "list"}:${row.id}`}>
@@ -7706,37 +7834,38 @@ function CrmUploadDataPage({ rows, setRows, users, currentUser, isAdmin, onCallL
                     <input type="checkbox" checked={selectedIds.includes(row.id)} onChange={() => toggleSelected(row.id)} aria-label={`Select ${row.name || "record"}`} />
                   </td>
                   <td>{serialByRow.get(row)}</td>
-                  <td>{formatAdminDate(row.createdAt)}</td>
-                  <td><div className="crm-contact-name"><strong>{row.name || "-"}</strong></div></td>
+                  <td>{formatAdminDate(normalizeCallListDate(row.date) || row.createdAt)}</td>
+                   <td><div className="crm-contact-name"><strong title={row.updatedAt ? `Last updated: ${new Date(row.updatedAt).toLocaleString()}` : ""}>{row.name || "-"}</strong></div></td>
                   <td>{row.contact || row.number || "-"}</td>
                   <td>
                     <div className="row-actions">
-                      <button type="button" className={`row-icon-btn call ${row.callClicked ? "contacted" : ""}`} title="Call" onClick={() => { updateRow(row.id, { callClicked: true }); window.location.href = `tel:${row.contact || row.number}`; }}><PhoneCall size={16} /></button>
+                      <button type="button" className={`row-icon-btn call ${row.callClicked ? "contacted" : ""}`} title={row.lastCallClickedAt ? `Last call button click: ${new Date(row.lastCallClickedAt).toLocaleString()}` : "Call"} onClick={() => { updateRow(row.id, { callClicked: true }); window.location.href = `tel:${row.contact || row.number}`; }}><PhoneCall size={16} /></button>
                       <button type="button" className={`row-icon-btn whatsapp ${row.whatsappClicked ? "contacted" : ""}`} title="WhatsApp" onClick={() => { updateRow(row.id, { whatsappClicked: true }); window.open(`https://wa.me/91${String(row.contact || row.number || "").replace(/\D/g, "").slice(-10)}`, "_blank", "noopener,noreferrer"); }}><MessageCircle size={16} /></button>
                     </div>
                   </td>
                   <td>
-                    <select className="inline-select" value={normalizeCallStatus(row.callStatus)} onChange={(event) => updateRow(row.id, { callStatus: event.target.value })}>
+                    <SalesDropdown className="inline-select" aria-label={`Call status for ${row.name || "contact"}`} value={normalizeCallStatus(row.callStatus)} onChange={(event) => updateRow(row.id, { callStatus: event.target.value })}>
                       <option value="">Choose</option>
                       {CALL_STATUS_OPTIONS.map((status) => <option key={status}>{status}</option>)}
-                    </select>
+                    </SalesDropdown>
                   </td>
                   <td>
-                    <select className="inline-select" value={normalizeInterestStatus(row.interestStatus)} onChange={(event) => updateRow(row.id, { interestStatus: event.target.value })}>
+                    <SalesDropdown className="inline-select" aria-label={`Interest status for ${row.name || "contact"}`} value={normalizeInterestStatus(row.interestStatus)} onChange={(event) => updateRow(row.id, { interestStatus: event.target.value })}>
                       {CALL_LIST_INTEREST_STATUS_OPTIONS.map((status) => <option key={status}>{status}</option>)}
-                    </select>
+                    </SalesDropdown>
                   </td>
                   <td>
-                    <select className="inline-select crm-program-select" value={normalizeCallProgram(row.program)} onChange={(event) => updateRow(row.id, { program: event.target.value })}>
+                    <SalesDropdown searchable className="inline-select crm-program-select" aria-label={row.listType === "training" ? `Training program for ${row.name || "contact"}` : `Service for ${row.name || "contact"}`} value={normalizeCallProgram(row.program)} onChange={(event) => updateRow(row.id, { program: event.target.value })}>
                       <option value="">{row.listType === "training" ? "Select Program" : "Select Service"}</option>
                       {normalizeCallProgram(row.program) && !callListPrograms(row.listType).includes(normalizeCallProgram(row.program)) && <option value={normalizeCallProgram(row.program)}>{normalizeCallProgram(row.program)}</option>}
                       {callListPrograms(row.listType).map((program) => <option key={program}>{program}</option>)}
-                    </select>
+                    </SalesDropdown>
                   </td>
                   <td><RemarkField value={row.remark || ""} onChange={(value) => stageRow(row.id, { remark: value })} onCommit={(value) => updateRow(row.id, { remark: value })} label={`Remark for ${row.name || "contact"}`} /></td>
-                  <td><select className="inline-select" aria-label={`Assign call list contact ${row.name || "record"}`} value={row.assignedTo || ""} onChange={(event) => updateRow(row.id, { assignedTo: event.target.value, assignedToName: assignableUsers.find((user) => String(user.id || user._id) === String(event.target.value))?.name || "" })}><option value="">Unassigned</option>{row.assignedTo && !assignableUsers.some((user) => String(user.id || user._id) === String(row.assignedTo)) && <option value={row.assignedTo}>{row.assignedToName || row.assignedTo}</option>}{assignableUsers.map((user) => <option key={user.id || user._id} value={user.id || user._id}>{user.name || user.username}</option>)}</select></td>
+                  <td><SalesDropdown searchable className="inline-select" aria-label={`Assign call list contact ${row.name || "record"}`} value={row.assignedTo || ""} onChange={(event) => updateRow(row.id, { assignedTo: event.target.value, assignedToName: assignableUsers.find((user) => String(user.id || user._id) === String(event.target.value))?.name || "" })}><option value="">Unassigned</option>{row.assignedTo && !assignableUsers.some((user) => String(user.id || user._id) === String(row.assignedTo)) && <option value={row.assignedTo}>{row.assignedToName || row.assignedTo}</option>}{assignableUsers.map((user) => <option key={user.id || user._id} value={user.id || user._id}>{user.name || user.username}</option>)}</SalesDropdown></td>
                   <td>
                     <div className="row-actions">
+                      {saveStatuses[`${row.listType}:${row.id}`] && <small aria-live="polite">{saveStatuses[`${row.listType}:${row.id}`] === "saving" ? "Saving…" : saveStatuses[`${row.listType}:${row.id}`] === "offline" ? "Offline" : saveStatuses[`${row.listType}:${row.id}`] === "failed" ? "Failed" : "Saved"}</small>}
                       <button type="button" className="row-icon-btn edit" title="Edit" onClick={() => editRow(row)}><Edit3 size={16} /></button>
                       <button type="button" className="row-icon-btn delete" title="Delete" onClick={() => deleteRow(row)}><Trash2 size={16} /></button>
                     </div>
@@ -7747,15 +7876,18 @@ function CrmUploadDataPage({ rows, setRows, users, currentUser, isAdmin, onCallL
           </table>
         </div>
         <div className="admin-leads-pagination">
-          <span>Showing {filteredRows.length ? (page - 1) * pageSize + 1 : 0}-{Math.min(page * pageSize, filteredRows.length)} of {filteredRows.length}</span>
+          <span>{pageLoading ? "Loading…" : `Showing ${visibleRows.length ? (page - 1) * pageSize + 1 : 0}-${visibleRows.length ? (page - 1) * pageSize + visibleRows.length : 0}${useServerPage ? (listTypeFilter === "All" && employeeFilter === "All" && Number.isFinite(totalCallCount) ? ` of ${totalCallCount}` : "") : ` of ${filteredRows.length}`}`}</span>
           <div className="admin-leads-pagination-actions">
-            <button type="button" className="ghost-button compact" disabled={page === 1} onClick={() => setPage((current) => current - 1)}>Previous</button>
-            <span>Page {page} of {totalPages}</span>
-            <button type="button" className="ghost-button compact" disabled={page === totalPages} onClick={() => setPage((current) => current + 1)}>Next</button>
+            <button type="button" className="ghost-button compact" disabled={pageLoading || page === 1} onClick={() => setPage((current) => current - 1)}>Previous</button>
+            <span>{useServerPage ? `Page ${page}` : `Page ${page} of ${totalPages}`}</span>
+            <button type="button" className="ghost-button compact" disabled={pageLoading || page === totalPages} onClick={() => setPage((current) => current + 1)}>Next</button>
           </div>
         </div>
       </section>
-      <CallLeadsPanel canDelete={isAdmin} rows={rows} users={users} currentUser={currentUser} onSave={onSaveCall} onApprove={onApproveCall} onDelete={onDeleteCall} onAdd={onCallLeadEdit} showSourceOwner={isAdmin} lockCreatedLead />
+      <div ref={leadPanelRef}>
+        {allRowsLoaded ? <CallLeadsPanel canDelete={isAdmin} rows={rows} users={users} currentUser={currentUser} onSave={onSaveCall} onApprove={onApproveCall} onDelete={onDeleteCall} onAdd={onCallLeadEdit} showSourceOwner={isAdmin} lockCreatedLead />
+          : <section className="panel"><div className="panel-body">{leadPanelVisible ? "Loading call leads…" : "Call leads will load when you reach this section."}</div></section>}
+      </div>
     </div>
   );
 }
@@ -8640,9 +8772,9 @@ function AdminAllLeadsTable({ title = "All Leads", leads, adminName = "Admin", o
         <div className={`admin-leads-toolbar ${hideOwnership ? "ownership-hidden" : ""}`}>
       <div className="admin-leads-main-filters">
       <div className="admin-leads-search"><Search size={17} /><input value={filters.search} onChange={(event) => updateFilter("search", event.target.value)} placeholder="Search name, phone, city, interest..." /></div>
-      <select aria-label="Filter by lead type" value={filters.type} onChange={(event) => updateFilter("type", event.target.value)}><option value="All">All Lead Types</option>{["Service", "Training", "Internship"].map((type) => <option key={type}>{type}</option>)}</select>
-      {!hideOwnership && <select aria-label="Filter by entered by" value={filters.enteredBy} onChange={(event) => updateFilter("enteredBy", event.target.value)}><option value="All">All Entered By</option>{enteredByOptions.map((name) => <option key={name} value={name}>{name}</option>)}</select>}
-      <select aria-label="Filter by status" value={filters.status} onChange={(event) => updateFilter("status", event.target.value)}><option value="All">All Statuses</option>{["Pending", "Interested", "Not Interested", "Converted", "Lost"].map((status) => <option key={status}>{status}</option>)}</select>
+      <SalesDropdown aria-label="Filter by lead type" value={filters.type} onChange={(event) => updateFilter("type", event.target.value)}><option value="All">All Lead Types</option>{["Service", "Training", "Internship"].map((type) => <option key={type}>{type}</option>)}</SalesDropdown>
+      {!hideOwnership && <SalesDropdown searchable aria-label="Filter by entered by" value={filters.enteredBy} onChange={(event) => updateFilter("enteredBy", event.target.value)}><option value="All">All Entered By</option>{enteredByOptions.map((name) => <option key={name} value={name}>{name}</option>)}</SalesDropdown>}
+      <SalesDropdown aria-label="Filter by status" value={filters.status} onChange={(event) => updateFilter("status", event.target.value)}><option value="All">All Statuses</option>{["Pending", "Interested", "Not Interested", "Converted", "Lost"].map((status) => <option key={status}>{status}</option>)}</SalesDropdown>
       </div>
       <div className="admin-leads-date-row">
       <span className="admin-leads-date-caption">Lead creation date</span>
@@ -8659,7 +8791,7 @@ function AdminAllLeadsTable({ title = "All Leads", leads, adminName = "Admin", o
         {visibleLeads.map((lead, index) => <tr key={`${lead.id || lead._id || lead.name || "lead"}:${lead.listType || "list"}:${lead.phone || lead.contact || "contact"}:${index}`}>
           <td>{(page - 1) * pageSize + index + 1}</td><td>{formatAdminDate(lead.createdAt || lead.createdDate || lead.assignedDate || lead.date)}</td><td><strong>{lead.name || "-"}</strong></td><td>{lead.phone || lead.contact || "-"}</td><td>{lead.city || "-"}</td><td><span className="lead-type-label">{typeLabel(lead)}</span></td><td title={lead.interest}>{lead.interest || lead.program || "-"}</td>{!hideOwnership && <td>{lead.enteredBy || lead.enteredByName || lead.crmExecutiveName || lead.createdByName || adminName}</td>}
           <td><RemarkField value={remarkDrafts[lead.id] ?? lead.remark ?? lead.notes ?? ""} onChange={(value) => setRemarkDrafts((current) => ({ ...current, [lead.id]: value }))} onCommit={(value) => onSave?.({ ...lead, remark: value, notes: value })} label={`Remark for ${lead.name || "lead"}`} /></td>
-          <td><select className={`inline-select lead-status-select ${statusValue(lead).toLowerCase().replace(/\s+/g, "-")}`} aria-label={`Status for ${lead.name}`} value={statusValue(lead)} onChange={(event) => onSave?.({ ...lead, status: event.target.value })}>{["Pending", "Interested", "Not Interested", "Converted", "Lost"].map((status) => <option key={status}>{status}</option>)}</select></td>
+          <td><SalesDropdown className={`inline-select lead-status-select ${statusValue(lead).toLowerCase().replace(/\s+/g, "-")}`} aria-label={`Status for ${lead.name}`} value={statusValue(lead)} onChange={(event) => onSave?.({ ...lead, status: event.target.value })}>{["Pending", "Interested", "Not Interested", "Converted", "Lost"].map((status) => <option key={status}>{status}</option>)}</SalesDropdown></td>
           <td><div className="row-actions"><button type="button" className="row-icon-btn edit" title="Edit" onClick={() => onEdit?.(lead)}><Edit3 size={14} /></button><button type="button" className="row-icon-btn delete" title="Delete" onClick={() => onDelete?.(lead)}><Trash2 size={14} /></button></div></td>
         </tr>)}
       </tbody>

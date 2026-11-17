@@ -74,7 +74,10 @@ async function migrateType(type, dryRun) {
 }
 
 async function main() {
-  const dryRun = process.argv.includes("--dry-run");
+  const dryRun = !process.argv.includes("--apply");
+  if (!dryRun && !process.env.FIRESTORE_EMULATOR_HOST) {
+    throw new Error("--apply is restricted to the Firebase Emulator. Production migration requires approval and a backup.");
+  }
   await connectDatabase();
   let total = 0;
   for (const type of TYPES) {
