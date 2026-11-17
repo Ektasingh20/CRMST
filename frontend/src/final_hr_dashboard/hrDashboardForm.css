@@ -137,29 +137,34 @@
 .hr-salary-filter-actions{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-top:10px}
 .hr-salary-filter-actions>div{display:flex;gap:8px;flex-wrap:wrap}
 .hr-salary-filter-actions .hr-ghost{min-height:32px;padding:6px 10px;font-size:12px;border-radius:8px}
-.hr-scroll:has(.hr-salary-report){min-height:0;overflow-x:hidden;scroll-behavior:smooth;padding-bottom:20px}
-.hr-salary-table-wrap{width:100%;min-width:0;max-height:62vh;overflow:auto;scroll-behavior:smooth;scrollbar-gutter:stable}
-.hr-salary-table-wrap:focus-visible{outline:2px solid var(--ring);outline-offset:2px}
-@media(prefers-reduced-motion:reduce){.hr-scroll:has(.hr-salary-report),.hr-salary-table-wrap{scroll-behavior:auto}}
-.hr-salary-table{width:max-content;font-size:12px}
-.hr-salary-table th{position:sticky;top:0;z-index:1;padding:7px;background:var(--cream);color:var(--copper2);font-size:10px;letter-spacing:.025em;text-transform:uppercase}
-.hr-salary-table td{padding:6px 7px;white-space:nowrap;font-size:11px}
+.hr-scroll:has(.hr-salary-report){min-height:0;overflow-x:hidden;overflow-y:auto;padding-bottom:20px}
+.hr-salary-table-wrap{width:100%;min-width:0;max-height:none;overflow:visible}
+.hr-salary-table{width:100%;min-width:0;table-layout:fixed;font-size:12px}
+.hr-salary-table th{position:sticky;top:0;z-index:1;padding:8px 6px;background:var(--copper);color:#fff;font-size:11px;letter-spacing:.025em;text-transform:uppercase;white-space:normal;line-height:1.25}
+.hr-salary-table td{padding:9px 6px;white-space:normal;overflow-wrap:anywhere;font-size:12px;line-height:1.35}
+.hr-salary-table th:nth-child(1),.hr-salary-table td:nth-child(1){width:4%}
+.hr-salary-table th:nth-child(2),.hr-salary-table td:nth-child(2){width:12%}
+.hr-salary-table th:nth-child(3),.hr-salary-table td:nth-child(3){width:13%}
+.hr-salary-table th:nth-child(4),.hr-salary-table td:nth-child(4){width:9%}
+.hr-salary-table th:nth-child(5),.hr-salary-table td:nth-child(5){width:7%}
+.hr-salary-table th:nth-child(6),.hr-salary-table td:nth-child(6){width:14%}
+.hr-salary-table th:nth-child(7),.hr-salary-table td:nth-child(7){width:6%}
+.hr-salary-table th:nth-child(8),.hr-salary-table td:nth-child(8){width:8%}
+.hr-salary-table th:nth-child(9),.hr-salary-table td:nth-child(9){width:11%}
+.hr-salary-table th:nth-child(10),.hr-salary-table td:nth-child(10){width:8%}
+.hr-salary-table th:nth-child(11),.hr-salary-table td:nth-child(11){width:8%}
+.hr-salary-table .hr-salary-detail small,.hr-salary-table .hr-salary-name small{display:block;margin-top:3px;color:var(--mute);font-size:10px;font-weight:500}
 .hr-salary-table tbody tr:nth-child(even){background:#fbfaf9}
 .hr-salary-table .hr-salary-name{font-weight:700;color:var(--ink)}
 .hr-salary-table .hr-salary-present{color:var(--ok);font-weight:700}
 .hr-salary-table .hr-salary-leave{color:var(--warn);font-weight:700}
 .hr-salary-table .hr-salary-holiday{color:#477084;font-weight:700}
-.hr-salary-table .hr-salary-net{background:#f5efe9;color:var(--copper2);font-weight:800}
+.hr-salary-table .hr-salary-net{background:var(--cream);color:var(--copper2);font-weight:800}
+.hr-salary-table .hr-salary-leave{white-space:normal;line-height:1.2}
+.hr-salary-table .hr-salary-leave small{display:block;color:var(--mute);font-size:10px;font-weight:500;white-space:normal}
 .hr-salary-total{display:flex;justify-content:flex-end;gap:20px;flex-wrap:wrap;padding-top:14px;color:var(--mute);font-size:12px}
 .hr-salary-total strong{color:var(--ink)}
-/* Keep the table scrollbar and totals visible within the desktop workspace. */
-@media (min-width:901px) and (min-height:700px){
-  .hr-scroll:has(.hr-salary-report){overflow:hidden}
-  .hr-salary-report{height:100%;min-height:0;grid-template-rows:auto minmax(0,1fr)}
-  .hr-salary-report>.hr-box:last-child{display:flex;flex-direction:column;min-height:0}
-  .hr-salary-report .hr-bh,.hr-salary-total{flex:none}
-  .hr-salary-table-wrap{flex:1;min-height:0;max-height:none}
-}
+.hr-salary-report-note{margin:8px 0 0;color:var(--mute);font-size:11px;line-height:1.45}
 @media (max-width:500px){
   .hr-salary-report .hr-bh{align-items:flex-start;flex-direction:column}
   .hr-salary-report .hr-count{align-self:flex-start}
@@ -170,22 +175,39 @@
 .hr-id-card-actions .hr-employee-action{padding:6px 9px}
 .hr-id-card-actions .hr-employee-action.view{background:#e0f3ea;color:var(--ok)}
 .hr-id-card-modal{z-index:70}
-.hr-id-card-dialog{width:min(760px,100%);max-height:92vh;display:flex;flex-direction:column;overflow:hidden;margin:0}
-.hr-id-card-dialog-content{min-height:0;overflow:auto;display:grid;place-items:center;padding:22px;background:linear-gradient(180deg,#faf8f5,#f5efe8)}
-.hr-id-card-preview{width:min(370px,100%);padding:22px 24px 18px;border:1px solid var(--line);border-radius:22px;background:#fff;text-align:center;box-shadow:0 16px 36px rgba(41,31,24,.12)}
-.hr-id-card-brand{display:grid;justify-items:center;gap:4px;padding-bottom:12px;border-bottom:1px solid var(--line);color:var(--ink)}
-.hr-id-card-logo{width:48px;height:48px;display:grid;place-items:center;border:2px solid var(--copper);border-radius:50%;background:var(--dark);color:#fff;font-size:15px;font-weight:800}
-.hr-id-card-brand strong{font-size:13px;letter-spacing:.04em;text-transform:uppercase}
-.hr-id-card-brand small{color:var(--mute);font-size:9px;letter-spacing:.12em}
-.hr-id-card-photo{width:112px;height:112px;margin:16px auto 10px;display:block;object-fit:cover;border:2px solid var(--copper);border-radius:16px;background:#f8f6f3}
-.hr-id-card-placeholder{display:grid;place-items:center;color:var(--mute)}
-.hr-id-card-preview h3{margin:0 0 6px;font-size:18px}
-.hr-id-card-designation{display:inline-block;padding:5px 12px;border:1px solid var(--copper);border-radius:999px;color:var(--copper2);font-size:11px;font-weight:700}
-.hr-id-card-preview dl{display:grid;grid-template-columns:1fr auto;gap:0 12px;margin:18px 0 12px;text-align:left}
-.hr-id-card-preview dt,.hr-id-card-preview dd{margin:0;padding:9px 0;border-bottom:1px solid var(--line);font-size:12px}
-.hr-id-card-preview dt{color:var(--mute);font-weight:600}
-.hr-id-card-preview dd{text-align:right;font-weight:700;overflow-wrap:anywhere}
-.hr-id-card-preview footer{padding-top:10px;color:var(--mute);font-size:10px}
+.hr-id-card-dialog{width:min(1000px,100%);max-height:92vh;display:flex;flex-direction:column;overflow:hidden;margin:0}
+.hr-id-card-dialog-content{min-height:0;overflow:auto;padding:18px;background:linear-gradient(180deg,#242424,#171717)}
+.hr-id-card-faces{width:100%;display:grid;grid-template-columns:repeat(2,minmax(0,350px));justify-content:center;align-items:start;gap:18px}
+.hr-id-card-preview{position:relative;isolation:isolate;width:100%;aspect-ratio:3/5;min-width:0;overflow:hidden;padding:24px 22px 20px;border:1px solid #454545;border-radius:3px;background:#111;text-align:center;color:#fff;box-shadow:0 16px 36px rgba(0,0,0,.3)}
+.hr-id-card-preview>*{position:relative;z-index:1}
+.hr-id-card-front:before,.hr-id-card-front:after{position:absolute;z-index:0;width:75px;height:112px;background:#ed1c24;content:"";clip-path:polygon(0 0,58% 20%,100% 50%,58% 80%,0 100%)}
+.hr-id-card-front:before{top:17%;left:-22px}
+.hr-id-card-front:after{right:-22px;bottom:17%;transform:rotate(180deg)}
+.hr-id-card-brand{display:grid;justify-items:center;gap:4px;padding-bottom:10px;border-bottom:1px solid rgba(255,255,255,.55);color:#fff}
+.hr-id-card-logo{width:30px;height:30px;display:grid;place-items:center;border:2px solid #fff;border-radius:4px;background:#111;color:#fff;font-size:13px;font-weight:800}
+.hr-id-card-brand strong{font-size:clamp(12px,1.5vw,16px);letter-spacing:.025em;text-transform:uppercase}
+.hr-id-card-brand small{color:#eee;font-size:9px;letter-spacing:.07em}
+.hr-id-card-photo-frame{width:64%;height:31%;margin:16px auto 10px;padding:5px;border:5px solid #ed1c24;border-radius:18px;background:#fff}
+.hr-id-card-photo{width:100%;height:100%;margin:0;display:block;object-fit:cover;border:0;border-radius:10px;background:#f8f8f8}
+.hr-id-card-placeholder{display:grid;place-items:center;color:#666}
+.hr-id-card-preview h3{margin:0 0 7px;color:#fff;font-size:clamp(16px,2vw,20px);font-weight:700}
+.hr-id-card-designation{display:inline-block;max-width:90%;padding:4px 12px;border:1px solid #ed1c24;border-radius:9px;color:#fff;font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hr-id-card-preview .hr-id-card-fields{display:grid;gap:0;margin:12px auto 8px;width:80%;text-align:left}
+.hr-id-card-fields>div{display:grid;grid-template-columns:42% 58%;gap:3px;padding:4px 0;border-bottom:1px solid rgba(255,255,255,.18);font-size:clamp(10px,1.2vw,12px)}
+.hr-id-card-fields dt,.hr-id-card-fields dd{margin:0;color:#eee;font-weight:400;overflow-wrap:anywhere}
+.hr-id-card-fields dd{font-weight:600}
+.hr-id-card-preview footer{display:grid;gap:4px;margin-top:12px;padding-top:0;color:#fff;font-size:9px;line-height:1.35}
+.hr-id-card-preview footer strong{font-size:9px}
+.hr-id-card-back:before,.hr-id-card-back:after{position:absolute;z-index:0;width:105px;height:105px;border:3px solid #ed1c24;border-radius:18px;content:"";transform:rotate(28deg)}
+.hr-id-card-back:before{top:-64px;left:-55px}
+.hr-id-card-back:after{right:-60px;bottom:-60px}
+.hr-id-card-qr-frame{width:58%;aspect-ratio:1;margin:18% auto 15%;padding:10px;background:#fff}
+.hr-id-card-qr-frame img{width:100%;height:100%;display:block;image-rendering:pixelated}
+.hr-id-card-qr-frame span{width:100%;height:100%;display:grid;place-items:center;color:#111;font-weight:800}
+.hr-id-card-qr-caption{display:block;margin:-10px 0 15px;color:#ddd;font-size:9px;letter-spacing:.08em;text-transform:uppercase}
+.hr-id-card-contact{display:grid;gap:10px;margin:0 auto;width:90%;text-align:left;color:#fff;font-size:clamp(10px,1.3vw,13px);overflow-wrap:anywhere}
+.hr-id-card-contact span{display:flex;align-items:center;gap:12px}
+.hr-id-card-contact svg{width:18px;height:18px;flex:none;color:#fff;stroke-width:2.3}
 .hr-id-card-dialog-actions{display:flex;justify-content:flex-end;gap:9px;padding:12px 16px;border-top:1px solid var(--line)}
 .hr-payroll-toolbar{display:grid;grid-template-columns:minmax(220px,1.4fr) minmax(180px,1fr) auto;align-items:end}
 .hr-payroll-toolbar .hr-sbox{width:100%}
@@ -197,13 +219,26 @@
 .hr-tw:has(.hr-payroll-actions) th:last-child,.hr-tw:has(.hr-payroll-actions) td:last-child{width:1%;white-space:nowrap}
 .hr-payroll-actions{display:flex;align-items:center;justify-content:flex-end;gap:5px;width:max-content;min-width:0}
 .hr-payroll-action{display:inline-flex;align-items:center;gap:4px;padding:6px 8px;border:1px solid transparent;border-radius:8px;font-size:11px;font-weight:700;white-space:nowrap}
-.hr-payroll-action.edit,.hr-payroll-action.view{background:#e3ecfa;color:#2c5a9e}
+.hr-payroll-action.edit,.hr-payroll-action.view{background:var(--cream);color:var(--copper2);border-color:rgba(141,94,56,.18)}
 .hr-payroll-action.delete{background:#fbe3de;color:var(--bad)}
 .hr-payroll-net{color:var(--copper2)}
 .hr-payroll-modal{z-index:75}
 .hr-payroll-dialog{width:min(700px,100%);max-height:92vh;display:flex;flex-direction:column;overflow:hidden;margin:0}
+.hr-payroll-edit-dialog{width:min(1060px,100%);max-height:94vh}
 .hr-payroll-dialog>.hr-employee-detail-heading{flex:none}
 .hr-payroll-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:13px;padding:18px;overflow:auto}
+.hr-payroll-edit-form{grid-template-columns:minmax(0,1fr);gap:12px;padding:16px 20px}
+.hr-payroll-employee-summary{display:grid;gap:4px;padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:#f7f4ef}
+.hr-payroll-employee-summary strong{color:var(--copper2);font-size:16px}
+.hr-payroll-employee-summary span{color:var(--mute);font-size:12px}
+.hr-payroll-edit-section{min-width:0;padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:#fff}
+.hr-payroll-edit-section h3{margin:0 0 10px;padding-bottom:7px;border-bottom:1px solid var(--line);color:var(--copper);font-size:13px;font-weight:700}
+.hr-payroll-edit-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 14px}
+.hr-payroll-period-section .hr-payroll-edit-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+.hr-payroll-edit-grid .hr-f{min-width:0;gap:4px;font-size:12px}
+.hr-payroll-edit-grid input,.hr-payroll-edit-grid select{width:100%;min-height:38px;padding:8px 10px;border-radius:8px}
+.hr-payroll-summary-section input[readonly]{background:var(--cream);color:var(--copper2);font-weight:700}
+.hr-payroll-edit-form .hr-payroll-dialog-actions{padding-top:0}
 .hr-payroll-form .hr-f{min-width:0}
 .hr-payroll-form-total{grid-column:1/-1;display:flex;align-items:center;gap:8px;margin:0;padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--cream);font-size:13px}
 .hr-payroll-form-total span{margin-left:auto;color:var(--mute);font-size:11px}
@@ -257,10 +292,9 @@
   .hr-salary-filter-actions{align-items:stretch}
   .hr-salary-filter-actions>div{width:100%}
   .hr-salary-filter-actions .hr-ghost{flex:1;justify-content:center}
-  .hr-salary-table-wrap{max-height:65vh}
   .hr-salary-total{justify-content:flex-start;gap:8px 16px}
   .hr-id-card-dialog-content{padding:12px}
-  .hr-id-card-preview{padding:18px}
+  .hr-id-card-faces{grid-template-columns:minmax(0,350px)}
   .hr-id-card-dialog-actions{flex-direction:column-reverse}
   .hr-id-card-dialog-actions button{width:100%;justify-content:center}
   .hr-payroll-toolbar{grid-template-columns:minmax(0,1fr)}
@@ -268,12 +302,27 @@
   .hr-payroll-summary{justify-content:flex-start;gap:8px 16px}
   .hr-payroll-actions{min-width:0;flex-wrap:wrap}
   .hr-payroll-form{grid-template-columns:minmax(0,1fr);padding:14px}
+  .hr-payroll-edit-form{padding:12px}
+  .hr-payroll-edit-grid,.hr-payroll-period-section .hr-payroll-edit-grid{grid-template-columns:minmax(0,1fr)}
   .hr-payroll-form-total,.hr-payroll-dialog-actions{grid-column:auto}
   .hr-payroll-form-total{align-items:flex-start;flex-direction:column}
   .hr-payroll-form-total span{margin:0}
   .hr-payroll-dialog-actions{flex-direction:column-reverse}
   .hr-payroll-dialog-actions button{width:100%;justify-content:center}
   .hr-mark-attendance-form{grid-template-columns:minmax(0,1fr);gap:12px;padding:14px}
+}
+@media (max-width:760px){
+  .hr-salary-table,.hr-salary-table tbody,.hr-salary-table tr,.hr-salary-table td{display:block;width:100%}
+  .hr-salary-table thead{display:none}
+  .hr-salary-table tbody{display:grid;gap:10px}
+  .hr-salary-table tr{padding:8px 12px;border:1px solid var(--line);border-radius:12px;background:#fff!important}
+  .hr-salary-table td{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;padding:7px 0;border:0;border-bottom:1px solid var(--line);text-align:right}
+  .hr-salary-table td:last-child{border-bottom:0}
+  .hr-salary-table td:before{content:attr(data-label);flex:0 0 38%;color:var(--mute);font-weight:600;text-align:left}
+  .hr-salary-table td:first-child{display:none}
+  .hr-salary-table .hr-salary-detail>*{width:62%;margin-left:auto;text-align:right}
+  .hr-salary-table .hr-salary-name,.hr-salary-table .hr-salary-leave{white-space:normal}
+  .hr-salary-table .hr-salary-net{border-radius:7px}
 }
 
 .hr-all-attendance{min-width:0}
@@ -297,11 +346,12 @@
 .hr-shell .hr-attendance-export.pdf{background:#bd3434}
 .hr-shell .hr-attendance-export:hover:not(:disabled){filter:brightness(1.1)}
 .hr-all-attendance .hr-box{padding:14px}
-.hr-all-attendance .hr-t{min-width:1120px}
+.hr-all-attendance .hr-t{min-width:1240px;table-layout:fixed}
 .hr-all-attendance .hr-t th{background:var(--copper);color:#fff;padding:12px 10px}
 .hr-all-attendance .hr-t th:first-child{border-radius:0}
 .hr-all-attendance .hr-t th:last-child{border-radius:0}
 .hr-all-attendance .hr-t td{padding:12px 10px;white-space:nowrap}
+.hr-all-attendance .hr-t th:nth-child(11),.hr-all-attendance .hr-t td:nth-child(11){width:130px;max-width:130px;overflow:hidden;text-overflow:ellipsis}
 .hr-all-attendance .hr-t tbody tr:nth-child(even){background:rgba(245,239,232,.58)}
 .hr-all-attendance .hr-t .hr-b{min-width:66px;text-align:center}
 @media(min-width:1400px){
@@ -455,16 +505,32 @@
 .hr-assign-task-form .hr-f input,.hr-assign-task-form .hr-f select{width:100%;min-height:38px;padding:8px 11px;border-radius:6px}
 .hr-assign-task-form .hr-f textarea{width:100%;min-height:82px;resize:vertical;font:inherit;font-size:14px;color:var(--ink);padding:9px 11px;border:1px solid #e3d8d0;border-radius:6px;background:#fff}
 .hr-assign-task-error{margin:0}
-.hr-shell .hr-assign-task-submit{width:100%;min-height:39px;padding:9px 14px;border-radius:6px;background:#1670f9;color:#fff;font-size:13px;font-weight:700}
+.hr-shell .hr-assign-task-submit{width:100%;min-height:39px;padding:9px 14px;border-radius:8px;background:linear-gradient(135deg,var(--copper),var(--copper2));color:#fff;font-size:13px;font-weight:700}
 .hr-shell .hr-assign-task-submit:hover{filter:brightness(1.05)}
 @media(max-width:620px){
   .hr-assign-task-page>.hr-card{padding:12px}
   .hr-assign-task-card{padding:18px 14px}
 }
 
-.hr-assigned-tasks-page{width:min(100%,940px);min-height:min(680px,calc(100vh - 150px));margin:0 auto;padding:28px;background:#fff;border-radius:22px;box-shadow:0 18px 40px rgba(41,31,24,.08)}
-.hr-assigned-tasks-page>.hr-card{padding:20px;border:1px solid #e3ded8;border-radius:7px;background:#fff;box-shadow:0 4px 10px rgba(41,31,24,.1)}
+.hr-assigned-tasks-page{width:100%;min-width:0;margin:0;padding:0}
+.hr-assigned-tasks-page>.hr-card{padding:18px;border:1px solid var(--line);border-radius:16px;background:#fff;box-shadow:0 4px 12px rgba(41,31,24,.07)}
 .hr-assigned-tasks-card>h2{margin:0 0 24px;text-align:center;font-size:clamp(22px,2.6vw,34px);letter-spacing:-.025em}
+.hr-assigned-task-toolbar{display:grid;gap:12px;margin-bottom:16px;padding:12px;border:1px solid var(--line);border-radius:12px;background:#fbfaf8}
+.hr-assigned-task-filters{display:grid;grid-template-columns:minmax(220px,1.7fr) repeat(4,minmax(120px,.8fr));align-items:end;gap:10px}
+.hr-assigned-task-actions{display:flex;justify-content:flex-end;align-items:center;gap:8px;flex-wrap:wrap}
+.hr-assigned-task-toolbar .hr-sbox{min-width:0;width:100%;height:38px}
+.hr-assigned-task-toolbar .hr-f{min-width:0;gap:4px;font-size:11px}
+.hr-assigned-task-toolbar select{width:100%;min-height:38px;padding:7px 8px;font-size:12px}
+.hr-assigned-task-toolbar .hr-btn,.hr-assigned-task-toolbar .hr-ghost{min-height:38px;padding:7px 9px;font-size:11px;white-space:nowrap}
+.hr-task-record-count{margin:12px 0 0;color:var(--mute);font-size:12px}
+.hr-task-pagination{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-top:12px;color:var(--mute);font-size:12px}
+.hr-task-pagination>div{display:flex;align-items:center;gap:6px}
+.hr-task-pagination .hr-ghost{min-height:32px;padding:5px 9px;font-size:11px}
+.hr-task-pagination strong{min-width:30px;padding:6px 8px;border-radius:6px;background:var(--copper2);color:#fff;text-align:center}
+@media(max-width:900px){
+  .hr-assigned-task-filters{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .hr-assigned-task-filters>.hr-sbox{grid-column:span 2}
+}
 .hr-assigned-tasks-table{min-width:680px;border:1px solid #dfe3e8;font-size:13px}
 .hr-assigned-tasks-table th{padding:10px 8px;background:#f7f8fa;color:#1f1a17;border:1px solid #dfe3e8;font-size:12px}
 .hr-assigned-tasks-table th:first-child,.hr-assigned-tasks-table th:last-child{border-radius:0}
@@ -480,9 +546,13 @@
 .hr-shell .hr-assigned-task-delete{display:inline-flex;align-items:center;gap:5px;padding:6px 9px;border-radius:5px;background:#dc3545;color:#fff;font-size:11px;font-weight:700;white-space:nowrap}
 .hr-shell .hr-assigned-task-delete:hover{filter:brightness(1.06)}
 @media(max-width:620px){
-  .hr-assigned-tasks-page{min-height:calc(100vh - 130px);padding:12px;border-radius:16px}
+  .hr-assigned-tasks-page{min-height:0;padding:0;border-radius:0;background:transparent;box-shadow:none}
   .hr-assigned-tasks-page>.hr-card{padding:14px}
   .hr-assigned-tasks-card>h2{margin-bottom:18px}
+  .hr-assigned-task-filters{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .hr-assigned-task-filters>.hr-sbox{grid-column:1/-1}
+  .hr-assigned-task-actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))}
+  .hr-assigned-task-actions .hr-btn,.hr-assigned-task-actions .hr-ghost{justify-content:center}
 }
 
 .hr-all-tasks-page{min-width:0}
@@ -498,12 +568,21 @@
 .hr-all-tasks-table th:first-child,.hr-all-tasks-table th:last-child{border-radius:0}
 .hr-all-tasks-table td{padding:10px 9px;border:1px solid #e2e5e9}
 .hr-all-tasks-table tbody tr:nth-child(odd){background:#f2f2f2}
-.hr-all-tasks-table td:nth-child(1){min-width:190px}
-.hr-all-tasks-table td:nth-child(2){min-width:210px;max-width:340px;overflow-wrap:anywhere}
-.hr-all-tasks-table td:nth-child(3),.hr-all-tasks-table td:nth-child(4){min-width:145px}
-.hr-all-tasks-table td:nth-child(5),.hr-all-tasks-table td:nth-child(6){white-space:nowrap}
+.hr-all-tasks-table td:nth-child(2){min-width:190px}
+.hr-all-tasks-table td:nth-child(3){min-width:210px;max-width:340px;overflow-wrap:anywhere}
+.hr-all-tasks-table td:nth-child(4),.hr-all-tasks-table td:nth-child(5){min-width:145px}
+.hr-all-tasks-table td:nth-child(6),.hr-all-tasks-table td:nth-child(7){white-space:nowrap}
 .hr-shell .hr-all-tasks-delete{display:inline-flex;align-items:center;gap:5px;padding:7px 10px;border-radius:5px;background:#dc3545;color:#fff;font-size:11px;font-weight:700}
 .hr-shell .hr-all-tasks-delete:hover{filter:brightness(1.06)}
+.hr-my-task-page{min-width:0}
+.hr-my-task-page>h2{margin:0 0 14px;color:var(--ink);font-size:22px}
+.hr-my-task-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:start;gap:14px}
+.hr-my-task-card{display:grid;gap:12px;padding:16px;border:1px solid var(--line);border-radius:14px;background:#fff;box-shadow:0 5px 14px rgba(41,31,24,.06)}
+.hr-my-task-card label{display:grid;gap:5px;color:var(--ink);font-size:12px;font-weight:600}
+.hr-my-task-card input,.hr-my-task-card textarea,.hr-my-task-card select{width:100%;min-height:38px;padding:8px 10px;border:1px solid #e3d8d0;border-radius:8px;background:#fff;color:var(--ink);font:inherit;font-size:13px}
+.hr-my-task-card textarea{resize:vertical}
+.hr-my-task-card footer{display:flex;justify-content:flex-end;padding-top:9px;border-top:1px solid var(--line)}
+@media(max-width:760px){.hr-my-task-grid{grid-template-columns:minmax(0,1fr)}}
 @media(max-width:620px){
   .hr-all-tasks-title{margin:8px auto 16px}
   .hr-all-tasks-toolbar{align-items:stretch}
@@ -558,7 +637,6 @@
 .hr-settings-page{display:grid;gap:16px;min-width:0}
 .hr-settings-page-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
 .hr-settings-page-heading h2{display:flex;align-items:center;gap:9px;margin:0;color:var(--copper2);font-size:clamp(21px,2vw,28px)}
-.hr-settings-theme-toggle{white-space:nowrap}
 .hr-settings-layout{display:grid;grid-template-columns:minmax(0,1fr) 320px;align-items:start;gap:20px}
 .hr-settings-form{display:grid;gap:16px;min-width:0}
 .hr-settings-section,.hr-settings-password{overflow:hidden;border:1px solid var(--line);border-radius:12px;background:#fff;box-shadow:0 5px 15px rgba(41,31,24,.07)}

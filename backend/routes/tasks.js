@@ -2,13 +2,14 @@ import express from "express";
 import { authenticate } from "../middleware/auth.js";
 import Task from "../models/Task.js";
 import User from "../models/User.js";
-import { isAdmin } from "../utils/roles.js";
+import { isAdmin, isHrUser } from "../utils/roles.js";
 import { notifyUser } from "../services/appNotifications.js";
 
 const router = express.Router();
 router.use(authenticate);
 const userId = (user) => String(user?.id || user?._id || "");
 const isCrmExecutive = (user) => ["crm executive", "crm_executive"].includes(String(user?.role || "").trim().toLowerCase());
+const canManageTasks = (user) => isAdmin(user) || isHrUser(user);
 const taskJson = (task) => ({ id: task.id || String(task._id), ...task.toObject() });
 const ownsTask = (task, user) => [task.assigneeId, task.createdById].filter(Boolean).map(String).includes(userId(user));
 
@@ -44,7 +45,7 @@ async function resolveEmployee(id) {
 router.get("/", async (req, res) => {
   try {
     const tasks = await Task.find().sort({ createdAt: -1 });
-    res.json((isAdmin(req.user) ? tasks : tasks.filter((task) => ownsTask(task, req.user))).map(taskJson));
+    res.json((canManageTasks(req.user) ? tasks : tasks.filter((task) => ownsTask(task, req.user))).map(taskJson));
   } catch (error) { res.status(500).json({ error: error.message || "Unable to load tasks." }); }
 });
 
@@ -52,10 +53,10 @@ router.post("/", async (req, res) => {
   try {
     const payload = { ...(req.body || {}) };
     if (!String(payload.title || "").trim()) return res.status(400).json({ error: "Task title is required." });
-    const assignee = isAdmin(req.user) ? await resolveEmployee(payload.assigneeId) : isCrmExecutive(req.user) ? req.user : null;
-    if (!assignee) return res.status(isAdmin(req.user) ? 400 : 403).json({ error: isAdmin(req.user) ? "Choose an active employee assignee." : "Only CRM Executives can create personal tasks." });
+    const assignee = canManageTasks(req.user) ? await resolveEmployee(payload.assigneeId) : isCrmExecutive(req.user) ? req.user : null;
+    if (!assignee) return res.status(canManageTasks(req.user) ? 400 : 403).json({ error: canManageTasks(req.user) ? "Choose an active employee assignee." : "Only CRM Executives can create personal tasks." });
     const now = new Date().toISOString();
-    const task = await Task.create({ id: await nextTaskId(), title: String(payload.title).trim(), description: String(payload.description || "").trim(), priority: payload.priority || "Medium", status: payload.status || "To Do", dueDate: payload.dueDate || "", assigneeId: userId(assignee), assignee: assignee.name || assignee.username || "CRM Executive", createdById: userId(req.user), createdBy: req.user.name || req.user.username || "Admin", createdAt: now, updatedAt: now });
+    const task = await Task.create({ id: await nextTaskId(), title: String(payload.title).trim(), description: String(payload.description || "").trim(), priority: payload.priority || "Medium", status: payload.status || "To Do", dueDate: payload.dueDate || "", reminder: payload.reminder || "", assigneeId: userId(assignee), assignee: assignee.name || assignee.username || "CRM Executive", createdById: userId(req.user), createdBy: req.user.name || req.user.username || "Admin", createdAt: now, updatedAt: now });
     await notifyUser(task.assigneeId, { type: "task_assigned", message: `You were assigned a task: ${task.title}.` });
     res.status(201).json(taskJson(task));
   } catch (error) { res.status(400).json({ error: error.message || "Unable to create task." }); }
@@ -65,10 +66,10 @@ router.put("/:id", async (req, res) => {
   try {
     const task = await Task.findOne({ id: String(req.params.id) });
     if (!task) return res.status(404).json({ error: "Task not found." });
-    if (!isAdmin(req.user) && (!isCrmExecutive(req.user) || !ownsTask(task, req.user))) return res.status(403).json({ error: "You can only update your own tasks." });
+    if (!canManageTasks(req.user) && (!isCrmExecutive(req.user) || !ownsTask(task, req.user))) return res.status(403).json({ error: "You can only update your own tasks." });
     const payload = { ...(req.body || {}) };
     if (!isAdmin(req.user)) { delete payload.assigneeId; delete payload.assignee; delete payload.createdById; delete payload.createdBy; }
-    if (isAdmin(req.user) && payload.assigneeId && String(payload.assigneeId) !== String(task.assigneeId || "")) {
+    if (canManageTasks(req.user) && payload.assigneeId && String(payload.assigneeId) !== String(task.assigneeId || "")) {
       const assignee = await resolveEmployee(payload.assigneeId);
       if (!assignee) return res.status(400).json({ error: "Choose an active employee assignee." });
       payload.assigneeId = userId(assignee); payload.assignee = assignee.name || assignee.username || "Employee";
@@ -84,7 +85,7 @@ router.delete("/:id", async (req, res) => {
   try {
     const task = await Task.findOne({ id: String(req.params.id) });
     if (!task) return res.json({ success: true });
-    if (!isAdmin(req.user) && String(task.createdById || "") !== userId(req.user)) return res.status(403).json({ error: "Only the task creator can delete this task." });
+    if (!canManageTasks(req.user) && String(task.createdById || "") !== userId(req.user)) return res.status(403).json({ error: "Only the task creator can delete this task." });
     await Task.findOneAndDelete({ id: String(req.params.id) }); res.json({ success: true });
   } catch (error) { res.status(400).json({ error: error.message || "Unable to delete task." }); }
 });

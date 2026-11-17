@@ -22,24 +22,29 @@ router.get("/", async (_req, res) => {
   try {
     if (cached && Date.now() - cachedAt < 60_000) return res.json(cached);
     if (!pending) pending = (async () => {
+      const today = todayInIndia();
       const [users, attendanceRecords, allLeaves] = await Promise.all([
         User.find(),
-        Attendance.find({ date: todayInIndia() }),
+        Attendance.find(),
         listLeaves(),
       ]);
       const attendance = attendanceRecords.map((record) => record.toObject());
+      const todayAttendance = attendance.filter((record) => record.date === today);
       const leaves = allLeaves.filter((leave) => leave.status === "Pending");
       const employees = users.map((user) => user.toObject()).filter(active);
       const byStatus = { Present: 0, Absent: 0, Leave: 0 };
-      attendance.forEach((record) => { const status = record.status; if (status in byStatus) byStatus[status] += 1; });
+      todayAttendance.forEach((record) => { const status = record.status; if (status in byStatus) byStatus[status] += 1; });
       const departments = employees.reduce((counts, employee) => {
         const name = employee.dept || employee.department || "Other";
         counts[name] = (counts[name] || 0) + 1;
         return counts;
       }, {});
       return {
-        date: todayInIndia(), employeeCount: employees.length, attendance: byStatus,
-        markedCount: attendance.length, pendingLeaveCount: leaves.length,
+        date: today, employeeCount: employees.length, attendance: byStatus,
+        markedCount: todayAttendance.length, pendingLeaveCount: leaves.length,
+        attendanceRecords: attendance.map(({ id, employeeId, employeeName, date, status, checkIn, checkOut, remark }) => ({
+          id, employeeId, employeeName, date, status, checkIn, checkOut, remark,
+        })),
         pendingLeaves: leaves.slice(0, 5).map((leave) => ({ id: leave.id, employeeName: leave.employeeName || "Employee", type: leave.type || "Leave", from: leave.from || "", to: leave.to || "" })),
         departments,
       };

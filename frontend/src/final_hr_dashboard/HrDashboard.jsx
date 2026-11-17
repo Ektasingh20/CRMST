@@ -1,13 +1,12 @@
 import { useState, useEffect, useRef } from "react";
 import "./hrDashboard.css";
 import "./hrDashboardForm.css";
-import HrPlanner from "./HrPlanner";
 import HrPeopleModules from "./HrPeopleModules";
 import HrWorkflowModules from "./HrWorkflowModules";
 import HrLeads from "./HrLeads";
 import { usePageLoading, getPageTitle } from "./hrPageLoading";
 import { compressImageFile } from "../../imageUpload.js";
-import { createUser, fetchHrDashboard, fetchUsers, updateUser, updateMyProfile, deleteUser, uploadPriorExperienceDocument, downloadPriorExperienceDocument } from "../../backendApi.js";
+import { createUser, fetchHrDashboard, fetchTasks as fetchTasksApi, createTask as createTaskApi, updateTask as updateTaskApi, deleteTask as deleteTaskApi, fetchUsers, updateUser, updateMyProfile, deleteUser, uploadPriorExperienceDocument, downloadPriorExperienceDocument } from "../../backendApi.js";
 import { uploadImage } from "../../backendClient.js";
 import PasswordResetLink from "../PasswordResetLink.jsx";
 import { HelpdeskIncomingToast } from "../shared/HelpdeskChat.jsx";
@@ -15,25 +14,139 @@ import {
   LayoutGrid, Users, CalendarCheck, ListChecks, Upload, Settings, LogOut, ChevronRight, ChevronDown,
   Search, Bell, Calendar, UserPlus, Plus, CalendarClock, Check, UserX, CreditCard, FileText, Wallet,
   ClipboardList, UserCog, ClipboardCheck, Briefcase, Menu, X, BellRing, UserCheck, Printer, Eye, EyeOff, Pencil, Trash2, UserCircle, Download,
-  Filter, RotateCcw, FileSpreadsheet, Phone, LockKeyhole, Moon, Sun, CalendarDays, MessageCircle,
+  Filter, RotateCcw, FileSpreadsheet, Phone, Mail, MousePointer2, LockKeyhole, CalendarDays, MessageCircle,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
+import QRCode from "qrcode";
 
 /* ================= helpers & dashboard data ================= */
 const P = (s) => { const [a, b, c] = s.split("-"); return new Date(+a, b - 1, +c); };
 const iso = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const TODAY = iso();
 const MONTH = TODAY.slice(0, 7);
+const previousMonthDate = P(`${MONTH}-01`);
+previousMonthDate.setMonth(previousMonthDate.getMonth() - 1);
+const LAST_MONTH = iso(previousMonthDate).slice(0, 7);
 const DEPTS = ["CRM", "HR", "IT", "Operation", "Student"];
 const inr = (n) => "₹" + Number(n || 0).toLocaleString("en-IN");
 const range = (a, b) => { const r = []; for (let d = P(a); d <= P(b) && r.length < 62; d.setDate(d.getDate() + 1)) r.push(iso(d)); return r; };
+const attendanceRange = (start, end) => {
+  if (!start || !end || start > end) return [];
+  const dates = [];
+  for (let date = P(start); date <= P(end) && dates.length < 3700; date.setDate(date.getDate() + 1)) dates.push(iso(date));
+  return dates;
+};
+const joinDateOf = (employee) => {
+  const value = employee?.joined || employee?.joiningDate || employee?.dateOfJoining || "";
+  if (!value) return "";
+  const date = String(value).slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : "";
+};
+const ID_CARD_CONTACT = {
+  phone: "+91 7300012006",
+  email: "admin@systemtechnologies.co.in",
+  website: "systemtechnologies.co.in",
+  mapsUrl: "https://www.google.com/maps/search/?api=1&query=System+Technologies%2C+Savitri+College+Road%2C+Ajmer",
+  addressLine1: "In front of Dezyne E-col College, Civil Lines",
+  addressLine2: "Savitri College Road, Ajmer, Rajasthan",
+};
 const isExEmployee = (employee) => String(employee?.exEmployee || "").trim().toLowerCase() === "yes"
   || ["inactive", "disabled", "ex", "former"].includes(String(employee?.status || "").trim().toLowerCase())
   || String(employee?.type || "").trim().toLowerCase() === "former";
 const act = (d) => d.emps.filter((employee) => !isExEmployee(employee));
+const normalizeTask = (task) => {
+  const rawStatus = String(task?.status || "Pending");
+  const status = rawStatus.toLowerCase() === "completed" || rawStatus.toLowerCase() === "done"
+    ? "Done"
+    : rawStatus.toLowerCase() === "to do" ? "Pending" : rawStatus;
+  return {
+    ...task,
+    id: task?.id ?? task?._id,
+    title: task?.title || task?.name || "",
+    description: task?.description || "",
+    assignedTo: task?.assignedTo ?? task?.assigneeId ?? "",
+    assignedBy: task?.assignedBy ?? task?.createdById ?? "1",
+    assignedByName: task?.assignedByName || task?.createdBy || "",
+    due: task?.due || task?.dueDate || "",
+    status,
+  };
+};
+const attendanceLookup = (db) => {
+  const local = new Map();
+  Object.entries(db.att || {}).forEach(([key, status]) => {
+    const separator = key.lastIndexOf("|");
+    if (separator > 0 && status) local.set(key, status);
+  });
+  const firebase = new Map((db.hrSummary?.attendanceRecords || [])
+    .filter((record) => record?.date && record?.employeeId && record?.status)
+    .map((record) => [`${record.date}|${record.employeeId}`, record.status]));
+  return { local, firebase };
+};
+const recordedAttendanceStatus = (db, lookup, employee, date) => {
+  const ids = [...new Set([employee.backendId, employee.id].filter(Boolean).map(String))];
+  for (const id of ids) {
+    const status = lookup.firebase.get(`${date}|${id}`);
+    if (status) return status;
+  }
+  for (const id of ids) {
+    const status = lookup.local.get(`${date}|${id}`);
+    if (status) return status;
+  }
+  const isHrSelf = String(employee.id) === String(db.me?.crm)
+    || String(employee.backendId) === String(db.me?.crm)
+    || String(employee.name || "").toLowerCase() === String(db.me?.name || "").toLowerCase();
+  return isHrSelf ? lookup.local.get(`${date}|1`) || "" : "";
+};
+const salaryAttendanceSummary = (db, employee, reportMonth, lookup) => {
+  const [year, month] = reportMonth.split("-").map(Number);
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const monthStart = `${reportMonth}-01`;
+  const monthEnd = `${reportMonth}-${String(daysInMonth).padStart(2, "0")}`;
+  const joined = joinDateOf(employee);
+  const exited = employee.resignationDate || employee.left || "";
+  const employedStart = joined && joined > monthStart ? joined : monthStart;
+  const employedEnd = exited && exited < monthEnd ? exited : monthEnd;
+  const employedDays = employedStart <= employedEnd
+    ? attendanceRange(employedStart, employedEnd).length
+    : 0;
+  const periodEnd = monthEnd < TODAY ? monthEnd : TODAY;
+  const attendanceStart = employedStart > monthStart ? employedStart : monthStart;
+  const attendanceEnd = employedEnd < periodEnd ? employedEnd : periodEnd;
+  let present = 0;
+  let absent = 0;
+  let leaveDays = 0;
+  if (attendanceStart <= attendanceEnd) {
+    attendanceRange(attendanceStart, attendanceEnd).forEach((date) => {
+      const savedStatus = recordedAttendanceStatus(db, lookup, employee, date);
+      const isSunday = P(date).getDay() === 0;
+      // Unrecorded Sundays are weekly holidays; explicit saved attendance still counts.
+      if (isSunday && !savedStatus) return;
+      const status = String(savedStatus || "Absent").toLowerCase();
+      if (status === "present") present += 1;
+      else if (status === "leave") leaveDays += 1;
+      else absent += 1;
+    });
+  }
+  const holidayDays = employedDays > 0
+    ? attendanceRange(employedStart, employedEnd).filter((date) => P(date).getDay() === 0).length
+    : 0;
+  const configuredUnpaidLeave = Math.max(0, Number(employee.unpaidLeaveDays) || 0);
+  const unpaidLeaveDays = Math.min(leaveDays, configuredUnpaidLeave);
+  const paidLeaveDays = Math.max(0, leaveDays - unpaidLeaveDays);
+  const nonEmployedDays = daysInMonth - employedDays;
+  const deductedDays = nonEmployedDays + absent + unpaidLeaveDays;
+  return { daysInMonth, employedDays, present, absent, leaveDays, paidLeaveDays, unpaidLeaveDays, holidayDays, deductedDays, payableDays: Math.max(0, daysInMonth - deductedDays), throughDate: periodEnd };
+};
 const nm = (d, id) => d.emps.find((e) => e.id === +id)?.name || "Unknown";
+const taskEmployeeId = (employee) => String(employee?.backendId || employee?.id || "");
+const findTaskEmployee = (employees, id) => employees.find((employee) => [employee.id, employee.backendId].filter(Boolean).some((value) => String(value) === String(id)));
+const taskMatchesEmployee = (employees, selectedId, assignedId) => {
+  if (!selectedId) return true;
+  const employee = findTaskEmployee(employees, selectedId);
+  return Boolean(employee && [employee.id, employee.backendId].filter(Boolean).some((value) => String(value) === String(assignedId)));
+};
 const KEY = "hr_dashboard_v2";
 
 const emptyDashboard = (saved = {}) => ({
@@ -101,7 +214,9 @@ function Dash({ c: { db, upd, go } }) {
   const departments = [...new Set(A.map((employee) => employee.dept))].sort((a, b) => a.localeCompare(b));
   const monthlyPayroll = A.reduce((total, employee) => total + (Number(employee.salary) || 0), 0);
   const stats = [
-    ["Active employees", summary?.employeeCount ?? A.length, `Across ${Object.keys(summary?.departments || {}).length || departments.length} departments`, Users, "Employee Profiles"],
+    // The profile roster is the source of truth. The server summary can include
+    // accounts that are not employee profiles (such as admins or students).
+    ["Active employees", A.length, `Across ${departments.length} departments`, Users, "Employee Profiles"],
     ["Present today", summary?.attendance?.Present ?? attendance[0][1], `${summary?.markedCount ?? marked} attendance marked`, CalendarCheck, "All Attendance Report"],
     ["Pending leave", summary?.pendingLeaveCount ?? pendingLeaves.length, "Awaiting review", CalendarClock, "View All Leave Request"],
     ["Open tasks", openTasks.length, overdueTasks.length ? `${overdueTasks.length} overdue` : "None overdue", ListChecks, "All Task"],
@@ -531,6 +646,31 @@ function EmployeeDetailsModal({ employee, onClose }) {
   const [preview, setPreview] = useState(null);
   const [documentError, setDocumentError] = useState("");
   const details = employeeProfile(employee);
+  const downloadProfile = () => {
+    const pdf = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
+    const margin = 36;
+    pdf.setFontSize(18);
+    pdf.text("Employee Profile", margin, 42);
+    pdf.setFontSize(10);
+    pdf.text(`${details.name || "Employee"} · ${details.id || ""} · ${details.dept || ""}`, margin, 60);
+    let y = 76;
+    PROFILE_SECTIONS.forEach((section) => {
+      const rows = section.fields.map(([key, label]) => [label, details[key] == null || details[key] === "" ? "—" : String(details[key])]);
+      autoTable(pdf, {
+        startY: y,
+        head: [[section.title, ""]],
+        body: rows,
+        theme: "grid",
+        styles: { fontSize: 8, cellPadding: 4, overflow: "linebreak" },
+        headStyles: { fillColor: [141, 94, 56] },
+        columnStyles: { 0: { cellWidth: 170 }, 1: { cellWidth: 350 } },
+        margin: { left: margin, right: margin },
+      });
+      y = (pdf.lastAutoTable?.finalY || y) + 10;
+    });
+    const safeName = String(details.name || "employee").trim().replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").toLowerCase() || "employee";
+    pdf.save(`${safeName}-profile.pdf`);
+  };
   useEffect(() => () => {
     if (preview?.blobUrl) URL.revokeObjectURL(preview.data);
   }, [preview]);
@@ -614,7 +754,7 @@ function EmployeeDetailsModal({ employee, onClose }) {
             </div>}
           </section>
         </div>
-        <footer className="hr-employee-detail-footer"><button className="hr-ghost" type="button" onClick={onClose}>Close</button></footer>
+        <footer className="hr-employee-detail-footer"><button className="hr-ghost" type="button" onClick={downloadProfile}><Download size={14} /> Download profile</button><button className="hr-ghost" type="button" onClick={onClose}>Close</button></footer>
       </section>
     </div>
   );
@@ -1160,36 +1300,33 @@ function SalaryReport({ c: { db } }) {
     && `${employee.id} ${employee.name} ${employee.dept} ${employee.desig} ${employee.bankName || ""} ${employee.accountNumber || ""} ${employee.ifscCode || ""}`.toLowerCase().includes(appliedFilters.query.trim().toLowerCase())
   ));
   const reportMonth = appliedFilters.month || MONTH;
-  const [year, month] = reportMonth.split("-").map(Number);
-  const daysInMonth = new Date(year, month, 0).getDate();
-  const monthPrefix = `${reportMonth}-`;
-  const holidays = Array.from({ length: daysInMonth }, (_, index) => new Date(year, month - 1, index + 1))
-    .filter((date) => date.getDay() === 0).length;
+  const salarySourceDate = P(`${reportMonth}-01`);
+  salarySourceDate.setMonth(salarySourceDate.getMonth() - 1);
+  const salarySourceMonth = iso(salarySourceDate).slice(0, 7);
+  const salarySourceLabel = salarySourceDate.toLocaleString("en-IN", { month: "long", year: "numeric" });
+  const previousMonthPayrolls = new Map((db.payrolls || [])
+    .filter((payroll) => payroll.month === salarySourceMonth && !payroll.deleted)
+    .map((payroll) => [String(payroll.employeeId), payroll]));
+  const attendance = attendanceLookup(db);
   const rows = filteredRows.map((employee) => {
-    const attendance = Object.entries(db.att).filter(([key]) => key.startsWith(monthPrefix) && key.endsWith(`|${employee.id}`)).map(([, status]) => status);
-    const present = attendance.filter((status) => status === "Present").length;
-    const leaveDays = attendance.filter((status) => status === "Leave").length;
-    const absences = attendance.filter((status) => status === "Absent").length;
-    const unpaidLeaveDays = Math.max(0, Number(employee.unpaidLeaveDays) || 0, absences);
-    const payableDays = Math.max(0, daysInMonth - unpaidLeaveDays);
-    const baseSalary = Math.max(0, Number(employee.salary) || 0);
-    const hrm = Math.max(0, Number(employee.hrm) || 0);
-    const otherAllowance = Math.max(0, Number(employee.otherAllowance) || 0);
-    const bonus = Math.max(0, Number(employee.bonus) || 0);
-    const incentive = Math.max(0, Number(employee.incentive) || 0);
+    const days = salaryAttendanceSummary(db, employee, reportMonth, attendance);
+    const previousPayroll = previousMonthPayrolls.get(String(employee.id));
+    const baseSalary = Math.max(0, Number(previousPayroll?.salary ?? employee.salary) || 0);
+    const hrm = Math.max(0, Number(previousPayroll?.hra ?? employee.hrm) || 0);
+    const otherAllowance = Math.max(0, Number(previousPayroll?.allowances ?? employee.otherAllowance) || 0);
+    const bonus = Math.max(0, Number(previousPayroll?.bonus ?? employee.bonus) || 0);
+    const incentive = Math.max(0, Number(previousPayroll?.incentive ?? employee.incentive) || 0);
     const gross = baseSalary + hrm + otherAllowance + bonus + incentive;
-    const leaveDeduction = Math.round((baseSalary / 30) * unpaidLeaveDays * 100) / 100
-      + Math.max(0, Number(employee.currentMonthLeaveDeduction) || 0);
-    const pf = Math.max(0, Number(employee.pf) || 0);
-    const tax = Math.max(0, Number(employee.taxDeduction) || 0);
-    const deductions = pf + tax + leaveDeduction;
+    const oneDaySalary = days.daysInMonth ? baseSalary / days.daysInMonth : 0;
+    const attendanceDeduction = oneDaySalary * (days.absent + days.unpaidLeaveDays);
+    const nonEmployedDeduction = oneDaySalary * (days.daysInMonth - days.employedDays);
+    const pf = Math.max(0, Number(previousPayroll?.pf ?? employee.pf) || 0);
+    const tax = Math.max(0, Number(previousPayroll?.tax ?? employee.taxDeduction) || 0);
+    const deductions = attendanceDeduction + nonEmployedDeduction + pf + tax;
     return {
       ...employee,
-      present,
-      leaveDays,
-      holidayDays: holidays,
-      payableDays,
-      daysInMonth,
+      ...days,
+      salarySourceMonth: previousPayroll ? salarySourceMonth : "profile",
       baseSalary,
       hrm,
       otherAllowance,
@@ -1198,23 +1335,27 @@ function SalaryReport({ c: { db } }) {
       gross,
       pf,
       tax,
+      attendanceDeduction,
+      nonEmployedDeduction,
       deductions,
       net: Math.max(0, gross - deductions),
     };
   });
   const totalNet = rows.reduce((total, row) => total + row.net, 0);
   const totalGross = rows.reduce((total, row) => total + row.gross, 0);
+  const totalDeductions = rows.reduce((total, row) => total + row.deductions, 0);
   const money = (value) => `₹${Number(value || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   const exportRows = rows.map((row, index) => ({
     "S.N": index + 1,
-    "Employee ID": row.id,
+    "EMP ID": row.id,
     Name: row.name,
-    Bank: row.bankName || "—",
-    "A/C No": row.accountNumber || "—",
-    IFSC: row.ifscCode || "—",
+    Bank: row.bankName || "-",
+    "A/C No": row.accountNumber || "-",
+    IFSC: row.ifscCode || "-",
     "Basic Salary": row.baseSalary,
-    Present: row.present,
-    Leave: row.leaveDays,
+    "Salary Source": row.salarySourceMonth === "profile" ? "Employee profile" : row.salarySourceMonth,
+    Present: `${row.present} days`,
+    "Absent / Leave": `${row.absent + row.leaveDays} days (${row.absent} absent; ${row.paidLeaveDays} paid, ${row.unpaidLeaveDays} deducted)`,
     Holiday: row.holidayDays,
     Payable: `${row.payableDays} / ${row.daysInMonth}`,
     Bonus: row.bonus,
@@ -1228,6 +1369,15 @@ function SalaryReport({ c: { db } }) {
     XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(exportRows), "Salary Report");
     XLSX.writeFile(workbook, `salary-report-${reportMonth}.xlsx`);
   };
+  const exportCsv = () => {
+    const csv = XLSX.utils.sheet_to_csv(XLSX.utils.json_to_sheet(exportRows));
+    const url = URL.createObjectURL(new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `salary-report-${reportMonth}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
   const exportPdf = () => {
     const pdf = new jsPDF({ orientation: "landscape", unit: "pt", format: "a3" });
     pdf.setFontSize(16);
@@ -1236,7 +1386,7 @@ function SalaryReport({ c: { db } }) {
     pdf.text(`${rows.length} employee records · Gross ${money(totalGross)} · Net payable ${money(totalNet)}`, 32, 48);
     autoTable(pdf, {
       startY: 60,
-      head: [["S.N", "Emp ID", "Name", "Bank", "A/C No", "IFSC", "Basic", "Present", "Leave", "Holiday", "Payable", "Bonus", "Incentive", "Allowances", "Deductions", "Net Payable"]],
+      head: [["S.N", "Emp ID", "Name", "Bank", "A/C No", "IFSC", "Basic salary", "Present", "Absent / Leave", "Holiday", "Payable", "Bonus", "Incentive", "Allowances", "Deductions", "Net payable"]],
       body: exportRows.map((row) => Object.values(row)),
       styles: { fontSize: 7, cellPadding: 4 },
       headStyles: { fillColor: [141, 94, 56] },
@@ -1253,28 +1403,35 @@ function SalaryReport({ c: { db } }) {
     <div className="hr-salary-report">
       <section className="hr-card hr-box hr-salary-filter-panel">
         <div className="hr-salary-filter-grid">
-          <label className="hr-f"><span>Month</span><input type="month" value={filters.month} onChange={(event) => setFilters((current) => ({ ...current, month: event.target.value }))} /></label>
+          <label className="hr-f"><span>Month</span><input type="month" max={MONTH} value={filters.month} onChange={(event) => setFilters((current) => ({ ...current, month: event.target.value }))} /></label>
           <label className="hr-f"><span>Department</span><select value={filters.department} onChange={(event) => setFilters((current) => ({ ...current, department: event.target.value }))}>{["All", ...DEPTS].map((department) => <option key={department}>{department}</option>)}</select></label>
           <label className="hr-f hr-salary-search"><span>Search employees</span><div className="hr-sbox"><Search size={16} /><input type="search" placeholder="Name, ID, bank..." value={filters.query} onChange={(event) => setFilters((current) => ({ ...current, query: event.target.value }))} /></div></label>
         </div>
         <div className="hr-salary-filter-actions">
           <div><button type="button" className="hr-ghost" onClick={() => setAppliedFilters({ ...filters })}><Filter size={15} /> Apply filters</button><button type="button" className="hr-ghost" onClick={reset}><RotateCcw size={15} /> Reset</button></div>
-          <div><button type="button" className="hr-ghost" onClick={exportExcel}><FileSpreadsheet size={15} /> Export to Excel</button><button type="button" className="hr-ghost" onClick={exportPdf}><FileText size={15} /> Export to PDF</button></div>
+          <div><button type="button" className="hr-ghost" onClick={exportExcel} disabled={!rows.length}><FileSpreadsheet size={15} /> Export to Excel</button><button type="button" className="hr-ghost" onClick={exportCsv} disabled={!rows.length}><FileSpreadsheet size={15} /> Export to CSV</button><button type="button" className="hr-ghost" onClick={exportPdf} disabled={!rows.length}><FileText size={15} /> Export to PDF</button></div>
         </div>
       </section>
       <Card title="Salary report" right={<span className="hr-count">{rows.length} employees · {reportMonth}</span>}>
-        {rows.length ? <div className="hr-tw hr-salary-table-wrap" tabIndex={0} role="region" aria-label="Salary report table, scroll to see all columns and employees"><table className="hr-t hr-salary-table">
-          <thead><tr>{["S.N", "Emp ID", "Name", "Bank", "A/C No", "IFSC", "Basic salary", "Present", "Leave", "Holiday", "Payable", "Bonus", "Incentive", "Allowances", "Deductions", "Net payable"].map((heading) => <th key={heading}>{heading}</th>)}</tr></thead>
+        {rows.length ? <div className="hr-tw hr-salary-table-wrap"><table className="hr-t hr-salary-table">
+          <thead><tr>{["S.N", "Employee", "Bank details", "Basic salary", "Present", "Absent / Leave", "Holiday", "Payable", "Earnings", "Deductions", "Net payable"].map((heading) => <th key={heading}>{heading}</th>)}</tr></thead>
           <tbody>{rows.map((row, index) => <tr key={row.id}>
-            <td>{index + 1}</td><td>{row.id}</td><td className="hr-salary-name">{row.name}</td>
-            <td>{row.bankName || "—"}</td><td>{row.accountNumber || "—"}</td><td>{row.ifscCode || "—"}</td>
-            <td>{money(row.baseSalary)}</td><td className="hr-salary-present">{row.present} days</td>
-            <td className="hr-salary-leave">{row.leaveDays} days</td><td className="hr-salary-holiday">{row.holidayDays} days</td>
-            <td>{row.payableDays} / {row.daysInMonth}</td><td>{money(row.bonus)}</td><td>{money(row.incentive)}</td>
-            <td>{money(row.hrm + row.otherAllowance)}</td><td>{money(row.deductions)}</td><td className="hr-salary-net">{money(row.net)}</td>
-          </tr>)}</tbody>
+            <td data-label="S.N">{index + 1}</td>
+            <td data-label="Employee" className="hr-salary-name"><strong>{row.name}</strong><small>ID {row.id} · {row.dept || "—"}</small></td>
+            <td data-label="Bank details" className="hr-salary-detail"><strong>{row.bankName || "—"}</strong><small>A/C {row.accountNumber || "—"}</small><small>IFSC {row.ifscCode || "—"}</small></td>
+            <td data-label="Basic salary" className="hr-salary-detail"><strong>{money(row.baseSalary)}</strong><small>{row.salarySourceMonth === "profile" ? "Profile salary" : salarySourceLabel}</small></td>
+            <td data-label="Present" className="hr-salary-present">{row.present} days</td>
+            <td data-label="Absent / Leave" className="hr-salary-leave"><span>{row.absent + row.leaveDays} days</span><small>{row.absent} absent · {row.paidLeaveDays} paid · {row.unpaidLeaveDays} deducted</small></td>
+            <td data-label="Holiday" className="hr-salary-holiday">{row.holidayDays} days</td>
+            <td data-label="Payable">{row.payableDays} / {row.daysInMonth}</td>
+            <td data-label="Earnings" className="hr-salary-detail"><small>Bonus {money(row.bonus)}</small><small>Incentive {money(row.incentive)}</small><small>Allowances {money(row.hrm + row.otherAllowance)}</small></td>
+            <td data-label="Deductions">{money(row.deductions)}</td>
+            <td data-label="Net payable" className="hr-salary-net">{money(row.net)}</td>
+          </tr>)}
+          </tbody>
         </table></div> : <Empty t="No employees match these salary report filters." />}
         {rows.length > 0 && <div className="hr-salary-total"><span>Totals for {rows.length} employees</span><strong>Gross {money(totalGross)}</strong><strong>Net payable {money(totalNet)}</strong></div>}
+        {rows.length > 0 && <p className="hr-salary-report-note">Salary amounts use {salarySourceLabel} payroll where saved; otherwise the employee profile salary is used. Attendance is counted through {rows[0].throughDate}; unmarked Sundays count as weekly holidays and other unmarked employed days count as absent.</p>}
       </Card>
     </div>
   );
@@ -1283,69 +1440,151 @@ function IDCard({ c: { db, employeeRosterStatus } }) {
   const me = db.me || { company: "System Technologies", branch: "Ajmer" };
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState(null);
+  const [qrCode, setQrCode] = useState("");
+  useEffect(() => {
+    let active = true;
+    QRCode.toDataURL(ID_CARD_CONTACT.mapsUrl, {
+      width: 240, margin: 2, errorCorrectionLevel: "M",
+      color: { dark: "#111111", light: "#ffffff" },
+    }).then((dataUrl) => { if (active) setQrCode(dataUrl); })
+      .catch((error) => console.warn("Unable to create the ID card QR code.", error));
+    return () => { active = false; };
+  }, []);
   const search = query.trim().toLowerCase();
   const employees = act(db).filter((employee) =>
     `${employee.id} ${employee.name} ${employee.phone} ${employee.dept} ${employee.desig} ${employee.joined}`.toLowerCase().includes(search));
-  const download = (employee) => {
-    const pdf = new jsPDF({ unit: "pt", format: [360, 600] });
+  const cardId = (employee) => `ST-${String(employee.id).padStart(4, "0")}`;
+  const cardDetails = selected ? [
+    ["Emp ID", cardId(selected)],
+    ["Department", selected.dept || "-"],
+    ["Mobile No", selected.phone || "-"],
+      ["Branch Code", selected.branchCode || "-"],
+  ] : [];
+  const download = async (employee) => {
     const width = 360;
-    pdf.setFillColor(250, 248, 245);
-    pdf.roundedRect(12, 12, 336, 576, 18, 18, "F");
-    pdf.setFillColor(20, 22, 24);
-    pdf.roundedRect(12, 12, 336, 132, 18, 18, "F");
-    pdf.rect(12, 120, 336, 24, "F");
-    pdf.setFillColor(141, 94, 56);
-    pdf.rect(12, 140, 336, 5, "F");
-    pdf.setTextColor(255, 255, 255);
-    pdf.setFont("helvetica", "bold");
-    pdf.setFontSize(12);
-    pdf.text(String(me.company || "System Technologies").toUpperCase(), width / 2, 52, { align: "center", maxWidth: 290 });
-    pdf.setFont("helvetica", "normal");
-    pdf.setFontSize(9);
-    pdf.text("EMPLOYEE IDENTIFICATION CARD", width / 2, 72, { align: "center" });
-    if (employee.photo?.startsWith("data:image/png") || employee.photo?.startsWith("data:image/jpeg")) {
-      const imageFormat = employee.photo.startsWith("data:image/png") ? "PNG" : "JPEG";
-      pdf.addImage(employee.photo, imageFormat, 125, 160, 110, 110, undefined, "FAST");
-    } else {
-      pdf.setFillColor(238, 232, 225);
-      pdf.circle(width / 2, 215, 55, "F");
-      pdf.setTextColor(100, 80, 64);
-      pdf.setFontSize(28);
-      pdf.text(employee.name.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase(), width / 2, 224, { align: "center" });
+    const height = 600;
+    const pdf = new jsPDF({ unit: "pt", format: [width, height], compress: true });
+    const employeeId = `ST-${String(employee.id).padStart(4, "0")}`;
+    const initials = String(employee.name || "E").split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase();
+    const drawBackground = (front) => {
+      pdf.setFillColor(17, 17, 17);
+      pdf.rect(0, 0, width, height, "F");
+      pdf.setDrawColor(82, 82, 82);
+      pdf.setLineWidth(0.7);
+      pdf.rect(1, 1, width - 2, height - 2, "S");
+      pdf.setDrawColor(237, 28, 36);
+      pdf.setLineWidth(3);
+      if (front) {
+        pdf.line(105, 0, 180, 44); pdf.line(180, 44, 255, 0);
+        pdf.line(105, height, 180, height - 44); pdf.line(180, height - 44, 255, height);
+        pdf.setFillColor(237, 28, 36);
+        pdf.lines([[40, 24], [40, 50], [-40, 26], [-40, -76]], 0, 82, [1, 1], "F", true);
+        pdf.lines([[-40, 24], [-40, 50], [40, 26], [40, -76]], width, 402, [1, 1], "F", true);
+      } else {
+        pdf.line(0, 8, 64, 8); pdf.line(64, 8, 92, 54); pdf.line(92, 54, 0, 210);
+        pdf.line(width, 8, width - 64, 8); pdf.line(width - 64, 8, width - 92, 54); pdf.line(width - 92, 54, width, 72);
+        pdf.line(0, height - 62, 46, height - 50); pdf.line(46, height - 50, 58, height);
+        pdf.line(width, height - 170, width - 78, height - 36); pdf.line(width - 78, height - 36, width - 64, height);
+      }
+    };
+    const drawBrand = () => {
+      pdf.setTextColor(255, 255, 255);
+      pdf.setDrawColor(255, 255, 255);
+      pdf.setLineWidth(1.4);
+      pdf.roundedRect(165, 54, 30, 30, 3, 3, "S");
+      pdf.setFont("helvetica", "bold"); pdf.setFontSize(16);
+      pdf.text("ST", 180, 75, { align: "center" });
+      pdf.setFontSize(15);
+      pdf.text(String(me.company || "System Technologies").toUpperCase(), 180, 104, { align: "center", maxWidth: 310 });
+      pdf.setDrawColor(230, 230, 230); pdf.setLineWidth(0.8); pdf.line(54, 111, 306, 111);
+      pdf.setFont("helvetica", "normal"); pdf.setFontSize(9);
+      pdf.text("A LEADING IT SOLUTION COMPANY", 180, 126, { align: "center" });
+    };
+    const drawPhoneIcon = (x, y) => {
+      pdf.setFillColor(255, 255, 255);
+      pdf.roundedRect(x, y, 5, 8, 1.5, 1.5, "F");
+      pdf.roundedRect(x + 11, y + 9, 5, 8, 1.5, 1.5, "F");
+      pdf.setDrawColor(255, 255, 255); pdf.setLineWidth(4); pdf.line(x + 3, y + 5, x + 13, y + 13);
+    };
+    const drawMailIcon = (x, y) => {
+      pdf.setDrawColor(255, 255, 255); pdf.setLineWidth(1.6);
+      pdf.rect(x, y, 17, 12, "S");
+      pdf.line(x, y, x + 8.5, y + 6);
+      pdf.line(x + 17, y, x + 8.5, y + 6);
+    };
+    const drawPointerIcon = (x, y) => {
+      pdf.setFillColor(255, 255, 255); pdf.setDrawColor(255, 255, 255); pdf.setLineWidth(1);
+      pdf.lines([[0, 20], [6, -7], [5, 10], [4, -2], [-5, -11], [10, -1], [-20, -9]], x, y, [1, 1], "F", true);
+    };
+
+    drawBackground(true);
+    drawBrand();
+    pdf.setFillColor(255, 255, 255); pdf.roundedRect(83, 148, 194, 176, 15, 15, "F");
+    pdf.setDrawColor(237, 28, 36); pdf.setLineWidth(5); pdf.roundedRect(83, 148, 194, 176, 15, 15, "S");
+    let photo = employee.photo || employee.imageUrl || "";
+    if (photo && !photo.startsWith("data:image/png") && !photo.startsWith("data:image/jpeg")) {
+      try {
+        const response = await fetch(photo, { mode: "cors" });
+        if (!response.ok) throw new Error("Photo request failed");
+        const blob = await response.blob();
+        if (!["image/png", "image/jpeg"].includes(blob.type)) throw new Error("Unsupported photo format");
+        photo = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
+          reader.onerror = () => reject(new Error("Could not read profile photo"));
+          reader.readAsDataURL(blob);
+        });
+      } catch { photo = ""; }
     }
-    pdf.setTextColor(31, 26, 23);
-    pdf.setFont("helvetica", "bold");
-    pdf.setFontSize(17);
-    pdf.text(employee.name, width / 2, 300, { align: "center", maxWidth: 300 });
-    pdf.setFont("helvetica", "normal");
-    pdf.setTextColor(100, 93, 85);
-    pdf.setFontSize(11);
-    pdf.text(employee.desig || "Employee", width / 2, 322, { align: "center", maxWidth: 300 });
-    pdf.setFontSize(10);
+    if (photo.startsWith("data:image/png") || photo.startsWith("data:image/jpeg")) {
+      pdf.addImage(photo, photo.startsWith("data:image/png") ? "PNG" : "JPEG", 91, 156, 178, 160, undefined, "FAST");
+    } else {
+      pdf.setTextColor(17, 17, 17); pdf.setFont("helvetica", "bold"); pdf.setFontSize(42);
+      pdf.text(initials, 180, 246, { align: "center" });
+    }
+    pdf.setTextColor(255, 255, 255); pdf.setFont("helvetica", "bold"); pdf.setFontSize(17);
+    pdf.text(String(employee.name || "Employee"), 180, 350, { align: "center", maxWidth: 320 });
+    pdf.setFont("helvetica", "normal"); pdf.setFontSize(11);
+    const designation = String(employee.desig || "Employee");
+    const designationWidth = Math.min(245, Math.max(94, pdf.getTextWidth(designation) + 28));
+    pdf.setDrawColor(237, 28, 36); pdf.setLineWidth(1.2);
+    pdf.roundedRect((width - designationWidth) / 2, 362, designationWidth, 24, 8, 8, "S");
+    pdf.text(designation, 180, 378, { align: "center", maxWidth: designationWidth - 18 });
     const details = [
-      ["EMPLOYEE ID", `ST-${String(employee.id).padStart(4, "0")}`],
-      ["CONTACT", employee.phone || "—"],
-      ["DEPARTMENT", employee.dept || "—"],
-      ["BRANCH", employee.branch || me.branch || "—"],
-      ["DATE OF JOINING", employee.joined || "—"],
+      ["Emp ID", employeeId],
+      ["Department", employee.dept || "-"],
+      ["Mobile No", employee.phone || "-"],
+      ["Branch Code", employee.branchCode || "-"],
     ];
     details.forEach(([label, value], index) => {
-      const y = 370 + index * 36;
-      pdf.setDrawColor(220, 212, 202);
-      pdf.line(42, y - 15, 318, y - 15);
-      pdf.setTextColor(103, 93, 85);
-      pdf.text(label, 46, y);
-      pdf.setTextColor(31, 26, 23);
-      pdf.setFont("helvetica", "bold");
-      pdf.text(String(value), 314, y, { align: "right", maxWidth: 170 });
-      pdf.setFont("helvetica", "normal");
+      const y = 414 + index * 25;
+      pdf.setDrawColor(76, 76, 76); pdf.setLineWidth(0.55); pdf.line(74, y + 7, 286, y + 7);
+      pdf.setFontSize(10); pdf.setTextColor(235, 235, 235); pdf.text(label, 76, y);
+      pdf.setTextColor(255, 255, 255); pdf.text(`: ${String(value)}`, 160, y, { maxWidth: 125 });
     });
-    pdf.setFillColor(100, 62, 35);
-    pdf.roundedRect(105, 555, 150, 22, 11, 11, "F");
-    pdf.setTextColor(255, 255, 255);
-    pdf.setFontSize(9);
-    pdf.text(String(me.company || "System Technologies"), width / 2, 570, { align: "center", maxWidth: 140 });
-    pdf.save(`employee-id-${employee.id}.pdf`);
+    pdf.setFont("helvetica", "bold"); pdf.setFontSize(8); pdf.setTextColor(255, 255, 255);
+    pdf.text(`Corporate Office: ${ID_CARD_CONTACT.addressLine1}`, 180, 531, { align: "center", maxWidth: 330 });
+    pdf.text(ID_CARD_CONTACT.addressLine2, 180, 548, { align: "center", maxWidth: 330 });
+    pdf.text("Find Us On Google", 180, 565, { align: "center" });
+
+    pdf.addPage([width, height], "portrait");
+    drawBackground(false);
+    drawBrand();
+    pdf.setTextColor(230, 230, 230); pdf.setFont("helvetica", "normal"); pdf.setFontSize(9);
+    pdf.text("EMPLOYEE AND COMPANY CONTACT", 180, 151, { align: "center" });
+    const qr = qrCode || await QRCode.toDataURL(ID_CARD_CONTACT.mapsUrl, {
+      width: 240, margin: 2, errorCorrectionLevel: "M", color: { dark: "#111111", light: "#ffffff" },
+    });
+    pdf.setFillColor(255, 255, 255); pdf.rect(94, 190, 172, 172, "F");
+    pdf.addImage(qr, "PNG", 101, 197, 158, 158, undefined, "FAST");
+    pdf.setFont("helvetica", "normal"); pdf.setFontSize(11); pdf.setTextColor(255, 255, 255);
+    drawPhoneIcon(65, 418); pdf.text(ID_CARD_CONTACT.phone, 92, 430);
+    drawMailIcon(65, 445); pdf.text(ID_CARD_CONTACT.email, 92, 455, { maxWidth: 250 });
+    drawPointerIcon(65, 466); pdf.text(ID_CARD_CONTACT.website, 92, 480, { maxWidth: 250 });
+    pdf.setFontSize(8); pdf.setTextColor(200, 200, 200);
+    pdf.text("Find Us On Google", 180, 510, { align: "center" });
+    const safeId = String(employee.id).replace(/[^a-z0-9_-]/gi, "-");
+    pdf.save(`employee-id-${safeId}.pdf`);
   };
   if (employeeRosterStatus !== "ready") return <Card title="ID Card List"><Empty t={employeeRosterStatus === "error" ? "Unable to load employees from the backend. Refresh to try again." : "Loading employees from the backend…"} /></Card>;
 
@@ -1371,22 +1610,46 @@ function IDCard({ c: { db, employeeRosterStatus } }) {
           <button type="button" aria-label="Close ID card preview" onClick={() => setSelected(null)}><X size={18} /></button>
         </header>
         <div className="hr-id-card-dialog-content">
-          <article className="hr-id-card-preview">
-            <div className="hr-id-card-brand"><div className="hr-id-card-logo">S/T</div><strong>{me.company || "System Technologies"}</strong><small>EMPLOYEE IDENTIFICATION</small></div>
-            {selected.photo
-              ? <img className="hr-id-card-photo" src={selected.photo} alt={`${selected.name} profile`} />
-              : <div className="hr-id-card-photo hr-id-card-placeholder"><UserCircle size={54} /></div>}
-            <h3>{selected.name}</h3>
-            <span className="hr-id-card-designation">{selected.desig || "Employee"}</span>
-            <dl>
-              <dt>Employee ID</dt><dd>ST-{String(selected.id).padStart(4, "0")}</dd>
-              <dt>Mobile</dt><dd>{selected.phone || "—"}</dd>
-              <dt>Department</dt><dd>{selected.dept || "—"}</dd>
-              <dt>Branch</dt><dd>{selected.branch || me.branch || "—"}</dd>
-              <dt>Date of joining</dt><dd>{selected.joined || "—"}</dd>
-            </dl>
-            <footer>{me.company || "System Technologies"} · {me.branch || "Corporate Office"}</footer>
-          </article>
+          <div className="hr-id-card-faces">
+            <article className="hr-id-card-preview hr-id-card-front">
+              <div className="hr-id-card-brand">
+                <div className="hr-id-card-logo">ST</div>
+                <strong>{me.company || "System Technologies"}</strong>
+                <small>A LEADING IT SOLUTION COMPANY</small>
+              </div>
+              <div className="hr-id-card-photo-frame">
+                {selected.photo || selected.imageUrl
+                  ? <img className="hr-id-card-photo" src={selected.photo || selected.imageUrl} alt={`${selected.name} profile`} />
+                  : <div className="hr-id-card-photo hr-id-card-placeholder"><UserCircle size={54} /></div>}
+              </div>
+              <h3>{selected.name}</h3>
+              <span className="hr-id-card-designation">{selected.desig || "Employee"}</span>
+              <dl className="hr-id-card-fields">
+                {cardDetails.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>: {value}</dd></div>)}
+              </dl>
+              <footer>
+                <strong>Corporate Office: {ID_CARD_CONTACT.addressLine1}</strong>
+                <strong>{ID_CARD_CONTACT.addressLine2}</strong>
+                <span>Find Us On Google</span>
+              </footer>
+            </article>
+            <article className="hr-id-card-preview hr-id-card-back">
+              <div className="hr-id-card-brand">
+                <div className="hr-id-card-logo">ST</div>
+                <strong>{me.company || "System Technologies"}</strong>
+                <small>A LEADING IT SOLUTION COMPANY</small>
+              </div>
+              <div className="hr-id-card-qr-frame">
+                {qrCode ? <img src={qrCode} alt="System Technologies Google Maps QR code" /> : <span>QR</span>}
+              </div>
+              <small className="hr-id-card-qr-caption">Find Us On Google</small>
+              <div className="hr-id-card-contact">
+                <span><Phone aria-hidden="true" /> {ID_CARD_CONTACT.phone}</span>
+                <span><Mail aria-hidden="true" /> {ID_CARD_CONTACT.email}</span>
+                <span><MousePointer2 aria-hidden="true" /> {ID_CARD_CONTACT.website}</span>
+              </div>
+            </article>
+          </div>
         </div>
         <footer className="hr-id-card-dialog-actions">
           <button className="hr-ghost" type="button" onClick={() => setSelected(null)}>Close</button>
@@ -1397,11 +1660,11 @@ function IDCard({ c: { db, employeeRosterStatus } }) {
   </>);
 }
 function Payroll({ c: { db, upd } }) {
-  const [filters, setFilters] = useState({ query: "", month: MONTH });
-  const [appliedFilters, setAppliedFilters] = useState({ query: "", month: MONTH });
+  const [filters, setFilters] = useState({ query: "", month: LAST_MONTH });
+  const [appliedFilters, setAppliedFilters] = useState({ query: "", month: LAST_MONTH });
   const [editor, setEditor] = useState(null);
   const [slip, setSlip] = useState(null);
-  const selectedMonth = appliedFilters.month || MONTH;
+  const selectedMonth = appliedFilters.month || LAST_MONTH;
   const activeEmployees = act(db);
   const savedPayrolls = db.payrolls || [];
   const amount = (value) => Math.max(0, Number(value) || 0);
@@ -1422,6 +1685,7 @@ function Payroll({ c: { db, upd } }) {
       department: employee.dept,
       designation: employee.desig,
       month,
+      status: "Pending",
       salary,
       hra,
       allowances,
@@ -1455,7 +1719,7 @@ function Payroll({ c: { db, upd } }) {
   };
   const openEdit = (payroll) => {
     const employee = activeEmployees.find((item) => String(item.id) === String(payroll.employeeId));
-    setEditor({ mode: "edit", form: { ...(employee ? calculatePayroll(employee, payroll.month) : {}), ...payroll } });
+    setEditor({ mode: "edit", form: { ...(employee ? calculatePayroll(employee, payroll.month) : {}), ...payroll, status: payroll.status || "Pending" } });
   };
   const updateEditor = (key, value) => setEditor((current) => ({ ...current, form: { ...current.form, [key]: value } }));
   const setEmployee = (employeeId) => {
@@ -1627,21 +1891,34 @@ function Payroll({ c: { db, upd } }) {
       ]} />
     </Card>
     {editor && <div className="hr-modal hr-payroll-modal" role="presentation" onClick={() => setEditor(null)}>
-      <section className="hr-card hr-payroll-dialog" role="dialog" aria-modal="true" aria-labelledby="hr-payroll-form-title" onClick={(event) => event.stopPropagation()}>
-        <header className="hr-employee-detail-heading"><h2 id="hr-payroll-form-title">{editor.mode === "edit" ? "Edit Payroll" : "Add Payroll"}</h2><button type="button" aria-label="Close payroll form" onClick={() => setEditor(null)}><X size={18} /></button></header>
-        <form className="hr-payroll-form" onSubmit={submitPayroll}>
-          <label className="hr-f"><span>Employee</span><select required disabled={editor.mode === "edit" && !editor.form.isDraft} value={editor.form.employeeId} onChange={(event) => setEmployee(event.target.value)}>{activeEmployees.map((employee) => <option key={employee.id} value={employee.id}>{employee.name} · ST-{String(employee.id).padStart(4, "0")}</option>)}</select></label>
-          <label className="hr-f"><span>Month</span><input required type="month" value={editor.form.month} onChange={(event) => updateEditor("month", event.target.value)} /></label>
-          <label className="hr-f"><span>Basic Salary (₹)</span><input required type="number" min="0" step="0.01" value={editor.form.salary} onChange={(event) => updateEditor("salary", event.target.value)} /></label>
-          <label className="hr-f"><span>HRA (₹)</span><input type="number" min="0" step="0.01" value={editor.form.hra} onChange={(event) => updateEditor("hra", event.target.value)} /></label>
-          <label className="hr-f"><span>Allowances (₹)</span><input type="number" min="0" step="0.01" value={editor.form.allowances} onChange={(event) => updateEditor("allowances", event.target.value)} /></label>
-          <label className="hr-f"><span>Bonus (₹)</span><input type="number" min="0" step="0.01" value={editor.form.bonus} onChange={(event) => updateEditor("bonus", event.target.value)} /></label>
-          <label className="hr-f"><span>Incentive (₹)</span><input type="number" min="0" step="0.01" value={editor.form.incentive} onChange={(event) => updateEditor("incentive", event.target.value)} /></label>
-          <label className="hr-f"><span>PF (₹)</span><input type="number" min="0" step="0.01" value={editor.form.pf} onChange={(event) => updateEditor("pf", event.target.value)} /></label>
-          <label className="hr-f"><span>Tax (₹)</span><input type="number" min="0" step="0.01" value={editor.form.tax} onChange={(event) => updateEditor("tax", event.target.value)} /></label>
-          <label className="hr-f"><span>Other Deductions (₹)</span><input type="number" min="0" step="0.01" value={editor.form.otherDeductions} onChange={(event) => updateEditor("otherDeductions", event.target.value)} /></label>
-          <p className="hr-payroll-form-total">Gross: <strong>{formatMoney(amount(editor.form.salary) + amount(editor.form.hra) + amount(editor.form.allowances) + amount(editor.form.bonus) + amount(editor.form.incentive))}</strong><span>Net is calculated after deductions.</span></p>
-          <footer className="hr-payroll-dialog-actions"><button className="hr-ghost" type="button" onClick={() => setEditor(null)}>Cancel</button><button className="hr-btn" type="submit">Save Payroll</button></footer>
+      <section className={`hr-card hr-payroll-dialog ${editor.mode === "edit" ? "hr-payroll-edit-dialog" : ""}`} role="dialog" aria-modal="true" aria-labelledby="hr-payroll-form-title" onClick={(event) => event.stopPropagation()}>
+        <header className="hr-employee-detail-heading"><h2 id="hr-payroll-form-title">{editor.mode === "edit" ? "Edit Payroll Record" : "Add Payroll"}</h2><button type="button" aria-label="Close payroll form" onClick={() => setEditor(null)}><X size={18} /></button></header>
+        <form className={`hr-payroll-form ${editor.mode === "edit" ? "hr-payroll-edit-form" : ""}`} onSubmit={submitPayroll}>
+          <section className="hr-payroll-employee-summary"><strong>{editor.form.employeeName || "Employee"}</strong><span>Employee ID: ST-{String(editor.form.employeeId).padStart(4, "0")}</span></section>
+          <section className="hr-payroll-edit-section hr-payroll-period-section"><h3>Payment Details</h3><div className="hr-payroll-edit-grid">
+            {editor.mode === "add" && <label className="hr-f"><span>Employee</span><select required value={editor.form.employeeId} onChange={(event) => setEmployee(event.target.value)}>{activeEmployees.map((employee) => <option key={employee.id} value={employee.id}>{employee.name} · ST-{String(employee.id).padStart(4, "0")}</option>)}</select></label>}
+            <label className="hr-f"><span>Month</span><select required value={(editor.form.month || MONTH).slice(5, 7)} onChange={(event) => updateEditor("month", `${(editor.form.month || MONTH).slice(0, 4)}-${event.target.value}`)}>{Array.from({ length: 12 }, (_, index) => { const value = String(index + 1).padStart(2, "0"); return <option key={value} value={value}>{new Date(2000, index).toLocaleString("en-IN", { month: "long" })}</option>; })}</select></label>
+            <label className="hr-f"><span>Year</span><input type="number" min="2000" max="2100" value={(editor.form.month || MONTH).slice(0, 4)} onChange={(event) => updateEditor("month", `${event.target.value}-${(editor.form.month || MONTH).slice(5, 7)}`)} /></label>
+            <label className="hr-f"><span>Status</span><select value={editor.form.status || "Pending"} onChange={(event) => updateEditor("status", event.target.value)}><option>Pending</option><option>Paid</option></select></label>
+          </div></section>
+          <section className="hr-payroll-edit-section"><h3>Earnings</h3><div className="hr-payroll-edit-grid">
+            <label className="hr-f"><span>Basic Salary (₹)</span><input required type="number" min="0" step="0.01" value={editor.form.salary} onChange={(event) => updateEditor("salary", event.target.value)} /></label>
+            <label className="hr-f"><span>HRA (₹)</span><input type="number" min="0" step="0.01" value={editor.form.hra} onChange={(event) => updateEditor("hra", event.target.value)} /></label>
+            <label className="hr-f"><span>Allowances (₹)</span><input type="number" min="0" step="0.01" value={editor.form.allowances} onChange={(event) => updateEditor("allowances", event.target.value)} /></label>
+            <label className="hr-f"><span>Incentive (₹)</span><input type="number" min="0" step="0.01" value={editor.form.incentive} onChange={(event) => updateEditor("incentive", event.target.value)} /></label>
+            <label className="hr-f"><span>Bonus (₹)</span><input type="number" min="0" step="0.01" value={editor.form.bonus} onChange={(event) => updateEditor("bonus", event.target.value)} /></label>
+          </div></section>
+          <section className="hr-payroll-edit-section"><h3>Deductions</h3><div className="hr-payroll-edit-grid">
+            <label className="hr-f"><span>PF (₹)</span><input type="number" min="0" step="0.01" value={editor.form.pf} onChange={(event) => updateEditor("pf", event.target.value)} /></label>
+            <label className="hr-f"><span>Tax (₹)</span><input type="number" min="0" step="0.01" value={editor.form.tax} onChange={(event) => updateEditor("tax", event.target.value)} /></label>
+            <label className="hr-f"><span>Other Deductions (₹)</span><input type="number" min="0" step="0.01" value={editor.form.otherDeductions} onChange={(event) => updateEditor("otherDeductions", event.target.value)} /></label>
+            <label className="hr-f"><span>Total Deductions (₹)</span><input readOnly value={amount(editor.form.pf) + amount(editor.form.tax) + amount(editor.form.otherDeductions)} /></label>
+          </div></section>
+          <section className="hr-payroll-edit-section hr-payroll-summary-section"><h3>Summary</h3><div className="hr-payroll-edit-grid">
+            <label className="hr-f"><span>Gross Salary (₹)</span><input readOnly value={amount(editor.form.salary) + amount(editor.form.hra) + amount(editor.form.allowances) + amount(editor.form.bonus) + amount(editor.form.incentive)} /></label>
+            <label className="hr-f"><span>Net Salary (₹)</span><input readOnly value={Math.max(0, amount(editor.form.salary) + amount(editor.form.hra) + amount(editor.form.allowances) + amount(editor.form.bonus) + amount(editor.form.incentive) - amount(editor.form.pf) - amount(editor.form.tax) - amount(editor.form.otherDeductions))} /></label>
+          </div></section>
+          <footer className="hr-payroll-dialog-actions"><button className="hr-ghost" type="button" onClick={() => setEditor(null)}>Back to List</button><button className="hr-btn" type="submit">{editor.mode === "edit" ? "Update Payroll" : "Save Payroll"}</button></footer>
         </form>
       </section>
     </div>}
@@ -1769,16 +2046,23 @@ function MarkAttendance({ c: { db, upd } }) {
     </Card>
   );
 }
-function AttendanceReport({ c: { db } }) {
+function AttendanceReport({ c: { db, user } }) {
   const initialFilters = { day: "", date: "", month: MONTH, status: "" };
   const [filters, setFilters] = useState(initialFilters);
   const [appliedFilters, setAppliedFilters] = useState(initialFilters);
   const [error, setError] = useState("");
+  const selfEmployee = (db.emps || []).find((employee) =>
+    [employee.backendId, employee.id].some((id) => id && [user?.id, user?._id].some((userId) => userId && String(id) === String(userId)))
+    || (user?.email && String(employee.email || "").toLowerCase() === String(user.email).toLowerCase()));
+  const firebaseAttendance = new Map((db.hrSummary?.attendanceRecords || [])
+    .filter((record) => record?.date && record?.employeeId)
+    .map((record) => [`${record.date}|${record.employeeId}`, record]));
+  const selfIds = [selfEmployee?.backendId, selfEmployee?.id, user?.id, user?._id, db.me?.crm].filter(Boolean).map(String);
   const daysOfWeek = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
   const monthDays = appliedFilters.month
-    ? range(`${appliedFilters.month}-01`, iso(new Date(+appliedFilters.month.slice(0, 4), +appliedFilters.month.slice(5), 0)))
+    ? attendanceRange(`${appliedFilters.month}-01`, iso(new Date(+appliedFilters.month.slice(0, 4), +appliedFilters.month.slice(5), 0)))
       .filter((date) => date <= TODAY)
-    : range(`${TODAY.slice(0, 7)}-01`, TODAY);
+    : attendanceRange(`${TODAY.slice(0, 7)}-01`, TODAY);
   const reportDays = appliedFilters.date
     ? [appliedFilters.date].filter((date) => date <= TODAY)
     : monthDays;
@@ -1786,7 +2070,10 @@ function AttendanceReport({ c: { db } }) {
     .map((date) => {
       const key = `${date}|1`;
       const details = db.attendanceDetails?.[key] || {};
-      const status = db.att?.[key] || "";
+      const joined = joinDateOf(selfEmployee) || joinDateOf(user) || joinDateOf(db.me);
+      const record = selfIds.map((id) => firebaseAttendance.get(`${date}|${id}`)).find(Boolean);
+      const recordedStatus = record?.status || db.att?.[key];
+      const status = date < joined ? "Absent" : (recordedStatus && recordedStatus !== "Not marked" ? recordedStatus : "Absent");
       const duration = details.workingMilliseconds
         ?? (details.checkedInAt && details.checkedOutAt
           ? Math.max(0, Date.parse(details.checkedOutAt) - Date.parse(details.checkedInAt))
@@ -1807,13 +2094,13 @@ function AttendanceReport({ c: { db } }) {
         branch: db.me?.branch || "—",
         date,
         day: new Date(`${date}T00:00:00`).toLocaleDateString("en-US", { weekday: "long" }),
-        checkIn: formatTime(details.checkedInAt),
-        checkOut: formatTime(details.checkedOutAt),
+        checkIn: record?.checkIn || formatTime(details.checkedInAt),
+        checkOut: record?.checkOut || formatTime(details.checkedOutAt),
         totalHours: [Math.floor(totalSeconds / 3600), Math.floor((totalSeconds % 3600) / 60), totalSeconds % 60]
           .map((part) => String(part).padStart(2, "0"))
           .join(":"),
-        remarks: details.remark || "—",
-        status: status || "Not marked",
+        remarks: record?.remark || details.remark || "—",
+        status,
       };
     })
     .filter((row) => (!appliedFilters.day || row.day === appliedFilters.day)
@@ -1885,7 +2172,7 @@ function AttendanceReport({ c: { db } }) {
         <F l="Select Status">
           <select value={filters.status} onChange={updateFilter("status")}>
             <option value="">Select Status</option>
-            {["Present", "Absent", "Leave", "Not marked"].map((status) => <option key={status}>{status}</option>)}
+            {["Present", "Absent", "Leave"].map((status) => <option key={status}>{status}</option>)}
           </select>
         </F>
         <div className="hr-attendance-report-actions">
@@ -1919,7 +2206,7 @@ function AttendanceReport({ c: { db } }) {
           ["Check-out Time", (row) => row.checkOut],
           ["Total Hours", (row) => row.totalHours],
           ["Remarks", (row) => row.remarks],
-          ["Status", (row) => row.status === "Not marked" ? row.status : <Badge s={row.status} />],
+          ["Status", (row) => <Badge s={row.status} />],
         ]} />
       </Card>
     </section>
@@ -1933,7 +2220,7 @@ function AllAttendance({ c: { db } }) {
   const [filters, setFilters] = useState(initialFilters);
   const [appliedFilters, setAppliedFilters] = useState(initialFilters);
   const [error, setError] = useState("");
-  const employees = db.emps || [];
+  const employees = act(db);
   const departments = [...new Set(employees.map((employee) => employee.dept).filter(Boolean))].sort();
   const branches = [...new Set(employees.map((employee) => employee.branch || db.me?.branch || "—"))].sort();
   const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -1951,31 +2238,43 @@ function AllAttendance({ c: { db } }) {
       .map((part) => String(part).padStart(2, "0"))
       .join(":");
   };
-  const allRows = Object.entries(db.att || {}).flatMap(([key, status]) => {
-    const [date, employeeId] = key.split("|");
-    if (!status || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return [];
-    const employee = employees.find((item) => String(item.id) === employeeId);
-    if (!employee) return [];
+  const reportStart = appliedFilters.dateFrom || (appliedFilters.month
+    ? `${appliedFilters.month}-01`
+    : appliedFilters.year ? `${appliedFilters.year}-01-01` : `${TODAY.slice(0, 7)}-01`);
+  const reportEnd = appliedFilters.dateTo || (appliedFilters.month
+    ? iso(new Date(+appliedFilters.month.slice(0, 4), +appliedFilters.month.slice(5), 0))
+    : appliedFilters.year ? `${appliedFilters.year}-12-31` : TODAY);
+  const cappedEnd = reportEnd > TODAY ? TODAY : reportEnd;
+  const reportDates = attendanceRange(reportStart, cappedEnd);
+  const firebaseAttendance = new Map((db.hrSummary?.attendanceRecords || [])
+    .filter((record) => record?.date && record?.employeeId)
+    .map((record) => [`${record.date}|${record.employeeId}`, record]));
+  const allRows = employees.flatMap((employee) => reportDates.map((date) => {
+    const key = `${date}|${employee.id}`;
     const details = db.attendanceDetails?.[key] || {};
+    const record = firebaseAttendance.get(`${date}|${employee.backendId}`)
+      || firebaseAttendance.get(`${date}|${employee.id}`);
     const duration = details.workingMilliseconds
       ?? (details.checkedInAt && details.checkedOutAt
         ? Math.max(0, Date.parse(details.checkedOutAt) - Date.parse(details.checkedInAt))
         : 0);
-    return [{
+    const joined = joinDateOf(employee);
+    const recordedStatus = record?.status || db.att?.[key];
+    return {
       id: key,
       empId: employee.id,
       name: employee.name,
-      department: employee.dept || "—",
-      branch: employee.branch || db.me?.branch || "—",
+      department: employee.dept || "\u2014",
+      branch: employee.branch || db.me?.branch || "\u2014",
       date,
       day: new Date(`${date}T00:00:00`).toLocaleDateString("en-US", { weekday: "long" }),
-      checkIn: formatTime(details.checkedInAt),
-      checkOut: formatTime(details.checkedOutAt),
+      checkIn: record?.checkIn || formatTime(details.checkedInAt),
+      checkOut: record?.checkOut || formatTime(details.checkedOutAt),
       totalHours: formatDuration(duration),
-      remarks: details.remark || "—",
-      status,
-    }];
-  }).sort((a, b) => b.date.localeCompare(a.date) || String(a.name).localeCompare(String(b.name)));
+      remarks: record?.remark || details.remark || "\u2014",
+      status: joined && date < joined ? "Absent" : (recordedStatus && recordedStatus !== "Not marked" ? recordedStatus : "Absent"),
+    };
+  })).sort((a, b) => b.date.localeCompare(a.date) || String(a.name).localeCompare(String(b.name)));
   const rows = allRows.filter((row) => {
     const rowMonth = row.date.slice(0, 7);
     return (!appliedFilters.empId || String(row.empId) === appliedFilters.empId)
@@ -2087,7 +2386,7 @@ function AllAttendance({ c: { db } }) {
           ["Check-in Time", (row) => row.checkIn],
           ["Check-out Time", (row) => row.checkOut],
           ["Total Hours", (row) => row.totalHours],
-          ["Remarks", (row) => row.remarks],
+          ["Remarks", (row) => <span title={row.remarks}>{row.remarks}</span>],
           ["Status", (row) => <Badge s={row.status} />],
         ]} />
       </Card>
@@ -2485,150 +2784,211 @@ function AllLeaves({ c: { db, upd } }) {
 }
 
 /* ================= Tasks ================= */
-function TaskTable({ c: { db, upd }, rows, del, empty }) {
-  const set = (id, status) => upd((d) => ({ tasks: d.tasks.map((t) => (t.id === id ? { ...t, status } : t)) }), "Task status updated");
-  return <Card><Table rows={rows} empty={empty} cols={[
-    ["Task", (t) => <b>{t.title}</b>], ["Assigned to", (t) => nm(db, t.assignedTo)], ["Assigned by", (t) => nm(db, t.assignedBy)],
-    ["Due", (t) => <span className={t.status !== "Done" && t.due < TODAY ? "hr-late" : ""}>{t.due}</span>], ["Priority", (t) => <Badge s={t.priority} />],
-    ["Status", (t) => <select className="hr-sel" value={t.status} onChange={(e) => set(t.id, e.target.value)}>{["Pending", "In Progress", "Done"].map((s) => <option key={s}>{s}</option>)}</select>],
-    ["", (t) => del && <button className="hr-ghost sm" onClick={() => window.confirm("Delete this task?") && upd((d) => ({ tasks: d.tasks.filter((x) => x.id !== t.id) }), "Task deleted")}>Delete</button>]]} /></Card>;
-}
 function AssignTasks({ c }) {
-  const { db, upd, go } = c;
-  const activeEmployees = act(db);
-  const crmExecutives = activeEmployees.filter((employee) => {
-    const role = String(employee.role || employee.position || "").toLowerCase();
-    return role.includes("crm") && role.includes("executive");
-  });
-  const salesEmployees = activeEmployees.filter((employee) => String(employee.dept || "").toLowerCase() === "sales");
-  const assignees = crmExecutives.length ? crmExecutives : salesEmployees;
-  const initialAssignee = assignees[0]?.id || "";
-  const [f, setF] = useState({ title: "", assignedTo: initialAssignee, status: "", reminder: "", description: "" });
+  const { db, upd, go, user } = c;
+  const availableAssignees = act(db);
+  const [f, setF] = useState({ title: "", assignedTo: "", status: "", reminder: "", description: "" });
   const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
   const s = (key) => (event) => setF((current) => ({ ...current, [key]: event.target.value }));
-  const availableAssignees = assignees.length ? assignees : activeEmployees;
   return (
     <section className="hr-assign-task-page">
       <Card>
         <div className="hr-assign-task-card">
-          <h2>Assign Task to CRM Executive</h2>
-          <form className="hr-assign-task-form" onSubmit={(event) => {
+          <h2>Assign Task to Employees</h2>
+          <form className="hr-assign-task-form" onSubmit={async (event) => {
             event.preventDefault();
-            if (!f.assignedTo) {
+            if (saving) return;
+            const selectedEmployee = availableAssignees.find((employee) => String(employee.id) === String(f.assignedTo));
+            if (!selectedEmployee) {
               setError("Select an employee to assign this task.");
               return;
             }
-            const selectedEmployee = availableAssignees.find((employee) => employee.id === Number(f.assignedTo));
-            if (!selectedEmployee) {
-              setError("The selected employee is no longer available.");
-              return;
-            }
-            upd((data) => ({
-              tasks: [...data.tasks, {
-                id: Date.now(),
+            const status = f.status === "Completed" ? "Done" : f.status;
+            setSaving(true);
+            setError("");
+            try {
+              const task = normalizeTask(await createTaskApi({
                 title: f.title.trim(),
                 description: f.description.trim(),
-                assignedTo: Number(f.assignedTo),
-                assignedBy: 1,
-                due: "",
+                assigneeId: selectedEmployee.backendId || selectedEmployee.id,
+                createdById: user?.id || user?._id || db.me?.crm || "1",
+                status,
                 priority: "Medium",
-                status: f.status,
+                dueDate: "",
                 reminder: f.reminder,
-              }],
-            }), `Task assigned to ${selectedEmployee.name}`);
-            setError("");
-            setF({ title: "", assignedTo: initialAssignee, status: "", reminder: "", description: "" });
-            go("Assigned Tasks");
+              }));
+              upd((data) => ({ tasks: [task, ...(data.tasks || []).filter((item) => String(item.id) !== String(task.id))] }), `Task assigned to ${selectedEmployee.name}`);
+              setF({ title: "", assignedTo: "", status: "", reminder: "", description: "" });
+              go("Assigned Tasks");
+            } catch (saveError) {
+              setError(saveError.message || "Unable to assign this task. Please try again.");
+            } finally {
+              setSaving(false);
+            }
           }}>
-            <F l="Task Name">
-              <input required maxLength={120} placeholder="Enter task name" value={f.title} onChange={s("title")} />
-            </F>
-            <F l="Select CRM Executives">
-              <select required value={f.assignedTo} onChange={s("assignedTo")}>
-                <option value="">Select CRM Executives</option>
-                {availableAssignees.map((employee) => <option key={employee.id} value={employee.id}>{employee.name}</option>)}
-              </select>
-            </F>
-            <F l="Status">
-              <select required value={f.status} onChange={s("status")}>
-                <option value="">Select Status</option>
-                {["Pending", "In Progress", "Done"].map((status) => <option key={status}>{status}</option>)}
-              </select>
-            </F>
-            <F l="Select Reminder Type">
-              <select value={f.reminder} onChange={s("reminder")}>
-                <option value="">Select Reminder Type</option>
-                {["None", "Daily", "Weekly", "Before due date"].map((reminder) => <option key={reminder}>{reminder}</option>)}
-              </select>
-            </F>
-            <F l="Description (Optional)">
-              <textarea rows={3} maxLength={1000} placeholder="Provide details (optional)" value={f.description} onChange={s("description")} />
-            </F>
+            <F l="Task Name"><input required maxLength={120} placeholder="Enter task name" value={f.title} onChange={s("title")} /></F>
+            <F l="Select Employee"><select required value={f.assignedTo} onChange={s("assignedTo")}><option value="">Select Employee</option>{availableAssignees.map((employee) => <option key={employee.id} value={employee.id}>{employee.name}</option>)}</select></F>
+            <F l="Status"><select required value={f.status} onChange={s("status")}><option value="">Select Status</option>{["Pending", "In Progress", "Completed"].map((status) => <option key={status}>{status}</option>)}</select></F>
+            <F l="Select Reminder Type"><select value={f.reminder} onChange={s("reminder")}><option value="">Select Reminder Type</option>{["None", "Daily", "Weekly", "Before due date"].map((reminder) => <option key={reminder}>{reminder}</option>)}</select></F>
+            <F l="Description (Optional)"><textarea rows={3} maxLength={1000} placeholder="Provide details (optional)" value={f.description} onChange={s("description")} /></F>
             {error && <p className="hr-form-error hr-assign-task-error" role="alert">{error}</p>}
-            <button className="hr-assign-task-submit" type="submit">Assign Task</button>
+            <button className="hr-assign-task-submit" type="submit" disabled={saving}>{saving ? "Assigning..." : "Assign Task"}</button>
           </form>
         </div>
       </Card>
     </section>
   );
 }
-function AssignedTasks({ c: { db, upd } }) {
-  const rows = (db.tasks || []).filter((task) => task.assignedBy === 1);
+function AssignedTasks({ c: { db, upd, user } }) {
+  const [query, setQuery] = useState("");
+  const [employeeId, setEmployeeId] = useState("");
+  const [statusFilter, setStatusFilter] = useState("All");
+  const [sort, setSort] = useState("Original order");
+  const [show, setShow] = useState("50");
+  const [page, setPage] = useState(1);
+  useEffect(() => { setPage(1); }, [query, employeeId, statusFilter, sort, show]);
+  const hrIds = new Set(["1", user?.id, user?._id, user?.crmId, db.me?.crm].filter(Boolean).map(String));
   const statusLabel = (status) => status === "Done" ? "Completed" : status || "Pending";
-  const statusClass = (status) => {
-    const normalized = statusLabel(status).toLowerCase().replace(/\s+/g, "-");
-    return normalized === "completed" ? "completed" : normalized === "in-progress" ? "in-progress" : "pending";
+  const statusClass = (status) => statusLabel(status).toLowerCase().replace(/\s+/g, "-");
+  const allRows = (db.tasks || []).filter((task) => hrIds.has(String(task.assignedBy ?? "1")));
+  const filteredRows = allRows.filter((task) => {
+    const assignee = findTaskEmployee(db.emps, task.assignedTo);
+    return taskMatchesEmployee(db.emps, employeeId, task.assignedTo)
+      && (statusFilter === "All" || statusLabel(task.status) === statusFilter)
+      && `${task.title || ""} ${task.description || ""} ${assignee?.name || ""} ${statusLabel(task.status)}`.toLowerCase().includes(query.trim().toLowerCase());
+  });
+  const sortedRows = [...filteredRows].sort((a, b) => {
+    const createdAt = (task) => Date.parse(task.createdAt || task.updatedAt || "") || Number(task.id) || 0;
+    if (sort === "Newest first") return createdAt(b) - createdAt(a);
+    if (sort === "Oldest first") return createdAt(a) - createdAt(b);
+    if (sort === "A to Z") return String(a.title).localeCompare(String(b.title));
+    return 0;
+  });
+  const pageCount = Math.max(1, Math.ceil(sortedRows.length / Number(show)));
+  const visibleRows = sortedRows.slice((page - 1) * Number(show), page * Number(show));
+  const exportRows = filteredRows.map((task) => {
+    const assignee = findTaskEmployee(db.emps, task.assignedTo);
+    return { "Task Name": task.title || "—", Description: task.description || "—", "Assigned To": assignee?.name || "Unassigned", Status: statusLabel(task.status) };
+  });
+  const exportCsv = () => {
+    const csv = XLSX.utils.sheet_to_csv(XLSX.utils.json_to_sheet(exportRows));
+    const url = URL.createObjectURL(new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `assigned-tasks-${iso()}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
   };
-  const deleteTask = (task) => {
+  const exportPdf = () => {
+    const pdf = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
+    pdf.setFontSize(16);
+    pdf.text("Tasks Assigned to Employees", 32, 32);
+    autoTable(pdf, {
+      startY: 48,
+      head: [["Task Name", "Description", "Assigned To", "Status"]],
+      body: Object.values(exportRows).map((row) => Object.values(row)),
+      styles: { fontSize: 9, cellPadding: 6 },
+      headStyles: { fillColor: [141, 94, 56] },
+    });
+    pdf.save(`assigned-tasks-${iso()}.pdf`);
+  };
+  const reset = () => { setQuery(""); setEmployeeId(""); setStatusFilter("All"); setSort("Original order"); setShow("50"); setPage(1); };
+  const deleteTask = async (task) => {
     if (!window.confirm(`Delete "${task.title}"?`)) return;
-    upd((data) => ({ tasks: data.tasks.filter((item) => item.id !== task.id) }), "Task deleted");
+    try {
+      await deleteTaskApi(task.id);
+      upd((data) => ({ tasks: data.tasks.filter((item) => String(item.id) !== String(task.id)) }), "Task deleted");
+    } catch (error) {
+      window.alert(error.message || "Unable to delete this task.");
+    }
   };
   return (
     <section className="hr-assigned-tasks-page">
       <Card>
         <div className="hr-assigned-tasks-card">
           <h2>Tasks Assigned to Employees</h2>
+          <div className="hr-assigned-task-toolbar">
+            <div className="hr-assigned-task-filters">
+            <label className="hr-sbox"><Search size={15} /><input type="search" placeholder="Search this table..." value={query} onChange={(event) => setQuery(event.target.value)} /></label>
+            <F l="Assigned To"><select value={employeeId} onChange={(event) => setEmployeeId(event.target.value)}><option value="">All Employees</option>{act(db).map((employee) => <option key={taskEmployeeId(employee)} value={taskEmployeeId(employee)}>{employee.name}</option>)}</select></F>
+            <F l="Status"><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>{["All", "Pending", "In Progress", "Completed"].map((status) => <option key={status}>{status}</option>)}</select></F>
+            <F l="Sort"><select value={sort} onChange={(event) => setSort(event.target.value)}>{["Original order", "Newest first", "Oldest first", "A to Z"].map((value) => <option key={value}>{value}</option>)}</select></F>
+            <F l="Show"><select value={show} onChange={(event) => setShow(event.target.value)}>{["10", "25", "50", "100"].map((value) => <option key={value}>{value}</option>)}</select></F>
+            </div>
+            <div className="hr-assigned-task-actions">
+            <button className="hr-ghost" type="button" onClick={reset}><RotateCcw size={14} /> Reset</button>
+            <button className="hr-btn" type="button" onClick={exportCsv} disabled={!filteredRows.length}><FileSpreadsheet size={14} /> Export CSV</button>
+            <button className="hr-btn" type="button" onClick={exportPdf} disabled={!filteredRows.length}><FileText size={14} /> Export PDF</button>
+            </div>
+          </div>
           <div className="hr-tw">
             <table className="hr-t hr-assigned-tasks-table">
               <thead><tr>{["Task Name", "Description", "Assigned To", "Status", "Actions"].map((heading) => <th key={heading}>{heading}</th>)}</tr></thead>
-              <tbody>{rows.map((task) => {
-                const assignee = db.emps.find((employee) => String(employee.id) === String(task.assignedTo));
-                return (
-                  <tr key={task.id}>
-                    <td>{task.title}</td>
-                    <td>{task.description || "—"}</td>
-                    <td>{assignee?.name || "Unassigned"}</td>
-                    <td><span className={`hr-assigned-task-status ${statusClass(task.status)}`}>{statusLabel(task.status)}</span></td>
-                    <td><button className="hr-assigned-task-delete" type="button" onClick={() => deleteTask(task)}><Trash2 size={14} /> Delete</button></td>
-                  </tr>
-                );
+              <tbody>{visibleRows.map((task) => {
+                const assignee = findTaskEmployee(db.emps, task.assignedTo);
+                return <tr key={task.id}><td>{task.title}</td><td>{task.description || "—"}</td><td>{assignee?.name || "Unassigned"}</td><td><span className={`hr-assigned-task-status ${statusClass(task.status)}`}>{statusLabel(task.status)}</span></td><td><button className="hr-assigned-task-delete" type="button" onClick={() => deleteTask(task)}><Trash2 size={14} /> Delete</button></td></tr>;
               })}</tbody>
             </table>
-            {!rows.length && <Empty t="You haven't assigned any tasks yet." />}
+            {!visibleRows.length && <Empty t="No tasks match these filters." />}
           </div>
+          <div className="hr-task-pagination"><span>Showing {filteredRows.length ? (page - 1) * Number(show) + 1 : 0}–{Math.min(page * Number(show), filteredRows.length)} of {filteredRows.length} records</span><div><button className="hr-ghost" type="button" disabled={page <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))}>Previous</button><strong>{page}</strong><button className="hr-ghost" type="button" disabled={page >= pageCount} onClick={() => setPage((current) => Math.min(pageCount, current + 1))}>Next</button></div></div>
         </div>
       </Card>
     </section>
   );
 }
-const MyTask = ({ c }) => <TaskTable c={c} rows={c.db.tasks.filter((t) => t.assignedTo === 1)} empty="No tasks assigned to you." />;
+function MyTask({ c: { db, upd, user } }) {
+  const selfIds = new Set(["1", user?.id, user?._id, user?.crmId, db.me?.crm].filter(Boolean).map(String));
+  const rows = (db.tasks || []).filter((task) => selfIds.has(String(task.assignedTo)));
+  const saveTask = async (task, draft) => {
+    const update = { ...draft, status: draft.status === "Completed" ? "Done" : draft.status };
+    try {
+      const saved = normalizeTask(await updateTaskApi(task.id, update));
+      upd((data) => ({ tasks: data.tasks.map((item) => String(item.id) === String(task.id) ? saved : item) }), "Task updated");
+    } catch (error) {
+      window.alert(error.message || "Unable to update this task.");
+    }
+  };
+  return <section className="hr-my-task-page"><h2>My Tasks</h2><div className="hr-my-task-grid">
+    {rows.map((task) => <MyTaskCard key={task.id} task={task} onSave={(draft) => saveTask(task, draft)} />)}
+    {!rows.length && <Empty t="No tasks assigned to you." />}
+  </div></section>;
+}
+function MyTaskCard({ task, onSave }) {
+  const [draft, setDraft] = useState({ title: task.title || "", description: task.description || "", status: task.status === "Done" ? "Completed" : task.status || "Pending" });
+  useEffect(() => setDraft({ title: task.title || "", description: task.description || "", status: task.status === "Done" ? "Completed" : task.status || "Pending" }), [task.title, task.description, task.status]);
+  const update = (key) => (event) => setDraft((current) => ({ ...current, [key]: event.target.value }));
+  return <form className="hr-my-task-card" onSubmit={(event) => { event.preventDefault(); onSave(draft); }}>
+    <label><span>Task Name</span><input maxLength={120} value={draft.title} onChange={update("title")} /></label>
+    <label><span>Description</span><textarea rows={3} maxLength={1000} value={draft.description} onChange={update("description")} /></label>
+    <label><span>Status</span><select value={draft.status} onChange={update("status")}>{["Pending", "In Progress", "Completed"].map((status) => <option key={status}>{status}</option>)}</select></label>
+    <footer><button className="hr-btn" type="submit"><Check size={14} /> Save</button></footer>
+  </form>;
+}
 function AllTask({ c }) {
   const { db, upd } = c;
-  const [executiveId, setExecutiveId] = useState("");
+  const [employeeId, setEmployeeId] = useState("");
   const allRows = db.tasks || [];
-  const executiveIds = [...new Set(allRows.map((task) => String(task.assignedBy ?? "")).filter(Boolean))];
-  const rows = allRows.filter((task) => !executiveId || String(task.assignedBy) === executiveId);
+  const executiveName = (id) => {
+    const task = allRows.find((item) => String(item.assignedBy) === String(id));
+    if (task?.assignedByName) return task.assignedByName;
+    return ["1", String(db.me?.crm || "")].includes(String(id)) ? (db.me?.name || "HR") : nm(db, id);
+  };
+  const employees = act(db).sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  const rows = allRows.filter((task) => taskMatchesEmployee(db.emps, employeeId, task.assignedTo));
   const statusLabel = (status) => status === "Done" ? "Completed" : status || "Pending";
   const statusClass = (status) => {
     const normalized = statusLabel(status).toLowerCase().replace(/\s+/g, "-");
     return normalized === "completed" ? "completed" : normalized === "in-progress" ? "in-progress" : "pending";
   };
-  const exportRows = rows.map((task) => {
-    const assignee = db.emps.find((employee) => String(employee.id) === String(task.assignedTo));
+  const exportRows = rows.map((task, index) => {
+    const assignee = findTaskEmployee(db.emps, task.assignedTo);
     return [
+      index + 1,
       task.title || "—",
       task.description || "—",
-      nm(db, task.assignedBy),
+      executiveName(task.assignedBy),
       assignee?.name || "Unassigned",
       statusLabel(task.status),
     ];
@@ -2639,7 +2999,7 @@ function AllTask({ c }) {
     pdf.text("Tasks Assigned to Employees", 36, 36);
     autoTable(pdf, {
       startY: 54,
-      head: [["Task Name", "Description", "Assigned Executive Name", "Assigned To", "Status"]],
+      head: [["S.N", "Task Name", "Description", "Assigned Executive Name", "Assigned To", "Status"]],
       body: exportRows,
       styles: { fontSize: 9, cellPadding: 7 },
       headStyles: { fillColor: [141, 94, 56] },
@@ -2647,19 +3007,24 @@ function AllTask({ c }) {
     });
     pdf.save(`all-tasks-${iso()}.pdf`);
   };
-  const deleteTask = (task) => {
+  const deleteTask = async (task) => {
     if (!window.confirm(`Delete "${task.title}"?`)) return;
-    upd((data) => ({ tasks: data.tasks.filter((item) => item.id !== task.id) }), "Task deleted");
+    try {
+      await deleteTaskApi(task.id);
+      upd((data) => ({ tasks: data.tasks.filter((item) => String(item.id) !== String(task.id)) }), "Task deleted");
+    } catch (error) {
+      window.alert(error.message || "Unable to delete this task.");
+    }
   };
 
   return (
     <section className="hr-all-tasks-page">
       <h2 className="hr-all-tasks-title">Tasks Assigned to Employees</h2>
       <div className="hr-all-tasks-toolbar">
-        <F l="Select Executive">
-          <select value={executiveId} onChange={(event) => setExecutiveId(event.target.value)}>
-            <option value="">-- Select Executive --</option>
-            {executiveIds.map((id) => <option key={id} value={id}>{nm(db, id)}</option>)}
+        <F l="Select Employee">
+          <select value={employeeId} onChange={(event) => setEmployeeId(event.target.value)}>
+            <option value="">All Employees</option>
+            {employees.map((employee) => <option key={taskEmployeeId(employee)} value={taskEmployeeId(employee)}>{employee.name}</option>)}
           </select>
         </F>
         <button className="hr-all-tasks-export" type="button" onClick={exportPdf} disabled={!rows.length}><FileText size={15} /> Export PDF</button>
@@ -2667,14 +3032,15 @@ function AllTask({ c }) {
       <Card>
         <div className="hr-tw">
           <table className="hr-t hr-all-tasks-table">
-            <thead><tr>{["Task Name", "Description", "Assigned Executive Name", "Assigned To", "Status", "Actions"].map((heading) => <th key={heading}>{heading}</th>)}</tr></thead>
-            <tbody>{rows.map((task) => {
-              const assignee = db.emps.find((employee) => String(employee.id) === String(task.assignedTo));
+            <thead><tr>{["S.N", "Task Name", "Description", "Assigned Executive Name", "Assigned To", "Status", "Actions"].map((heading) => <th key={heading}>{heading}</th>)}</tr></thead>
+            <tbody>{rows.map((task, index) => {
+              const assignee = findTaskEmployee(db.emps, task.assignedTo);
               return (
                 <tr key={task.id}>
+                  <td>{index + 1}</td>
                   <td>{task.title || "—"}</td>
                   <td>{task.description || "—"}</td>
-                  <td>{nm(db, task.assignedBy)}</td>
+                  <td>{executiveName(task.assignedBy)}</td>
                   <td>{assignee?.name || "Unassigned"}</td>
                   <td><span className={`hr-assigned-task-status ${statusClass(task.status)}`}>{statusLabel(task.status)}</span></td>
                   <td><button className="hr-all-tasks-delete" type="button" onClick={() => deleteTask(task)}><Trash2 size={14} /> Delete</button></td>
@@ -2682,7 +3048,7 @@ function AllTask({ c }) {
               );
             })}</tbody>
           </table>
-          {!rows.length && <Empty t={executiveId ? "No tasks assigned by this executive." : "No tasks have been assigned yet."} />}
+          {!rows.length && <Empty t={employeeId ? "No tasks are assigned to this employee." : "No tasks have been assigned yet."} />}
         </div>
       </Card>
     </section>
@@ -2888,7 +3254,7 @@ function UploadCRM({ c: { db, upd } }) {
     </section>
   );
 }
-function SettingsPage({ c: { db, upd, setDb, darkMode, toggleDarkMode, user } }) {
+function SettingsPage({ c: { db, upd, setDb, user } }) {
   const [form, setForm] = useState(() => ({
     ...db.me,
     dob: db.me.dob || "",
@@ -2998,7 +3364,6 @@ function SettingsPage({ c: { db, upd, setDb, darkMode, toggleDarkMode, user } })
     <section className="hr-settings-page">
       <div className="hr-settings-page-heading">
         <h2><UserCircle size={25} /> Account Settings</h2>
-        <button className="hr-ghost hr-settings-theme-toggle" type="button" onClick={toggleDarkMode}>{darkMode ? <><Sun size={15} /> Switch to Light Mode</> : <><Moon size={15} /> Toggle Dark Mode</>}</button>
       </div>
       <div className="hr-settings-layout">
         <form className="hr-settings-form" onSubmit={saveSettings}>
@@ -3099,10 +3464,9 @@ const NAV = [
   { label: "Dashboard", icon: LayoutGrid },
   { label: "Employee Management", icon: Users, kids: [["Create Profile", UserPlus], ["Employee Profiles", Users], ["Ex Employee Profiles", UserX], ["View All Employee", CreditCard], ["Salary Report", FileText], ["ID Card", CreditCard], ["Payroll System", Wallet]] },
   { label: "Attendance Management", icon: CalendarCheck, kids: [["Mark Attendance", Check], ["Attendance Report", FileText], ["All Attendance Report", Users], ["Mark Attendance All", UserCheck], ["Leave Request", CalendarClock], ["View All Leave Request", Briefcase]] },
-  { label: "Task Reports", icon: ListChecks, kids: [["Assigned Tasks", ClipboardList], ["My Task", UserCog], ["All Task", ClipboardCheck]] },
+  { label: "Task Management", icon: ListChecks, kids: [["Assign Tasks", Plus], ["Assigned Tasks", ClipboardList], ["My Task", UserCog], ["All Task", ClipboardCheck]] },
   { label: "Upload CRM Data", icon: Upload },
   { label: "Leads", icon: UserPlus },
-  { label: "Employee Workspace", icon: CalendarClock },
   { label: "HR Calendar", icon: CalendarDays },
   { label: "Resignation & Exit", icon: UserX },
   { label: "Employee Helpdesk", icon: MessageCircle },
@@ -3171,13 +3535,33 @@ export default function HrDashboard({ user, onLogout } = {}) {
   }, []);
 
   useEffect(() => {
-    if (page !== "Dashboard" || !user) return undefined;
+    if (!user) return undefined;
     let active = true;
     fetchHrDashboard().then((hrSummary) => {
       if (active) setDb((current) => ({ ...current, hrSummary }));
     }).catch((error) => console.warn("Unable to load the HR dashboard summary.", error.message || error));
     return () => { active = false; };
-  }, [page, user?.id, user?._id]);
+  }, [user?.id, user?._id]);
+
+  useEffect(() => {
+    if (!user) return undefined;
+    let active = true;
+    fetchTasksApi().then((records) => {
+      if (!active || !Array.isArray(records)) return;
+      setDb((current) => {
+        const merged = new Map(records.map((task) => {
+          const normalized = normalizeTask(task);
+          return [String(normalized.id), normalized];
+        }));
+        (current.tasks || []).forEach((task) => {
+          const normalized = normalizeTask(task);
+          if (!merged.has(String(normalized.id))) merged.set(String(normalized.id), normalized);
+        });
+        return { ...current, tasks: [...merged.values()] };
+      });
+    }).catch((error) => console.warn("Unable to load saved tasks.", error.message || error));
+    return () => { active = false; };
+  }, [user?.id, user?._id]);
 
   useEffect(() => { try { localStorage.setItem(KEY, JSON.stringify(db)); } catch { /* ignore */ } }, [db]);
   useEffect(() => {
@@ -3206,7 +3590,7 @@ export default function HrDashboard({ user, onLogout } = {}) {
     setDb((d) => ({ ...d, ...fn(d), log: msg ? [{ t: new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }), m: msg }, ...d.log].slice(0, 8) : d.log }));
     if (msg) setToast(msg);
   };
-  const go = (target) => { const p = ["Assign Tasks", "HR Planner"].includes(target) ? "Employee Workspace" : target; setPage(p); setDrawer(false); const g = NAV.find((n) => n.kids?.some((k) => k[0] === p)); if (g) setOpen(g.label); };
+  const go = (target) => { const p = target; setPage(p); setDrawer(false); const g = NAV.find((n) => n.kids?.some((k) => k[0] === p)); if (g) setOpen(g.label); };
   useEffect(() => {
     pageScrollRef.current?.scrollTo({ top: 0, behavior: "auto" });
   }, [page]);
@@ -3235,9 +3619,8 @@ export default function HrDashboard({ user, onLogout } = {}) {
     "Ex Employee Profiles": <ExEmployees c={c} />, "Salary Report": <SalaryReport c={c} />, "ID Card": <IDCard c={c} id={idSel} setId={setIdSel} />, "Payroll System": <Payroll c={c} />,
     "Mark Attendance": <MarkAttendance c={c} />, "Attendance Report": <AttendanceReport c={c} />, "All Attendance Report": <AllAttendance c={c} />,
     "Mark Attendance All": <MarkAll c={c} />, "Leave Request": <LeaveRequest c={c} />, "View All Leave Request": <AllLeaves c={c} />,
-    "Assigned Tasks": <AssignedTasks c={c} />, "My Task": <MyTask c={c} />, "All Task": <AllTask c={c} />,
+    "Assign Tasks": <AssignTasks c={c} />, "Assigned Tasks": <AssignedTasks c={c} />, "My Task": <MyTask c={c} />, "All Task": <AllTask c={c} />,
     "Upload CRM Data": <UploadCRM c={c} />, Leads: <HrLeads staff={db.emps} />, Settings: <SettingsPage c={c} />,
-    "Employee Workspace": <HrPlanner key={`${profile.company}:${profile.crm}`} employees={db.emps} profile={profile} tasks={db.tasks} updateTasks={(tasks) => upd(() => ({ tasks }))} />,
     "HR Calendar": <HrPeopleModules page="HR Calendar" c={c} />,
     "Resignation & Exit": <HrWorkflowModules page="Resignation & Exit" c={c} />,
     "Employee Helpdesk": <HrWorkflowModules page="Employee Helpdesk" c={c} />,
