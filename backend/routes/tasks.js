@@ -9,11 +9,8 @@ import { notifyUser } from "../services/appNotifications.js";
 const router = express.Router();
 router.use(authenticate);
 const userId = (user) => String(user?.id || user?._id || "");
-<<<<<<< Updated upstream
 const isCrmExecutive = (user) => ["crm executive", "crm_executive"].includes(String(user?.role || "").trim().toLowerCase());
 const canManageTasks = (user) => isAdmin(user) || isHrUser(user);
-=======
->>>>>>> Stashed changes
 const taskJson = (task) => ({ id: task.id || String(task._id), ...task.toObject() });
 const ownsTask = (task, user) => [task.assigneeId, task.createdById].filter(Boolean).map(String).includes(userId(user));
 
@@ -40,13 +37,8 @@ async function resolveEmployee(id) {
 
 router.get("/", async (req, res) => {
   try {
-<<<<<<< Updated upstream
     const tasks = await Task.find().sort({ createdAt: -1 });
     res.json((canManageTasks(req.user) ? tasks : tasks.filter((task) => ownsTask(task, req.user))).map(taskJson));
-=======
-    const tasks = await (isAdmin(req.user) ? Task.find() : Task.findForUser(userId(req.user))).sort({ createdAt: -1 });
-    res.json(tasks.map(taskJson));
->>>>>>> Stashed changes
   } catch (error) { res.status(500).json({ error: error.message || "Unable to load tasks." }); }
 });
 
@@ -54,17 +46,10 @@ router.post("/", async (req, res) => {
   try {
     const payload = { ...(req.body || {}) };
     if (!String(payload.title || "").trim()) return res.status(400).json({ error: "Task title is required." });
-<<<<<<< Updated upstream
-    const assignee = canManageTasks(req.user) ? await resolveEmployee(payload.assigneeId) : isCrmExecutive(req.user) ? req.user : null;
-    if (!assignee) return res.status(canManageTasks(req.user) ? 400 : 403).json({ error: canManageTasks(req.user) ? "Choose an active employee assignee." : "Only CRM Executives can create personal tasks." });
+    const assignee = canManageTasks(req.user) ? await resolveEmployee(payload.assigneeId) : isAssignableEmployee(req.user) ? req.user : null;
+    if (!assignee) return res.status(canManageTasks(req.user) ? 400 : 403).json({ error: canManageTasks(req.user) ? "Choose an active employee assignee." : "Only employees can create personal tasks." });
     const now = new Date().toISOString();
-    const task = await Task.create({ id: await nextTaskId(), title: String(payload.title).trim(), description: String(payload.description || "").trim(), priority: payload.priority || "Medium", status: payload.status || "To Do", dueDate: payload.dueDate || "", reminder: payload.reminder || "", assigneeId: userId(assignee), assignee: assignee.name || assignee.username || "CRM Executive", createdById: userId(req.user), createdBy: req.user.name || req.user.username || "Admin", createdAt: now, updatedAt: now });
-=======
-    const assignee = isAdmin(req.user) ? await resolveEmployee(payload.assigneeId) : isAssignableEmployee(req.user) ? req.user : null;
-    if (!assignee) return res.status(isAdmin(req.user) ? 400 : 403).json({ error: isAdmin(req.user) ? "Choose an employee assignee." : "Only employees can create personal tasks." });
-    const now = new Date().toISOString();
-    const task = await Task.create({ id: await nextTaskId(), title: String(payload.title).trim(), description: String(payload.description || "").trim(), priority: payload.priority || "Medium", status: payload.status || "To Do", dueDate: payload.dueDate || "", assigneeId: userId(assignee), assignee: assignee.name || assignee.username || "Employee", assigneeRole: assignee.role || "", assigneeDepartment: assignee.dept || assignee.department || "", createdById: userId(req.user), createdBy: req.user.name || req.user.username || "Admin", createdAt: now, updatedAt: now });
->>>>>>> Stashed changes
+    const task = await Task.create({ id: await nextTaskId(), title: String(payload.title).trim(), description: String(payload.description || "").trim(), priority: payload.priority || "Medium", status: payload.status || "To Do", dueDate: payload.dueDate || "", reminder: payload.reminder || "", assigneeId: userId(assignee), assignee: assignee.name || assignee.username || "Employee", assigneeRole: assignee.role || "", assigneeDepartment: assignee.dept || assignee.department || "", createdById: userId(req.user), createdBy: req.user.name || req.user.username || "Admin", createdAt: now, updatedAt: now });
     await notifyUser(task.assigneeId, { type: "task_assigned", message: `You were assigned a task: ${task.title}.` });
     res.status(201).json(taskJson(task));
   } catch (error) { res.status(400).json({ error: error.message || "Unable to create task." }); }
@@ -74,11 +59,7 @@ router.put("/:id", async (req, res) => {
   try {
     const task = await Task.findOne({ id: String(req.params.id) });
     if (!task) return res.status(404).json({ error: "Task not found." });
-<<<<<<< Updated upstream
     if (!canManageTasks(req.user) && (!isCrmExecutive(req.user) || !ownsTask(task, req.user))) return res.status(403).json({ error: "You can only update your own tasks." });
-=======
-    if (!isAdmin(req.user) && (!isAssignableEmployee(req.user) || !ownsTask(task, req.user))) return res.status(403).json({ error: "You can only update your own tasks." });
->>>>>>> Stashed changes
     const payload = { ...(req.body || {}) };
     if (!isAdmin(req.user)) { delete payload.assigneeId; delete payload.assignee; delete payload.createdById; delete payload.createdBy; }
     if (canManageTasks(req.user) && payload.assigneeId && String(payload.assigneeId) !== String(task.assigneeId || "")) {

@@ -1125,9 +1125,11 @@ function EmpList({ c: { db, upd, go, employeeRosterStatus }, cards, setId }) {
         exEmployee: "Yes", employeeStatus: "Inactive", status: "Inactive", type: "Former",
         resignationDate, left: resignationDate,
       });
-      upd((d) => ({ emps: d.emps.map((x) => (x.id === employee.id ? {
-        ...x, exEmployee: "Yes", employeeStatus: "Inactive", status: "ex", type: "Former", resignationDate, left: resignationDate,
-      } : x)) }), `${employee.name} moved to ex-employees`);
+      upd((d) => ({
+        emps: d.emps.map((x) => (x.id === employee.id ? {
+          ...x, exEmployee: "Yes", employeeStatus: "Inactive", status: "ex", type: "Former", resignationDate, left: resignationDate,
+        } : x))
+      }), `${employee.name} moved to ex-employees`);
     } catch (error) {
       setActionError(error.message || `Unable to move ${employee.name} to ex-employees.`);
     }
@@ -1150,9 +1152,11 @@ function EmpList({ c: { db, upd, go, employeeRosterStatus }, cards, setId }) {
       employee={edit}
       onBack={() => setEdit(null)}
       onPhotoUploaded={(imageUrl, imagePublicId) => upd((d) => ({ emps: d.emps.map((item) => item.backendId === edit.backendId ? { ...item, photo: imageUrl, imageUrl, imagePublicId } : item) }))}
-      onDocumentUploaded={(key, document) => upd((d) => ({ emps: d.emps.map((employee) => employee.backendId === edit.backendId
-        ? { ...employee, priorExperienceDocuments: { ...(employee.priorExperienceDocuments || {}), [key]: document } }
-        : employee) }))}
+      onDocumentUploaded={(key, document) => upd((d) => ({
+        emps: d.emps.map((employee) => employee.backendId === edit.backendId
+          ? { ...employee, priorExperienceDocuments: { ...(employee.priorExperienceDocuments || {}), [key]: document } }
+          : employee)
+      }))}
       onSave={async (profile) => {
         if (edit.backendId) {
           const role = profile.dept === "IT"
@@ -1175,13 +1179,15 @@ function EmpList({ c: { db, upd, go, employeeRosterStatus }, cards, setId }) {
             left: profile.exEmployee === "Yes" ? (profile.resignationDate || edit.left || TODAY) : "",
           });
         }
-        upd((d) => ({ emps: d.emps.map((x) => (x.id === edit.id ? {
-          ...x,
-          ...profile,
-          status: profile.exEmployee === "Yes" ? "ex" : "active",
-          employeeStatus: profile.exEmployee === "Yes" ? "Inactive" : (profile.employeeStatus || "Active"),
-          left: profile.exEmployee === "Yes" ? (profile.resignationDate || edit.left || TODAY) : "",
-        } : x)) }), `Updated ${profile.name}`);
+        upd((d) => ({
+          emps: d.emps.map((x) => (x.id === edit.id ? {
+            ...x,
+            ...profile,
+            status: profile.exEmployee === "Yes" ? "ex" : "active",
+            employeeStatus: profile.exEmployee === "Yes" ? "Inactive" : (profile.employeeStatus || "Active"),
+            left: profile.exEmployee === "Yes" ? (profile.resignationDate || edit.left || TODAY) : "",
+          } : x))
+        }), `Updated ${profile.name}`);
         setEdit(null);
       }}
     />;
@@ -1198,8 +1204,8 @@ function EmpList({ c: { db, upd, go, employeeRosterStatus }, cards, setId }) {
         <label className="hr-profile-search"><Search size={16} /><input type="search" placeholder="Search Employee..." aria-label="Search employees" value={q} onChange={(e) => setQ(e.target.value)} /></label>
         <span className="hr-count">{rows.length} {rows.length === 1 ? "employee" : "employees"}</span>
       </div>
-        {actionError && <p className="hr-form-error" role="alert">{actionError}</p>}
-        {rows.length ? groups.map(([name, employees]) => (
+      {actionError && <p className="hr-form-error" role="alert">{actionError}</p>}
+      {rows.length ? groups.map(([name, employees]) => (
         <section className="hr-department-section" key={name} aria-labelledby={`hr-department-${name}`}>
           <h2 className="hr-department-heading" id={`hr-department-${name}`}>{name}</h2>
           <div className="hr-profile-cards">{employees.map((e) => (
@@ -1269,9 +1275,11 @@ function ExEmployees({ c: { db, upd } }) {
       employee={edit.exEmployee === "Yes" ? edit : { ...edit, exEmployee: "Yes" }}
       onBack={() => setEdit(null)}
       onPhotoUploaded={(imageUrl, imagePublicId) => upd((d) => ({ emps: d.emps.map((item) => item.backendId === edit.backendId ? { ...item, photo: imageUrl, imageUrl, imagePublicId } : item) }))}
-      onDocumentUploaded={(key, document) => upd((d) => ({ emps: d.emps.map((employee) => employee.backendId === edit.backendId
-        ? { ...employee, priorExperienceDocuments: { ...(employee.priorExperienceDocuments || {}), [key]: document } }
-        : employee) }))}
+      onDocumentUploaded={(key, document) => upd((d) => ({
+        emps: d.emps.map((employee) => employee.backendId === edit.backendId
+          ? { ...employee, priorExperienceDocuments: { ...(employee.priorExperienceDocuments || {}), [key]: document } }
+          : employee)
+      }))}
       onSave={async (profile) => {
         if (edit.backendId) {
           const role = profile.dept === "IT"
@@ -1288,13 +1296,15 @@ function ExEmployees({ c: { db, upd } }) {
             left: profile.exEmployee === "Yes" ? (profile.resignationDate || edit.left || TODAY) : "",
           });
         }
-        upd((d) => ({ emps: d.emps.map((e) => (e.id === edit.id ? {
-          ...e,
-          ...profile,
-          status: profile.exEmployee === "Yes" ? "ex" : "active",
-          employeeStatus: profile.exEmployee === "Yes" ? "Inactive" : (profile.employeeStatus || "Active"),
-          left: profile.exEmployee === "Yes" ? (profile.resignationDate || e.left || TODAY) : "",
-        } : e)) }), `Updated ${profile.name}`);
+        upd((d) => ({
+          emps: d.emps.map((e) => (e.id === edit.id ? {
+            ...e,
+            ...profile,
+            status: profile.exEmployee === "Yes" ? "ex" : "active",
+            employeeStatus: profile.exEmployee === "Yes" ? "Inactive" : (profile.employeeStatus || "Active"),
+            left: profile.exEmployee === "Yes" ? (profile.resignationDate || e.left || TODAY) : "",
+          } : e))
+        }), `Updated ${profile.name}`);
         setEdit(null);
       }}
     />;
@@ -1406,7 +1416,7 @@ function SalaryReport({ c: { db } }) {
       deductions,
       net: Math.max(0, gross - deductions),
     };
-  }) : [];
+  });
   const totalNet = rows.reduce((total, row) => total + row.net, 0);
   const totalGross = rows.reduce((total, row) => total + row.gross, 0);
   const totalDeductions = rows.reduce((total, row) => total + row.deductions, 0);
@@ -1531,7 +1541,7 @@ function IDCard({ c: { db, employeeRosterStatus } }) {
     ["Emp ID", cardId(selected)],
     ["Department", selected.dept || "-"],
     ["Mobile No", selected.phone || "-"],
-      ["Branch Code", selected.branchCode || "-"],
+    ["Branch Code", selected.branchCode || "-"],
   ] : [];
   const download = async (employee) => {
     const width = 360;
@@ -2462,37 +2472,38 @@ function AllAttendance({ c: { db } }) {
         {attendanceError && <p className="hr-form-error hr-all-attendance-error" role="alert">{attendanceError}</p>}
       </form>
       <div className="hr-all-attendance-results-toolbar">
-      <div className="hr-all-attendance-summary" aria-live="polite">
-        <span>{rows.length} attendance record{rows.length === 1 ? "" : "s"}</span>
-        <span>Present {countStatus("Present")}</span>
-        <span>Absent {countStatus("Absent")}</span>
-        <span>Leave {countStatus("Leave")}</span>
-        <span>Holiday {countStatus("Holiday")}</span>
-        <span>Pending {countStatus("Pending")}</span>
-        <span>Upcoming {countStatus("Upcoming")}</span>
-      </div>
-      <div className="hr-all-attendance-exports" role="group" aria-label="Export attendance report">
-        <button className="hr-attendance-export excel" type="button" onClick={exportExcel} disabled={!rows.length}><FileSpreadsheet size={15} /> Excel</button>
-        <button className="hr-attendance-export pdf" type="button" onClick={exportPdf} disabled={!rows.length}><FileText size={15} /> PDF</button>
-      </div>
+        <div className="hr-all-attendance-summary" aria-live="polite">
+          <span>{rows.length} attendance record{rows.length === 1 ? "" : "s"}</span>
+          <span>Present {countStatus("Present")}</span>
+          <span>Absent {countStatus("Absent")}</span>
+          <span>Leave {countStatus("Leave")}</span>
+          <span>Holiday {countStatus("Holiday")}</span>
+          <span>Pending {countStatus("Pending")}</span>
+          <span>Upcoming {countStatus("Upcoming")}</span>
+        </div>
+        <div className="hr-all-attendance-exports" role="group" aria-label="Export attendance report">
+          <button className="hr-attendance-export excel" type="button" onClick={exportExcel} disabled={!rows.length}><FileSpreadsheet size={15} /> Excel</button>
+          <button className="hr-attendance-export pdf" type="button" onClick={exportPdf} disabled={!rows.length}><FileText size={15} /> PDF</button>
+        </div>
       </div>
       <Card>
         {attendanceLoading ? <p className="hr-attendance-load-state">Loading monthly Firestore attendance…</p>
           : attendanceError ? null
             : <Table rows={rows} empty="No attendance records match these filters." cols={[
-          ["S.N", (_row, index) => index + 1],
-          ["EMP ID", (row) => row.empId],
-          ["EMP Name", (row) => <b>{row.name}</b>],
-          ["Department", (row) => row.department],
-          ["Branch", (row) => row.branch],
-          ["Date", (row) => formatDate(row.date)],
-          ["Day", (row) => row.day],
-          ["Check-in Time", (row) => row.checkIn],
-          ["Check-out Time", (row) => row.checkOut],
-          ["Total Hours", (row) => row.totalHours],
-          ["Remarks", (row) => <span title={row.remarks}>{row.remarks}</span>],
-          ["Status", (row) => <Badge s={row.status} />],
-        ]} />
+              ["S.N", (_row, index) => index + 1],
+              ["EMP ID", (row) => row.empId],
+              ["EMP Name", (row) => <b>{row.name}</b>],
+              ["Department", (row) => row.department],
+              ["Branch", (row) => row.branch],
+              ["Date", (row) => formatDate(row.date)],
+              ["Day", (row) => row.day],
+              ["Check-in Time", (row) => row.checkIn],
+              ["Check-out Time", (row) => row.checkOut],
+              ["Total Hours", (row) => row.totalHours],
+              ["Remarks", (row) => <span title={row.remarks}>{row.remarks}</span>],
+              ["Status", (row) => <Badge s={row.status} />],
+            ]} />
+        }
       </Card>
     </section>
   );
@@ -3014,16 +3025,16 @@ function AssignedTasks({ c: { db, upd, user } }) {
           <h2>Tasks Assigned to Employees</h2>
           <div className="hr-assigned-task-toolbar">
             <div className="hr-assigned-task-filters">
-            <label className="hr-sbox"><Search size={15} /><input type="search" placeholder="Search this table..." value={query} onChange={(event) => setQuery(event.target.value)} /></label>
-            <F l="Assigned To"><select value={employeeId} onChange={(event) => setEmployeeId(event.target.value)}><option value="">All Employees</option>{act(db).map((employee) => <option key={taskEmployeeId(employee)} value={taskEmployeeId(employee)}>{employee.name}</option>)}</select></F>
-            <F l="Status"><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>{["All", "Pending", "In Progress", "Completed"].map((status) => <option key={status}>{status}</option>)}</select></F>
-            <F l="Sort"><select value={sort} onChange={(event) => setSort(event.target.value)}>{["Original order", "Newest first", "Oldest first", "A to Z"].map((value) => <option key={value}>{value}</option>)}</select></F>
-            <F l="Show"><select value={show} onChange={(event) => setShow(event.target.value)}>{["10", "25", "50", "100"].map((value) => <option key={value}>{value}</option>)}</select></F>
+              <label className="hr-sbox"><Search size={15} /><input type="search" placeholder="Search this table..." value={query} onChange={(event) => setQuery(event.target.value)} /></label>
+              <F l="Assigned To"><select value={employeeId} onChange={(event) => setEmployeeId(event.target.value)}><option value="">All Employees</option>{act(db).map((employee) => <option key={taskEmployeeId(employee)} value={taskEmployeeId(employee)}>{employee.name}</option>)}</select></F>
+              <F l="Status"><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>{["All", "Pending", "In Progress", "Completed"].map((status) => <option key={status}>{status}</option>)}</select></F>
+              <F l="Sort"><select value={sort} onChange={(event) => setSort(event.target.value)}>{["Original order", "Newest first", "Oldest first", "A to Z"].map((value) => <option key={value}>{value}</option>)}</select></F>
+              <F l="Show"><select value={show} onChange={(event) => setShow(event.target.value)}>{["10", "25", "50", "100"].map((value) => <option key={value}>{value}</option>)}</select></F>
             </div>
             <div className="hr-assigned-task-actions">
-            <button className="hr-ghost" type="button" onClick={reset}><RotateCcw size={14} /> Reset</button>
-            <button className="hr-btn" type="button" onClick={exportCsv} disabled={!filteredRows.length}><FileSpreadsheet size={14} /> Export CSV</button>
-            <button className="hr-btn" type="button" onClick={exportPdf} disabled={!filteredRows.length}><FileText size={14} /> Export PDF</button>
+              <button className="hr-ghost" type="button" onClick={reset}><RotateCcw size={14} /> Reset</button>
+              <button className="hr-btn" type="button" onClick={exportCsv} disabled={!filteredRows.length}><FileSpreadsheet size={14} /> Export CSV</button>
+              <button className="hr-btn" type="button" onClick={exportPdf} disabled={!filteredRows.length}><FileText size={14} /> Export PDF</button>
             </div>
           </div>
           <div className="hr-tw">
