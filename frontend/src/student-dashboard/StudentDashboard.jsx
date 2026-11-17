@@ -3,6 +3,8 @@ import { certificateImage } from "./certificateImage";
 import { shareCourseCertificate } from "../../backendApi";
 import StudentProfileEditor from "./StudentProfileEditor";
 import { dedupeStudentAssignments, formatAssignmentMarks } from "./studentAssignments";
+import { BellRing, ChevronLeft, ChevronRight } from "lucide-react";
+import LogoutConfirmDialog from "../shared/LogoutConfirmDialog.jsx";
 
 /* ============================================================
    THEME TOKENS — pulled from the reference CRM screenshot
@@ -819,8 +821,22 @@ function CoursePlayer({ course, lessonProgress, activeLessonUID, activeTab, onSe
             {currentLesson.videoCompleted ? "Watched — notes & task unlocked" : `Watch at least ${MIN_WATCH_SECONDS}s to mark this lesson watched`}
           </div>
           <div style={{ display: "flex", gap: 8 }}>
-            <Btn variant="outline" disabled={!prevLesson} onClick={() => prevLesson && onSelectLesson(getLessonUID(prevLesson))}>← Previous</Btn>
-            <Btn variant="outline" disabled={!nextLesson} onClick={() => nextLesson && onSelectLesson(getLessonUID(nextLesson))}>Next →</Btn>
+            <Btn
+              variant="outline"
+              disabled={!prevLesson}
+              onClick={() => prevLesson && onSelectLesson(getLessonUID(prevLesson))}
+              style={{ minHeight: 40, gap: 7, padding: "8px 14px", borderRadius: 10, fontSize: 14, fontWeight: 700 }}
+            >
+              <ChevronLeft size={16} strokeWidth={2} aria-hidden="true" />Previous
+            </Btn>
+            <Btn
+              variant="primary"
+              disabled={!nextLesson}
+              onClick={() => nextLesson && onSelectLesson(getLessonUID(nextLesson))}
+              style={{ minHeight: 40, gap: 7, padding: "8px 14px", borderRadius: 10, fontSize: 14, fontWeight: 700 }}
+            >
+              Next<ChevronRight size={16} strokeWidth={2} aria-hidden="true" />
+            </Btn>
           </div>
         </div>
 
@@ -1147,6 +1163,7 @@ export default function StudentDashboard({ user, onLogout, onProfileUpdated, cou
   const [openResource, setOpenResource] = useState(null);
   const [notifOpen, setNotifOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
   const profilePopupRef = useRef(null);
   const profileButtonRef = useRef(null);
   useEffect(() => {
@@ -1547,11 +1564,7 @@ export default function StudentDashboard({ user, onLogout, onProfileUpdated, cou
   const handleNav = (id) => {
     if (id === "logout") {
       setMobileOpen(false);
-      if (onLogout) {
-        onLogout();
-      } else {
-        showToast("Logged out (demo only — this is a prototype).");
-      }
+      setLogoutConfirmOpen(true);
       return;
     }
     if (id === "assignments" && activeNav !== "assignments" && activeNav !== "course-player") {
@@ -1559,6 +1572,12 @@ export default function StudentDashboard({ user, onLogout, onProfileUpdated, cou
     }
     setActiveNav(id);
     setMobileOpen(false);
+  };
+
+  const confirmLogout = () => {
+    setLogoutConfirmOpen(false);
+    if (onLogout) onLogout();
+    else showToast("Logged out (demo only — this is a prototype).");
   };
 
   return (
@@ -1643,17 +1662,17 @@ export default function StudentDashboard({ user, onLogout, onProfileUpdated, cou
         .sd-sidebar-profile-role { color: rgba(255,255,255,.6); font-size: 16px; }
         .sd-sidebar-search { display: flex; align-items: center; gap: 7px; height: 34px; margin: 10px 3px 6px; padding: 0 10px; border: 1px solid rgba(225,86,54,.4); border-radius: 10px; background: rgba(255,255,255,.04); color: rgba(255,255,255,.62); }
         .sd-sidebar-search svg { flex: 0 0 16px; width: 16px; height: 16px; }
-        .sd-sidebar-search input { width: 100%; min-width: 0; padding: 0; border: 0; outline: 0; background: transparent; color: #fff; }
+        .sd-sidebar-search input { width: 100%; min-width: 0; padding: 0; border: 0; outline: 0; background: transparent; color: #fff; font-size: 14px; }
         .sd-sidebar-search input::placeholder { color: rgba(255,255,255,.5); }
         .sd-sidebar-nav { flex: 1; min-height: 0; overflow-y: auto; padding: 2px 3px; }
         .sd-sidebar-section { margin-bottom: 8px; }
         .sd-sidebar-section + .sd-sidebar-section { margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,.12); }
-        .sd-sidebar-section-label { margin: 8px 8px 4px; color: rgba(255,255,255,.52); font-size: 16px; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; }
+        .sd-sidebar-section-label { margin: 8px 8px 4px; color: rgba(255,255,255,.52); font-size: 12px; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; }
         .sd-sidebar-link { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 48px; padding: 8px 9px; border: 1px solid transparent; border-radius: 10px; background: transparent; color: rgba(255,255,255,.88); text-align: left; font-size: 16px; font-weight: 700; letter-spacing: .01em; cursor: pointer; }
         .sd-sidebar-link:hover:not(.active) { background: rgba(255,255,255,.055); color: #fff; border-color: rgba(255,255,255,.12); }
-        .sd-sidebar-link.active { background: linear-gradient(135deg,rgba(41,41,44,.92),rgba(28,28,31,.95)); color: #fff; border-color: rgba(215,86,56,.78); box-shadow: inset 3px 0 0 #f06a4a,0 5px 14px rgba(0,0,0,.2); }
+        .sd-sidebar-link.active { background: rgba(255,255,255,.055); color: #fff; border-color: transparent; box-shadow: inset 3px 0 0 #f06a4a; }
         .sd-sidebar-link svg { flex: 0 0 18px; width: 18px; height: 18px; }
-        .sd-sidebar-link-label { min-width: 0; }
+        .sd-sidebar-link-label { flex: 1; min-width: 0; }
         .sd-sidebar-link .sd-sidebar-chevron { flex: 0 0 13px; width: 13px; height: 13px; margin-left: auto; opacity: .45; }
         .sd-sidebar-badge { display: grid; place-items: center; min-width: 26px; height: 26px; margin-left: auto; padding: 0 6px; border-radius: 999px; background: linear-gradient(135deg,#d26147,#9a3828); color: #fff; font-size: 16px; font-weight: 800; box-shadow: 0 8px 18px rgba(173,63,42,.3); }
         .sd-sidebar-footer { padding: 12px 8px 2px; border-top: 1px solid rgba(216,82,53,.28); }
@@ -1751,14 +1770,6 @@ export default function StudentDashboard({ user, onLogout, onProfileUpdated, cou
         }
         .sd-logo-badge span:first-child { left: 6px; top: 6px; }
         .sd-logo-badge span:last-child { right: 7px; bottom: 5px; }
-        .sd-logo-badge i {
-          position: absolute;
-          width: 7px;
-          height: 120%;
-          background: #fff;
-          transform: rotate(24deg);
-          border-radius: 999px;
-        }
         @media (max-width: 860px) {
           .sd-sidebar {
             position: fixed !important;
@@ -1786,9 +1797,29 @@ export default function StudentDashboard({ user, onLogout, onProfileUpdated, cou
         }
         /* Match the browser's 80% desktop zoom without shrinking dialogs or overlays. */
         @media (min-width: 981px) {
-          .sd-shell { zoom: .8; width: 100%; height: 125vh; }
+          .sd-shell { zoom: .8; width: 100%; height: 125vh; gap: 15px; padding: 12.5px !important; }
           .sd-sidebar, .sd-main { height: calc(125vh - 32px); }
           .sd-student-root .cp-wrap { height: calc(125vh - 88px) !important; }
+        }
+        .sd-notification-bell { position: relative; width: 44px; height: 44px; border-radius: 14px; }
+        .sd-notification-bell.has-unread > svg { transform-origin: 50% 15%; animation: sd-notification-bell-ring 2.5s ease-in-out infinite; }
+        .sd-notification-bell-badge { position: absolute; top: -6px; right: -6px; display: grid; min-width: 18px; height: 18px; place-items: center; padding: 0 4px; border-radius: 99px; background: #d95b3d; color: #fff; font-size: 13px; font-weight: 800; }
+        @keyframes sd-notification-bell-ring {
+          0%, 63%, 100% { transform: rotate(0); }
+          7%, 21% { transform: rotate(15deg); }
+          14%, 28% { transform: rotate(-13deg); }
+          35% { transform: rotate(12deg); }
+          42% { transform: rotate(-10deg); }
+          49% { transform: rotate(8deg); }
+          56% { transform: rotate(-6deg); }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .sd-notification-bell.has-unread > svg { animation: none; }
+        }
+        @media (min-width: 981px) {
+          .sd-notification-bell { width: 55px; height: 55px; border-radius: 17.5px; }
+          .sd-notification-bell > svg { width: 22.5px; height: 22.5px; }
+          .sd-notification-bell-badge { top: -7.5px; right: -7.5px; min-width: 22.5px; height: 22.5px; font-size: 16.25px; }
         }
       `}</style>
 
@@ -1804,9 +1835,9 @@ export default function StudentDashboard({ user, onLogout, onProfileUpdated, cou
           boxShadow: "0 24px 50px rgba(8,9,10,0.22)",
         }}>
           <div className="sd-sidebar-brand">
-            <div className="sd-logo-badge"><span>S</span><i /><span>T</span></div>
+            <div className="sd-logo-badge"><span>S</span><span>T</span></div>
             <div>
-              <div className="sd-sidebar-brand-name">SYSTEM TECHNOLOGIES</div>
+              <div className="sd-sidebar-brand-name">System Technologies</div>
               <div className="sd-sidebar-brand-subtitle">Ajmer Student Portal</div>
             </div>
           </div>
@@ -1879,12 +1910,14 @@ export default function StudentDashboard({ user, onLogout, onProfileUpdated, cou
             <div style={{ display: "flex", alignItems: "center", gap: 14, position: "relative" }}>
               <button
                 type="button"
+                className={`sd-notification-bell${unreadCount ? " has-unread" : ""}`}
                 aria-label="Notifications"
+                title="Notifications"
                 onClick={() => setNotifOpen(o => !o)}
-                style={{ width: 34, height: 34, borderRadius: 9, border: `1px solid ${C.border}`, background: C.card, display: "flex", alignItems: "center", justifyContent: "center", position: "relative", color: C.textSecondary, cursor: "pointer" }}
+                style={{ border: `1px solid ${C.border}`, background: C.card, display: "flex", alignItems: "center", justifyContent: "center", position: "relative", color: C.textSecondary, cursor: "pointer" }}
               >
-                <Icon.bell style={{ width: 16, height: 16 }} />
-                {unreadCount > 0 && <span style={{ position: "absolute", top: 6, right: 7, width: 6, height: 6, background: "#e2734a", borderRadius: "50%", border: `1.5px solid ${C.card}` }} />}
+                <BellRing size={18} />
+                {unreadCount > 0 && <span className="sd-notification-bell-badge">{unreadCount}</span>}
               </button>
 
               {notifOpen && (
@@ -2161,6 +2194,7 @@ export default function StudentDashboard({ user, onLogout, onProfileUpdated, cou
         setUploadedResources((current) => ({ ...current, [openResource?.title]: file.name }));
         showToast(`${file.name} uploaded successfully.`);
       }} />
+      <LogoutConfirmDialog open={logoutConfirmOpen} onCancel={() => setLogoutConfirmOpen(false)} onConfirm={confirmLogout} />
     </div>
   );
 }

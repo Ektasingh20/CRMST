@@ -9,6 +9,7 @@ import { createTask as createTaskApi, fetchTasks, updateTask as updateTaskApi, f
 import { compressImageFile } from "../../imageUpload.js";
 import PasswordResetLink from "../PasswordResetLink.jsx";
 import HelpdeskChat, { HelpdeskIncomingToast } from "../shared/HelpdeskChat.jsx";
+import LogoutConfirmDialog from "../shared/LogoutConfirmDialog.jsx";
 import { buildAttendanceReportRows, filterAttendanceReportRows, getAttendanceReportDateRange, getAttendanceReportMonths } from "./attendanceReport.js";
 import { isValidAadhaar, isValidBankAccount, isValidBankText, isValidEmail, isValidIfsc, isValidIndianMobile, isValidPan, isValidPersonName, isValidProfileDob, isValidRelationship } from "../../../shared/profileValidation.js";
 import SalesTableHead from "./SalesTableHead.jsx";
@@ -3042,8 +3043,13 @@ function SettingsTab({ profile, setProfile, showToast, currentUser, onProfileUpd
   const [validationErrors, setValidationErrors] = useState({});
   const [pendingPhoto, setPendingPhoto] = useState(null);
   const [photoPreviewOpen, setPhotoPreviewOpen] = useState(false);
+  const [documentPreview, setDocumentPreview] = useState(null);
   const photoPreviewUrl = useRef("");
+  const documentPreviewUrl = useRef("");
   const accountId = String(currentUser?.id || currentUser?._id || "");
+  useEffect(() => () => {
+    if (documentPreviewUrl.current) URL.revokeObjectURL(documentPreviewUrl.current);
+  }, []);
   const formatFileSize = (bytes) => {
     const size = Number(bytes) || 0;
     if (!size) return "";
@@ -3192,6 +3198,24 @@ function SettingsTab({ profile, setProfile, showToast, currentUser, onProfileUpd
     } catch (error) {
       setFileErrors((errors) => ({ ...errors, [key]: error.message || "Unable to download this document." }));
     }
+  };
+
+  const handleDocumentView = async (key, documentInfo) => {
+    try {
+      const blob = await downloadMyProfileDocument(key);
+      if (documentPreviewUrl.current) URL.revokeObjectURL(documentPreviewUrl.current);
+      const url = URL.createObjectURL(blob);
+      documentPreviewUrl.current = url;
+      setDocumentPreview({ name: documentInfo.name, type: documentInfo.type || blob.type, url });
+    } catch (error) {
+      setFileErrors((errors) => ({ ...errors, [key]: error.message || "Unable to preview this document." }));
+    }
+  };
+
+  const closeDocumentPreview = () => {
+    if (documentPreviewUrl.current) URL.revokeObjectURL(documentPreviewUrl.current);
+    documentPreviewUrl.current = "";
+    setDocumentPreview(null);
   };
 
   const handleSaveProfile = async (event) => {
@@ -3376,7 +3400,7 @@ function SettingsTab({ profile, setProfile, showToast, currentUser, onProfileUpd
                   <small className="crm-settings-document-hint">PDF, JPG or PNG - maximum 5 MB</small>
                   {fileErrors[key] && <small className="crm-settings-field-error">{fileErrors[key]}</small>}
                   {documentInfo?.name
-                    ? <div className="crm-settings-document-file"><FileText size={17} /><span><b title={documentInfo.name}>{documentInfo.name}</b><small>{formatFileSize(documentInfo.size)}{documentInfo.updatedAt ? ` - Updated ${formatDisplayDate(documentInfo.updatedAt)}` : ""}</small></span><button type="button" title={`Download ${label}`} aria-label={`Download ${label}`} onClick={() => handleDocumentDownload(key, documentInfo)}><Download size={15} /></button></div>
+                    ? <div className="crm-settings-document-file"><FileText size={17} /><span><b title={documentInfo.name}>{documentInfo.name}</b><small>{formatFileSize(documentInfo.size)}{documentInfo.updatedAt ? ` - Updated ${formatDisplayDate(documentInfo.updatedAt)}` : ""}</small></span><button type="button" title={`View ${label}`} aria-label={`View ${label}`} onClick={() => handleDocumentView(key, documentInfo)}><Eye size={15} /></button><button type="button" title={`Download ${label}`} aria-label={`Download ${label}`} onClick={() => handleDocumentDownload(key, documentInfo)}><Download size={15} /></button></div>
                     : <span className="crm-settings-document-empty">No file has been added yet</span>}
                 </div>;
               })}
@@ -3398,6 +3422,17 @@ function SettingsTab({ profile, setProfile, showToast, currentUser, onProfileUpd
         <div role="dialog" aria-modal="true" aria-label="Current profile photo" onClick={(event) => event.stopPropagation()}>
           <button type="button" aria-label="Close photo preview" onClick={() => setPhotoPreviewOpen(false)}><CircleX size={18} /></button>
           <img src={profileForm.photo} alt="Current profile" />
+        </div>
+      </div>}
+      {documentPreview && <div className="crm-settings-photo-modal crm-settings-document-preview" onClick={closeDocumentPreview}>
+        <div role="dialog" aria-modal="true" aria-label={`Preview of ${documentPreview.name}`} onClick={(event) => event.stopPropagation()}>
+          <button type="button" aria-label="Close document preview" onClick={closeDocumentPreview}><CircleX size={18} /></button>
+          <h3>{documentPreview.name}</h3>
+          {documentPreview.type?.startsWith("image/")
+            ? <img src={documentPreview.url} alt={documentPreview.name} />
+            : documentPreview.type === "application/pdf"
+              ? <iframe title={`Preview of ${documentPreview.name}`} src={documentPreview.url} />
+              : <p>This file type cannot be previewed in the browser.</p>}
         </div>
       </div>}
     </section>
@@ -3643,6 +3678,7 @@ export default function CrmExecutiveDashboard({
   const [activeTab, setActiveTab] = useState(initialTab);
   const [toast, showToast] = useToast();
   const [topMenu, setTopMenu] = useState("");
+  const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
   const [darkMode, setDarkMode] = useState(() => {
     try { return window.localStorage.getItem("crm_dashboard_dark_mode") === "true"; }
     catch (error) {
@@ -3821,7 +3857,11 @@ export default function CrmExecutiveDashboard({
   };
 
   const handleLogout = () => {
-    if (!window.confirm("Are you sure you want to log out?")) return;
+    setLogoutConfirmOpen(true);
+  };
+
+  const confirmLogout = () => {
+    setLogoutConfirmOpen(false);
     if (typeof onLogout === "function") {
       onLogout();
     } else {
@@ -3873,7 +3913,7 @@ export default function CrmExecutiveDashboard({
               {topMenu === "notifications" && <div className="topbar-menu notifications-menu"><div className="topbar-menu-head"><strong>Notifications</strong><button onClick={markAllNotificationsRead}>Mark all read</button></div><div className="topbar-notification-list">{appNotifications.slice(0, 6).map((item) => <button key={item.id} className={clsx("topbar-notification", !item.read && "unread")} onClick={() => markNotificationRead(item.id)}>{item.message}</button>)}{!appNotifications.length && <p>No notifications yet.</p>}</div><button className="topbar-menu-link" onClick={() => { setTopMenu(""); handleNavigate("notifications"); }}>View all notifications</button></div>}
               </div>
               <div className="topbar-popover-wrap">
-              <button className="user-chip user-chip-button" onClick={() => setTopMenu((current) => current === "profile" ? "" : "profile")}>
+              <button className="user-chip user-chip-button" type="button" aria-haspopup="dialog" aria-expanded={topMenu === "profile"} onClick={() => setTopMenu((current) => current === "profile" ? "" : "profile")}>
                 {profile.avatarUrl ? (
                   <img
                     src={profile.avatarUrl}
@@ -3888,7 +3928,19 @@ export default function CrmExecutiveDashboard({
                   <span style={{ fontSize: "16px", color: "var(--text-soft)" }}>{profile.role}</span>
                 </div>
               </button>
-              {topMenu === "profile" && <div className="topbar-menu profile-menu"><div className="profile-menu-identity"><div className="avatar">{(profile.name || "?").charAt(0)}</div><div><strong>{profile.name}</strong><span>{profile.role}</span></div></div><div className="profile-menu-data"><span>Email <b>{profile.email || "-"}</b></span><span>Phone <b>{profile.phone || "-"}</b></span></div><button className="topbar-menu-link" onClick={() => { setTopMenu(""); handleNavigate("settings"); }}>View settings</button></div>}
+              {topMenu === "profile" && <div className="topbar-menu profile-menu" role="dialog" aria-label="Profile details">
+                <div className="profile-menu-identity">
+                  {profile.avatarUrl
+                    ? <img className="profile-menu-avatar" src={profile.avatarUrl} alt={`${profile.name || "User"} profile`} />
+                    : <div className="profile-menu-avatar-fallback" aria-hidden="true">{(profile.name || "?").charAt(0).toUpperCase()}</div>}
+                  <div className="profile-menu-copy"><strong>{profile.name || "CRM Executive"}</strong><span>{profile.role || "CRM Executive"}</span></div>
+                </div>
+                <div className="profile-menu-data">
+                  <div><span>Email</span><b title={profile.email || "Not provided"}>{profile.email || "Not provided"}</b></div>
+                  <div><span>Phone</span><b>{profile.phone || "Not provided"}</b></div>
+                </div>
+                <button className="topbar-menu-link" type="button" onClick={() => { setTopMenu(""); handleNavigate("settings"); }}>View settings</button>
+              </div>}
               </div>
             </div>
           </div>
@@ -3971,6 +4023,7 @@ export default function CrmExecutiveDashboard({
       </div>
       <Toast toast={toast} />
       <HelpdeskIncomingToast user={currentUser} onOpen={() => handleNavigate("hrhelpdesk")} />
+      <LogoutConfirmDialog open={logoutConfirmOpen} onCancel={() => setLogoutConfirmOpen(false)} onConfirm={confirmLogout} />
     </div>
   );
 }
