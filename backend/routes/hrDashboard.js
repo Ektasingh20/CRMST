@@ -2,7 +2,7 @@ import express from "express";
 import { authenticate } from "../middleware/auth.js";
 import { listLeaves } from "../models/Leave.js";
 import User from "../models/User.js";
-import { isOfficialAttendanceRecord, listAttendanceForDate } from "../services/attendanceStore.js";
+import { listAdminAttendanceMonth } from "../services/attendanceStore.js";
 import { isAdmin, isHrUser } from "../utils/roles.js";
 
 const router = express.Router();
@@ -25,10 +25,10 @@ router.get("/", async (_req, res) => {
       const today = todayInIndia();
       const [users, attendanceRecords, allLeaves] = await Promise.all([
         User.find(),
-        Attendance.find(),
+        listAdminAttendanceMonth(today.slice(0, 7)),
         listLeaves(),
       ]);
-      const attendance = attendanceRecords.map((record) => record.toObject());
+      const attendance = attendanceRecords;
       const todayAttendance = attendance.filter((record) => record.date === today);
       const leaves = allLeaves.filter((leave) => leave.status === "Pending");
       const employees = users.map((user) => user.toObject()).filter(active);
