@@ -1,7 +1,7 @@
 import express from "express";
 import { authenticate } from "../middleware/auth.js";
 import { createLeave, listLeaves, saveLeave } from "../models/Leave.js";
-import { isAdmin } from "../utils/roles.js";
+import { isAdmin, isHrUser } from "../utils/roles.js";
 import { notifyAdmins, notifyUser } from "../services/appNotifications.js";
 import { leaveDaysInclusive } from "../utils/leaveDuration.js";
 
@@ -19,7 +19,7 @@ const ownsLeave = (leave, user) => String(leave.employeeId || "") === userId(use
 router.get("/", async (req, res) => {
   try {
     const leaves = await listLeaves();
-    const visibleLeaves = isAdmin(req.user) ? leaves : leaves.filter((leave) => ownsLeave(leave, req.user));
+    const visibleLeaves = isAdmin(req.user) || isHrUser(req.user) ? leaves : leaves.filter((leave) => ownsLeave(leave, req.user));
     await Promise.all(visibleLeaves.map(async (leave) => {
       if (Number(leave.days) > 0) return;
       const days = leaveDaysInclusive(leave.from, leave.to);

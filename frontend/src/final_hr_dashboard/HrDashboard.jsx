@@ -6,7 +6,7 @@ import HrWorkflowModules from "./HrWorkflowModules";
 import HrLeads from "./HrLeads";
 import { usePageLoading, getPageTitle } from "./hrPageLoading";
 import { compressImageFile } from "../../imageUpload.js";
-import { createUser, fetchHrDashboard, fetchTasks as fetchTasksApi, createTask as createTaskApi, updateTask as updateTaskApi, deleteTask as deleteTaskApi, fetchUsers, updateUser, updateMyProfile, deleteUser, uploadPriorExperienceDocument, downloadPriorExperienceDocument } from "../../backendApi.js";
+import { createUser, fetchHrDashboard, fetchLeaves as fetchLeavesApi, fetchTasks as fetchTasksApi, createTask as createTaskApi, updateTask as updateTaskApi, deleteTask as deleteTaskApi, fetchUsers, updateUser, updateMyProfile, deleteUser, uploadPriorExperienceDocument, downloadPriorExperienceDocument } from "../../backendApi.js";
 import { uploadImage } from "../../backendClient.js";
 import PasswordResetLink from "../PasswordResetLink.jsx";
 import { HelpdeskIncomingToast } from "../shared/HelpdeskChat.jsx";
@@ -139,7 +139,7 @@ const salaryAttendanceSummary = (db, employee, reportMonth, lookup) => {
   const deductedDays = nonEmployedDays + absent + unpaidLeaveDays;
   return { daysInMonth, employedDays, present, absent, leaveDays, paidLeaveDays, unpaidLeaveDays, holidayDays, deductedDays, payableDays: Math.max(0, daysInMonth - deductedDays), throughDate: periodEnd };
 };
-const nm = (d, id) => d.emps.find((e) => e.id === +id)?.name || "Unknown";
+const nm = (d, id) => d.emps.find((e) => String(e.id) === String(id) || String(e.backendId || "") === String(id))?.name || "Unknown";
 const taskEmployeeId = (employee) => String(employee?.backendId || employee?.id || "");
 const findTaskEmployee = (employees, id) => employees.find((employee) => [employee.id, employee.backendId].filter(Boolean).some((value) => String(value) === String(id)));
 const taskMatchesEmployee = (employees, selectedId, assignedId) => {
@@ -1431,7 +1431,6 @@ function SalaryReport({ c: { db } }) {
           </tbody>
         </table></div> : <Empty t="No employees match these salary report filters." />}
         {rows.length > 0 && <div className="hr-salary-total"><span>Totals for {rows.length} employees</span><strong>Gross {money(totalGross)}</strong><strong>Net payable {money(totalNet)}</strong></div>}
-        {rows.length > 0 && <p className="hr-salary-report-note">Salary amounts use {salarySourceLabel} payroll where saved; otherwise the employee profile salary is used. Attendance is counted through {rows[0].throughDate}; unmarked Sundays count as weekly holidays and other unmarked employed days count as absent.</p>}
       </Card>
     </div>
   );
@@ -2104,7 +2103,8 @@ function AttendanceReport({ c: { db, user } }) {
       };
     })
     .filter((row) => (!appliedFilters.day || row.day === appliedFilters.day)
-      && (!appliedFilters.status || row.status === appliedFilters.status));
+      && (!appliedFilters.status || row.status === appliedFilters.status))
+    .sort((a, b) => b.date.localeCompare(a.date));
   const updateFilter = (key) => (event) => setFilters((current) => ({ ...current, [key]: event.target.value }));
   const applyFilters = (event) => {
     event.preventDefault();
@@ -3540,6 +3540,27 @@ export default function HrDashboard({ user, onLogout } = {}) {
     fetchHrDashboard().then((hrSummary) => {
       if (active) setDb((current) => ({ ...current, hrSummary }));
     }).catch((error) => console.warn("Unable to load the HR dashboard summary.", error.message || error));
+    return () => { active = false; };
+  }, [user?.id, user?._id]);
+
+  useEffect(() => {
+    if (!user) return undefined;
+    let active = true;
+    fetchLeavesApi().then((records) => {
+      if (!active || !Array.isArray(records)) return;
+      setDb((current) => ({
+        ...current,
+        leaves: records.map((leave) => {
+          const employee = current.emps.find((item) => String(item.backendId || item.id) === String(leave.employeeId)
+            || (leave.employeeName && String(item.name).trim().toLowerCase() === String(leave.employeeName).trim().toLowerCase()));
+          return {
+            ...leave,
+            empId: employee?.id ?? leave.employeeId,
+            appliedAt: leave.appliedAt || leave.createdAt || leave.appliedOn,
+          };
+        }),
+      }));
+    }).catch((error) => console.warn("Unable to load leave requests.", error.message || error));
     return () => { active = false; };
   }, [user?.id, user?._id]);
 
