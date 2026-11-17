@@ -124,3 +124,10 @@
 @media(max-width:1200px){.hr-dashboard-stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:900px){.hr-shell{padding:8px}.hr-main{border-radius:26px}.hr-scroll{padding:18px}.hr-dashboard-panels{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:620px){.hr-dashboard{gap:13px}.hr-dashboard-welcome{align-items:flex-start}.hr-dashboard-welcome h2{font-size:20px}.hr-dashboard-link{padding:9px;font-size:11px}.hr-dashboard-link svg{display:none}.hr-dashboard-stats{gap:9px}.hr-dashboard-stat{gap:8px;padding:12px 9px}.hr-dashboard-stat-icon{width:32px;height:32px;border-radius:10px}.hr-dashboard-stat-copy strong{font-size:21px}.hr-dashboard-stat-copy small{font-size:10px}.hr-dashboard-stat-copy em{font-size:9px}.hr-dashboard-stat-arrow{display:none}.hr-dashboard-panels{grid-template-columns:minmax(0,1fr)}.hr-dashboard-panel{padding:15px}}
+.hr-attendance-dry-run{display:flex;flex-wrap:wrap;gap:12px 20px;align-items:center;padding:16px 18px;border:1px solid #e8d8c8;background:#fffdfa}
+.hr-attendance-dry-run strong{color:#643e23}
+.hr-attendance-dry-run span{font-size:13px;font-weight:650}
+.hr-attendance-dry-run small{flex-basis:100%;color:#675d55}
+.hr-attendance-load-state,.hr-attendance-load-error{padding:12px 16px;border-radius:10px}
+.hr-attendance-load-state{background:#f5efe8;color:#643e23}
+.hr-attendance-load-error{background:#fff1e5;color:#8b3912}

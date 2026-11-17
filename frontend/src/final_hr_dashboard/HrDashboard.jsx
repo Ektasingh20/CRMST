@@ -435,6 +435,72 @@ const profileTotals = (employee) => {
     netSalary: Math.max(0, gross - currentMonthLeaveDeduction),
   };
 };
+function usePayrollAttendanceMonth(month) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setError("");
+    fetchAdminAttendanceMonth(month).then((result) => {
+      if (!Array.isArray(result?.records) || !Array.isArray(result?.leaves) || !result?.calendar) {
+        throw new Error("The attendance payroll response is incomplete.");
+      }
+      const recordsByEmployee = new Map();
+      result.records.forEach((record) => {
+        const id = String(record.employeeId || "");
+        if (!id) return;
+        const rows = recordsByEmployee.get(id) || [];
+        rows.push(record);
+        recordsByEmployee.set(id, rows);
+      });
+      const leavesByEmployee = new Map();
+      result.leaves.forEach((leave) => {
+        const id = String(leave.employeeId || "");
+        if (!id) return;
+        const rows = leavesByEmployee.get(id) || [];
+        rows.push(leave);
+        leavesByEmployee.set(id, rows);
+      });
+      if (active) setData({ ...result, recordsByEmployee, leavesByEmployee });
+    }).catch((loadError) => {
+      if (active) {
+        setData(null);
+        setError(loadError.message || "Unable to load attendance for payroll.");
+      }
+    }).finally(() => {
+      if (active) setLoading(false);
+    });
+    return () => { active = false; };
+  }, [month]);
+  return { data, loading, error };
+}
+function employeeAttendanceRows(employee, month, data, { excludeTestData = true } = {}) {
+  if (!data) return [];
+  const id = String(employee.backendId || employee.id || "");
+  const records = data.recordsByEmployee.get(id) || [];
+  return buildAttendanceMonthRows({
+    attendance: excludeTestData ? records.filter((record) => record.isTestData !== true) : records,
+    leaves: data.leavesByEmployee.get(id) || [],
+    month,
+    joinedDate: employee.joined,
+    today: attendanceDateInIndia(),
+    calendar: data.calendar,
+    employeeId: id,
+  });
+}
+function legacyPayrollPreview(employee, month, attendanceState = {}) {
+  const amount = (value) => Math.max(0, Number(value) || 0);
+  const absences = Object.entries(attendanceState).filter(([key, status]) => key.startsWith(`${month}-`)
+    && key.endsWith(`|${employee.id}`) && status === "Absent").length;
+  const salary = amount(employee.salary);
+  const gross = salary + amount(employee.hrm) + amount(employee.otherAllowance)
+    + amount(employee.bonus) + amount(employee.incentive);
+  const deductions = amount(employee.currentMonthLeaveDeduction)
+    + Math.round((salary / 30) * Math.max(absences, amount(employee.unpaidLeaveDays)) * 100) / 100;
+  return { gross, net: Math.max(0, gross - amount(employee.pf) - amount(employee.taxDeduction) - deductions) };
+}
 const readUploadedFile = (file) => new Promise((resolve, reject) => {
   const reader = new FileReader();
   reader.onload = () => typeof reader.result === "string" ? resolve(reader.result) : reject(new Error("Unable to read this file."));
@@ -1340,7 +1406,7 @@ function SalaryReport({ c: { db } }) {
       deductions,
       net: Math.max(0, gross - deductions),
     };
-  });
+  }) : [];
   const totalNet = rows.reduce((total, row) => total + row.net, 0);
   const totalGross = rows.reduce((total, row) => total + row.gross, 0);
   const totalDeductions = rows.reduce((total, row) => total + row.deductions, 0);
@@ -1412,6 +1478,13 @@ function SalaryReport({ c: { db } }) {
           <div><button type="button" className="hr-ghost" onClick={exportExcel} disabled={!rows.length}><FileSpreadsheet size={15} /> Export to Excel</button><button type="button" className="hr-ghost" onClick={exportCsv} disabled={!rows.length}><FileSpreadsheet size={15} /> Export to CSV</button><button type="button" className="hr-ghost" onClick={exportPdf} disabled={!rows.length}><FileText size={15} /> Export to PDF</button></div>
         </div>
       </section>
+      {attendanceData && <section className="hr-card hr-box hr-attendance-dry-run" aria-live="polite">
+        <strong>Payroll dry run · no saved transactions changed</strong>
+        <span>Current method estimate: {money(legacyNet)}</span>
+        <span>Attendance/join-aware estimate: {money(totalNet)}</span>
+        <span>Difference: {money(totalNet - legacyNet)}</span>
+        <small>Joining/exit proration is recalculated once; only finalized absences and unpaid leave after joining are deducted.</small>
+      </section>}
       <Card title="Salary report" right={<span className="hr-count">{rows.length} employees · {reportMonth}</span>}>
         {rows.length ? <div className="hr-tw hr-salary-table-wrap"><table className="hr-t hr-salary-table">
           <thead><tr>{["S.N", "Employee", "Bank details", "Basic salary", "Present", "Absent / Leave", "Holiday", "Payable", "Earnings", "Deductions", "Net payable"].map((heading) => <th key={heading}>{heading}</th>)}</tr></thead>
@@ -1668,8 +1741,11 @@ function Payroll({ c: { db, upd } }) {
   const activeEmployees = act(db);
   const savedPayrolls = db.payrolls || [];
   const amount = (value) => Math.max(0, Number(value) || 0);
+  const { data: attendanceData, loading: attendanceLoading, error: attendanceError } = usePayrollAttendanceMonth(selectedMonth);
   const calculatePayroll = (employee, month) => {
-    const absences = Object.entries(db.att || {}).filter(([key, status]) => key.startsWith(`${month}-`) && key.endsWith(`|${employee.id}`) && status === "Absent").length;
+    if (!attendanceData) throw new Error("Attendance must be loaded before calculating a payroll draft.");
+    const attendanceRows = employeeAttendanceRows(employee, month, attendanceData, { excludeTestData: true });
+    const attendancePayroll = calculateAttendancePayroll({ employee, month, rows: attendanceRows });
     const salary = amount(employee.salary);
     const hra = amount(employee.hrm);
     const allowances = amount(employee.otherAllowance);
@@ -1677,7 +1753,7 @@ function Payroll({ c: { db, upd } }) {
     const incentive = amount(employee.incentive);
     const pf = amount(employee.pf);
     const tax = amount(employee.taxDeduction);
-    const otherDeductions = amount(employee.currentMonthLeaveDeduction) + Math.round((salary / 30) * Math.max(absences, amount(employee.unpaidLeaveDays)) * 100) / 100;
+    const otherDeductions = attendancePayroll.otherDeductions;
     const gross = salary + hra + allowances + bonus + incentive;
     return {
       employeeId: employee.id,
@@ -1700,9 +1776,9 @@ function Payroll({ c: { db, upd } }) {
   };
   const monthPayrolls = savedPayrolls.filter((payroll) => payroll.month === selectedMonth);
   const existingEmployeeIds = new Set(monthPayrolls.map((payroll) => String(payroll.employeeId)));
-  const draftPayrolls = activeEmployees
+  const draftPayrolls = attendanceData ? activeEmployees
     .filter((employee) => !existingEmployeeIds.has(String(employee.id)))
-    .map((employee) => ({ ...calculatePayroll(employee, selectedMonth), id: `draft-${employee.id}-${selectedMonth}`, isDraft: true }));
+    .map((employee) => ({ ...calculatePayroll(employee, selectedMonth), id: `draft-${employee.id}-${selectedMonth}`, isDraft: true })) : [];
   const rows = [...monthPayrolls.filter((payroll) => !payroll.deleted), ...draftPayrolls]
     .filter((payroll) => `${payroll.employeeName} ${payroll.employeeId} ${payroll.department} ${payroll.month}`.toLowerCase().includes(appliedFilters.query.trim().toLowerCase()))
     .sort((a, b) => String(a.employeeName).localeCompare(String(b.employeeName)));
@@ -1714,8 +1790,8 @@ function Payroll({ c: { db, upd } }) {
   };
   const openAdd = () => {
     const employee = activeEmployees[0];
-    if (!employee) return;
-    setEditor({ mode: "add", form: calculatePayroll(employee, filters.month || MONTH) });
+    if (!employee || !attendanceData) return;
+    setEditor({ mode: "add", form: calculatePayroll(employee, selectedMonth) });
   };
   const openEdit = (payroll) => {
     const employee = activeEmployees.find((item) => String(item.id) === String(payroll.employeeId));
@@ -1724,7 +1800,7 @@ function Payroll({ c: { db, upd } }) {
   const updateEditor = (key, value) => setEditor((current) => ({ ...current, form: { ...current.form, [key]: value } }));
   const setEmployee = (employeeId) => {
     const employee = activeEmployees.find((item) => String(item.id) === String(employeeId));
-    if (employee) setEditor((current) => ({ ...current, form: { ...calculatePayroll(employee, current.form.month), employeeId: employee.id } }));
+    if (employee && attendanceData) setEditor((current) => ({ ...current, form: { ...calculatePayroll(employee, current.form.month), employeeId: employee.id } }));
   };
   const submitPayroll = (event) => {
     event.preventDefault();
@@ -1867,8 +1943,22 @@ function Payroll({ c: { db, upd } }) {
     pdf.save(`payroll-slip-${payroll.employeeId}-${payroll.month}.pdf`);
   };
   const totals = rows.reduce((result, payroll) => ({ gross: result.gross + payroll.gross, net: result.net + payroll.net }), { gross: 0, net: 0 });
+  const legacyDraftNet = draftPayrolls.reduce((total, payroll) => {
+    const employee = activeEmployees.find((item) => String(item.id) === String(payroll.employeeId));
+    return total + (employee ? legacyPayrollPreview(employee, selectedMonth, db.att).net : 0);
+  }, 0);
+  const proposedDraftNet = draftPayrolls.reduce((total, payroll) => total + payroll.net, 0);
 
   return (<>
+    {attendanceLoading && <p className="hr-attendance-load-state">Loading monthly Firestore attendance for payroll drafts…</p>}
+    {attendanceError && <p className="hr-attendance-load-error" role="alert">{attendanceError}</p>}
+    {attendanceData && <section className="hr-card hr-box hr-attendance-dry-run" aria-live="polite">
+      <strong>Payroll draft dry run · saved transactions remain unchanged</strong>
+      <span>Current method estimate: {formatMoney(legacyDraftNet)}</span>
+      <span>Attendance/join-aware estimate: {formatMoney(proposedDraftNet)}</span>
+      <span>Difference: {formatMoney(proposedDraftNet - legacyDraftNet)}</span>
+      <small>Only new drafts use this calculation. Existing payroll records are displayed as saved.</small>
+    </section>}
     <Card title="Payroll Management" right={<span className="hr-count">{rows.length} payroll records · {monthName(appliedFilters.month)}</span>}>
       <div className="hr-tools hr-payroll-toolbar">
         <label className="hr-sbox"><Search size={16} /><input type="search" placeholder="Search Employee..." aria-label="Search payroll records" value={filters.query} onChange={(event) => setFilters((current) => ({ ...current, query: event.target.value }))} /></label>
@@ -1876,7 +1966,7 @@ function Payroll({ c: { db, upd } }) {
         <button className="hr-btn" type="button" onClick={() => setAppliedFilters({ ...filters })}><Search size={15} /> Search</button>
       </div>
       <div className="hr-payroll-summary"><span>Gross payroll <strong>{formatMoney(totals.gross)}</strong></span><span>Net salary payable <strong>{formatMoney(totals.net)}</strong></span></div>
-      <div className="hr-payroll-add-row"><button className="hr-btn" type="button" disabled={!activeEmployees.length} onClick={openAdd}><Plus size={16} /> Add Payroll</button></div>
+      <div className="hr-payroll-add-row"><button className="hr-btn" type="button" disabled={!activeEmployees.length || !attendanceData} onClick={openAdd}><Plus size={16} /> Add Payroll</button></div>
       <Table rows={rows} empty="No payroll records match your search." cols={[
         ["ID", (payroll) => `ST-${String(payroll.employeeId).padStart(4, "0")}`],
         ["Employee Name", (payroll) => <b>{payroll.employeeName}</b>],
@@ -1944,68 +2034,73 @@ function Payroll({ c: { db, upd } }) {
 }
 
 /* ================= Attendance ================= */
-function MarkAttendance({ c: { db, upd } }) {
-  const key = `${TODAY}|1`;
-  const cur = db.att[key] || "";
-  const savedDetails = db.attendanceDetails?.[key] || {};
-  const [status, setStatus] = useState(cur);
-  const [remark, setRemark] = useState(savedDetails.remark || "");
+function MarkAttendance({ c: { db, user } }) {
+  const employeeId = String(user?.id || user?._id || "");
+  const [record, setRecord] = useState(null);
+  const [status, setStatus] = useState("");
+  const [remark, setRemark] = useState("");
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
-    if (!savedDetails.checkedInAt || savedDetails.checkedOutAt) return undefined;
+    let active = true;
+    if (!employeeId) {
+      setLoading(false);
+      return undefined;
+    }
+    setLoading(true);
+    fetchTodayAttendance().then((attendance) => {
+      if (!active) return;
+      setRecord(attendance);
+      setStatus(attendance?.status || "");
+      setRemark(attendance?.remark || "");
+    }).catch((loadError) => {
+      if (active) setError(loadError.message || "Unable to load today's attendance.");
+    }).finally(() => {
+      if (active) setLoading(false);
+    });
+    return () => { active = false; };
+  }, [employeeId]);
+  const checkedIn = Boolean(record?.checkInAt || record?.checkIn);
+  const checkedOut = Boolean(record?.checkOutAt || record?.checkOut);
+  const absent = record?.status === "Absent";
+  useEffect(() => {
+    if (!checkedIn || checkedOut || absent) return undefined;
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
-  }, [savedDetails.checkedInAt, savedDetails.checkedOutAt]);
-  const checkedInAt = savedDetails.checkedInAt
-    ? new Date(savedDetails.checkedInAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })
-    : "";
-  const checkedOutAt = savedDetails.checkedOutAt
-    ? new Date(savedDetails.checkedOutAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })
-    : "";
-  const workingMilliseconds = savedDetails.workingMilliseconds
-    ?? (savedDetails.checkedInAt ? Math.max(0, (savedDetails.checkedOutAt ? Date.parse(savedDetails.checkedOutAt) : now) - Date.parse(savedDetails.checkedInAt)) : 0);
+  }, [checkedIn, checkedOut, absent]);
+  const checkedInAt = record?.checkIn || "";
+  const checkedOutAt = record?.checkOut || "";
+  const checkedInTimestamp = record?.checkInAt ? Date.parse(record.checkInAt) : NaN;
+  const checkedOutTimestamp = record?.checkOutAt ? Date.parse(record.checkOutAt) : NaN;
+  const liveWorkMilliseconds = Number.isFinite(checkedInTimestamp)
+    ? Math.max(0, (Number.isFinite(checkedOutTimestamp) ? checkedOutTimestamp : now) - checkedInTimestamp)
+    : 0;
+  const workingMilliseconds = record?.workedMinutes !== null
+    && record?.workedMinutes !== undefined
+    && Number.isFinite(Number(record.workedMinutes))
+    ? Number(record.workedMinutes) * 60000
+    : checkedIn ? liveWorkMilliseconds : 0;
   const workingHours = `${Math.floor(workingMilliseconds / 3600000)}h ${Math.floor((workingMilliseconds % 3600000) / 60000)}m`;
-  const toggleAttendance = (event) => {
+  const toggleAttendance = async (event) => {
     event.preventDefault();
-    if (!status) {
-      setError(`Select an attendance status before checking ${savedDetails.checkedInAt ? "out" : "in"}.`);
+    if (!employeeId) {
+      setError("Your employee account ID is unavailable; attendance was not saved.");
       return;
     }
-    if (savedDetails.checkedOutAt) return;
-    const timestamp = new Date().toISOString();
-    if (!savedDetails.checkedInAt) {
-      upd((data) => ({
-        att: { ...data.att, [key]: status },
-        attendanceDetails: {
-          ...(data.attendanceDetails || {}),
-          [key]: { ...(data.attendanceDetails?.[key] || {}), remark: remark.trim(), checkedInAt: timestamp },
-        },
-      }), `Checked in with ${status.toLowerCase()} status`);
-    } else {
-      const duration = Math.max(0, Date.parse(timestamp) - Date.parse(savedDetails.checkedInAt));
-      upd((data) => ({
-        att: { ...data.att, [key]: status },
-        attendanceDetails: {
-          ...(data.attendanceDetails || {}),
-          [key]: { ...(data.attendanceDetails?.[key] || {}), remark: remark.trim(), checkedOutAt: timestamp, workingMilliseconds: duration },
-        },
-      }), `Checked out after ${workingHours} of work`);
+    setError("");
+    setSaving(true);
+    try {
+      const saved = checkedIn ? await checkOutAttendance() : await checkInAttendance({ status, remark: remark.trim() });
+      setRecord(saved);
+      setStatus(saved.status || status);
+      setRemark(saved.remark || remark.trim());
+    } catch (saveError) {
+      setError(saveError.message || "Unable to save attendance.");
+    } finally {
+      setSaving(false);
     }
-    setError("");
-  };
-  const resetToday = () => {
-    if (!window.confirm("Reset today's attendance, check-in/out times, and remark so you can test again?")) return;
-    upd((data) => {
-      const att = { ...(data.att || {}) };
-      const attendanceDetails = { ...(data.attendanceDetails || {}) };
-      delete att[key];
-      delete attendanceDetails[key];
-      return { att, attendanceDetails };
-    }, "Reset today's attendance for testing");
-    setStatus("");
-    setRemark("");
-    setError("");
   };
 
   return (
@@ -2017,31 +2112,31 @@ function MarkAttendance({ c: { db, upd } }) {
         </label>
         <label className="hr-f">
           <span>Select Status</span>
-          <select value={status} onChange={(event) => { setStatus(event.target.value); setError(""); }}>
+          <select value={status} disabled={loading || saving || Boolean(record)} onChange={(event) => { setStatus(event.target.value); setError(""); }}>
             <option value="">Select Status</option>
-            {["Present", "Absent", "Leave"].map((value) => <option key={value} value={value}>{value}</option>)}
+            {["Present", "Absent"].map((value) => <option key={value} value={value}>{value}</option>)}
           </select>
         </label>
         <label className="hr-f">
           <span>Remark</span>
-          <input type="text" maxLength={240} placeholder="Remark (optional)" value={remark} onChange={(event) => setRemark(event.target.value)} />
+          <input type="text" maxLength={240} placeholder="Remark (optional)" value={remark} disabled={loading || saving || Boolean(record)} onChange={(event) => setRemark(event.target.value)} />
         </label>
         <div className="hr-mark-attendance-submit">
           <span>Attendance</span>
-          <button className={`hr-mark-attendance-action${savedDetails.checkedInAt ? " is-checked-in" : ""}`} type="submit" disabled={!!savedDetails.checkedOutAt}>
-            <Check size={16} /> {savedDetails.checkedOutAt ? "Checked Out" : savedDetails.checkedInAt ? "Check Out" : "Check In"}
+          <button className={`hr-mark-attendance-action${checkedIn ? " is-checked-in" : ""}`} type="submit" disabled={loading || saving || !employeeId || !status || checkedOut || absent}>
+            <Check size={16} /> {loading ? "Loading…" : saving ? "Saving…" : absent ? "Marked Absent" : checkedOut ? "Checked Out" : checkedIn ? "Check Out" : "Check In"}
           </button>
         </div>
       </form>
       {error && <p className="hr-form-error hr-mark-attendance-error" role="alert">{error}</p>}
+      {!employeeId && <p className="hr-form-error hr-mark-attendance-error" role="alert">Your employee account ID is unavailable; attendance cannot be saved.</p>}
       <div className="hr-mark-attendance-status" aria-live="polite">
-        <span>Today · {new Date(`${TODAY}T00:00:00`).toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</span>
-        {cur && <span>Status: <Badge s={cur} /></span>}
+        <span>{record?.workDate || TODAY} · {new Date(`${record?.workDate || TODAY}T00:00:00.000Z`).toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "UTC" })}</span>
+        {record?.status && <span>Status: <Badge s={record.status} /></span>}
         {checkedInAt && <span>Checked in at {checkedInAt}</span>}
         {checkedOutAt && <span>Checked out at {checkedOutAt}</span>}
-        {savedDetails.checkedInAt && <span>Working hours: {workingHours}</span>}
-        {savedDetails.remark && <span>Remark: {savedDetails.remark}</span>}
-        {savedDetails.checkedOutAt && <button type="button" className="hr-mark-attendance-reset" onClick={resetToday}><RotateCcw size={13} /> Reset for testing</button>}
+        {checkedIn && !absent && <span>Working hours: {workingHours}</span>}
+        {record?.remark && <span>Remark: {record.remark}</span>}
       </div>
     </Card>
   );
@@ -2120,7 +2215,7 @@ function AttendanceReport({ c: { db, user } }) {
     setAppliedFilters(initialFilters);
     setError("");
   };
-  const exportRows = rows.map((row, index) => ({
+  const exportRows = filteredRows.map((row, index) => ({
     "S.N": index + 1,
     "EMP ID": row.empId,
     "EMP Name": row.name,
@@ -2128,16 +2223,18 @@ function AttendanceReport({ c: { db, user } }) {
     Branch: row.branch,
     Date: row.date.split("-").reverse().join("-"),
     Day: row.day,
-    "Check-in Time": row.checkIn,
-    "Check-out Time": row.checkOut,
+    "Check-in Time": row.checkIn || "00:00:00",
+    "Check-out Time": row.checkOut || "00:00:00",
     "Total Hours": row.totalHours,
     Remarks: row.remarks,
     Status: row.status,
+    Classification: row.reason,
+    Payable: row.payable ? "Yes" : "No",
   }));
   const exportExcel = () => {
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(exportRows), "Attendance Report");
-    XLSX.writeFile(workbook, `my-attendance-report-${iso()}.xlsx`);
+    XLSX.writeFile(workbook, `my-attendance-report-${reportMonth}.xlsx`);
   };
   const exportPdf = () => {
     const pdf = new jsPDF({ orientation: "landscape", unit: "pt", format: "a3" });
@@ -2147,14 +2244,14 @@ function AttendanceReport({ c: { db, user } }) {
       startY: 52,
       head: [Object.keys(exportRows[0] || {
         "S.N": "", "EMP ID": "", "EMP Name": "", Department: "", Branch: "", Date: "",
-        Day: "", "Check-in Time": "", "Check-out Time": "", "Total Hours": "", Remarks: "", Status: "",
+        Day: "", "Check-in Time": "", "Check-out Time": "", "Total Hours": "", Remarks: "", Status: "", Classification: "", Payable: "",
       })],
       body: exportRows.map((row) => Object.values(row)),
       styles: { fontSize: 8, cellPadding: 5 },
       headStyles: { fillColor: [141, 94, 56] },
       theme: "grid",
     });
-    pdf.save(`my-attendance-report-${iso()}.pdf`);
+    pdf.save(`my-attendance-report-${reportMonth}.pdf`);
   };
 
   return (
@@ -2167,7 +2264,7 @@ function AttendanceReport({ c: { db, user } }) {
             {daysOfWeek.map((day) => <option key={day}>{day}</option>)}
           </select>
         </F>
-        <F l="Date"><input type="date" max={TODAY} value={filters.date} onChange={updateFilter("date")} /></F>
+        <F l="Date"><input type="date" value={filters.date} onChange={updateFilter("date")} /></F>
         <F l="Month"><input type="month" value={filters.month} onChange={updateFilter("month")} /></F>
         <F l="Select Status">
           <select value={filters.status} onChange={updateFilter("status")}>
@@ -2180,18 +2277,22 @@ function AttendanceReport({ c: { db, user } }) {
           <button className="hr-ghost" type="button" onClick={resetFilters}><RotateCcw size={15} /> Reset</button>
         </div>
         {error && <p className="hr-form-error hr-attendance-report-error" role="alert">{error}</p>}
+        {attendanceError && <p className="hr-form-error hr-attendance-report-error" role="alert">{attendanceError}</p>}
       </form>
       <div className="hr-all-attendance-results-toolbar">
-      <div className="hr-attendance-report-summary" aria-live="polite">
-        <span>{rows.length} attendance record{rows.length === 1 ? "" : "s"}</span>
-        <span>Present {rows.filter((row) => row.status === "Present").length}</span>
-        <span>Absent {rows.filter((row) => row.status === "Absent").length}</span>
-        <span>Leave {rows.filter((row) => row.status === "Leave").length}</span>
-      </div>
-      <div className="hr-all-attendance-exports" role="group" aria-label="Export attendance report">
-        <button className="hr-attendance-export excel" type="button" onClick={exportExcel} disabled={!rows.length}><FileSpreadsheet size={15} /> Excel</button>
-        <button className="hr-attendance-export pdf" type="button" onClick={exportPdf} disabled={!rows.length}><FileText size={15} /> PDF</button>
-      </div>
+        <div className="hr-attendance-report-summary" aria-live="polite">
+          <span>{filteredRows.length} attendance day{filteredRows.length === 1 ? "" : "s"}</span>
+          <span>Present {filteredRows.filter((row) => row.status === "Present").length}</span>
+          <span>Absent {filteredRows.filter((row) => row.status === "Absent").length}</span>
+          <span>Leave {filteredRows.filter((row) => row.status === "Leave").length}</span>
+          <span>Holiday {filteredRows.filter((row) => row.status === "Holiday").length}</span>
+          <span>Pending {filteredRows.filter((row) => row.status === "Pending").length}</span>
+          <span>Upcoming {filteredRows.filter((row) => row.status === "Upcoming").length}</span>
+        </div>
+        <div className="hr-all-attendance-exports" role="group" aria-label="Export attendance report">
+          <button className="hr-attendance-export excel" type="button" onClick={exportExcel} disabled={!filteredRows.length || attendanceLoading || Boolean(attendanceError)}><FileSpreadsheet size={15} /> Excel</button>
+          <button className="hr-attendance-export pdf" type="button" onClick={exportPdf} disabled={!filteredRows.length || attendanceLoading || Boolean(attendanceError)}><FileText size={15} /> PDF</button>
+        </div>
       </div>
       <Card>
         <Table rows={rows} empty="No attendance records match these filters." cols={[
@@ -2225,15 +2326,10 @@ function AllAttendance({ c: { db } }) {
   const branches = [...new Set(employees.map((employee) => employee.branch || db.me?.branch || "—"))].sort();
   const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
   const formatDate = (date) => date.split("-").reverse().join("-");
-  const formatTime = (value) => {
-    if (!value) return "00:00:00";
-    const date = new Date(value);
-    return Number.isNaN(date.getTime())
-      ? "00:00:00"
-      : date.toLocaleTimeString("en-GB", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
-  };
-  const formatDuration = (milliseconds) => {
-    const totalSeconds = Math.floor(Math.max(0, milliseconds) / 1000);
+  const reportMonth = appliedFilters.month || MONTH;
+  const { data: attendanceData, loading: attendanceLoading, error: attendanceError } = usePayrollAttendanceMonth(reportMonth);
+  const formatDuration = (minutes) => {
+    const totalSeconds = Math.floor(Math.max(0, Number(minutes) || 0) * 60);
     return [Math.floor(totalSeconds / 3600), Math.floor((totalSeconds % 3600) / 60), totalSeconds % 60]
       .map((part) => String(part).padStart(2, "0"))
       .join(":");
@@ -2316,6 +2412,8 @@ function AllAttendance({ c: { db } }) {
     "Total Hours": row.totalHours,
     Remarks: row.remarks,
     Status: row.status,
+    Classification: row.reason,
+    Payable: row.payable ? "Yes" : "No",
   }));
   const exportExcel = () => {
     const workbook = XLSX.utils.book_new();
@@ -2330,7 +2428,7 @@ function AllAttendance({ c: { db } }) {
       startY: 52,
       head: [Object.keys(exportRows[0] || {
         "S.N": "", "EMP ID": "", "EMP Name": "", Department: "", Branch: "", Date: "",
-        Day: "", "Check-in Time": "", "Check-out Time": "", "Total Hours": "", Remarks: "", Status: "",
+        Day: "", "Check-in Time": "", "Check-out Time": "", "Total Hours": "", Remarks: "", Status: "", Classification: "", Payable: "",
       })],
       body: exportRows.map((row) => Object.values(row)),
       styles: { fontSize: 8, cellPadding: 5 },
@@ -2346,8 +2444,8 @@ function AllAttendance({ c: { db } }) {
     <section className="hr-all-attendance">
       <h2 className="hr-all-attendance-title"><CalendarCheck size={22} /> Attendance Report</h2>
       <form className="hr-all-attendance-filters" onSubmit={applyFilters}>
-        <F l="Select EMP ID"><select value={filters.empId} onChange={updateFilter("empId")}><option value="">Select EMP ID</option>{employees.map((employee) => <option key={employee.id} value={employee.id}>{employee.id}</option>)}</select></F>
-        <F l="Select EMP Name"><select value={filters.name} onChange={updateFilter("name")}><option value="">Select EMP Name</option>{employees.map((employee) => <option key={employee.id} value={employee.name}>{employee.name}</option>)}</select></F>
+        <F l="Select EMP ID"><select value={filters.empId} onChange={updateFilter("empId")}><option value="">Select EMP ID</option>{employees.filter((employee) => employee.backendId).map((employee) => <option key={employee.backendId} value={employee.backendId}>{employee.backendId}</option>)}</select></F>
+        <F l="Select EMP Name"><select value={filters.name} onChange={updateFilter("name")}><option value="">Select EMP Name</option>{employees.filter((employee) => employee.backendId).map((employee) => <option key={employee.backendId} value={employee.name}>{employee.name}</option>)}</select></F>
         <F l="Select Department"><select value={filters.department} onChange={updateFilter("department")}><option value="">Select Department</option>{departments.map((department) => <option key={department}>{department}</option>)}</select></F>
         <F l="Select Branch"><select value={filters.branch} onChange={updateFilter("branch")}><option value="">Select Branch</option>{branches.map((branch) => <option key={branch}>{branch}</option>)}</select></F>
         <F l="Select Day"><select value={filters.day} onChange={updateFilter("day")}><option value="">Select Day</option>{days.map((day) => <option key={day}>{day}</option>)}</select></F>
@@ -2355,12 +2453,13 @@ function AllAttendance({ c: { db } }) {
         <F l="To Date"><input type="date" value={filters.dateTo} onChange={updateFilter("dateTo")} /></F>
         <F l="Select Month"><input type="month" value={filters.month} onChange={updateFilter("month")} /></F>
         <F l="Select Year"><select value={filters.year} onChange={updateFilter("year")}><option value="">Select Year</option>{years.map((year) => <option key={year}>{year}</option>)}</select></F>
-        <F l="Select Status"><select value={filters.status} onChange={updateFilter("status")}><option value="">Select Status</option>{["Present", "Absent", "Leave"].map((status) => <option key={status}>{status}</option>)}</select></F>
+        <F l="Select Status"><select value={filters.status} onChange={updateFilter("status")}><option value="">Select Status</option>{["Present", "Absent", "Leave", "Holiday", "Pending", "Upcoming"].map((status) => <option key={status}>{status}</option>)}</select></F>
         <div className="hr-all-attendance-actions">
           <button className="hr-btn" type="submit"><Filter size={15} /> Apply</button>
           <button className="hr-ghost" type="button" onClick={resetFilters}><RotateCcw size={15} /> Reset</button>
         </div>
         {error && <p className="hr-form-error hr-all-attendance-error" role="alert">{error}</p>}
+        {attendanceError && <p className="hr-form-error hr-all-attendance-error" role="alert">{attendanceError}</p>}
       </form>
       <div className="hr-all-attendance-results-toolbar">
       <div className="hr-all-attendance-summary" aria-live="polite">
@@ -2368,6 +2467,9 @@ function AllAttendance({ c: { db } }) {
         <span>Present {countStatus("Present")}</span>
         <span>Absent {countStatus("Absent")}</span>
         <span>Leave {countStatus("Leave")}</span>
+        <span>Holiday {countStatus("Holiday")}</span>
+        <span>Pending {countStatus("Pending")}</span>
+        <span>Upcoming {countStatus("Upcoming")}</span>
       </div>
       <div className="hr-all-attendance-exports" role="group" aria-label="Export attendance report">
         <button className="hr-attendance-export excel" type="button" onClick={exportExcel} disabled={!rows.length}><FileSpreadsheet size={15} /> Excel</button>
@@ -2375,7 +2477,9 @@ function AllAttendance({ c: { db } }) {
       </div>
       </div>
       <Card>
-        <Table rows={rows} empty="No attendance records match these filters." cols={[
+        {attendanceLoading ? <p className="hr-attendance-load-state">Loading monthly Firestore attendance…</p>
+          : attendanceError ? null
+            : <Table rows={rows} empty="No attendance records match these filters." cols={[
           ["S.N", (_row, index) => index + 1],
           ["EMP ID", (row) => row.empId],
           ["EMP Name", (row) => <b>{row.name}</b>],

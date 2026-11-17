@@ -4,7 +4,12 @@ node_modules/
 # build output
 dist/
 
-
+# Temporary local manifests for attendance test seed/cleanup
+backend/.attendance-test-manifests/
+backend/.attendance-sample-manifests/
+backend/.attendance-correction-manifests/
+backend/.hr-helpdesk-migration-manifests/
+backend/.notification-migration-backups/
 
 package-lock.json
 package.json

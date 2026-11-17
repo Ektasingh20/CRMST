@@ -5,12 +5,17 @@ import { useMessageTemplates } from "../../useMessageTemplates.js";
 import { resolveLeadTemplate, templateSelectionPatch } from "../../whatsAppMessage.js";
 import RemarkField from "../../RemarkField.jsx";
 import { callLeadForm, callLeadProgram, callLeadReviewStatus, isCallLead } from "../../callLeads.js";
-import { createTask as createTaskApi, fetchTasks, updateTask as updateTaskApi, fetchAttendance, createAttendance, updateAttendance, fetchLeaves, createLeave, updateMyProfile, fetchAppNotifications, markAppNotificationRead } from "../../backendApi.js";
+import { createTask as createTaskApi, fetchTasks, updateTask as updateTaskApi, fetchAttendanceMonth, fetchAttendanceCalendar, fetchTodayAttendance, checkInAttendance, checkOutAttendance, fetchLeaves, createLeave, fetchMyProfile, updateMyProfile, uploadMyProfileDocument, uploadMyProfilePhoto, downloadMyProfileDocument, fetchAppNotifications, markAppNotificationRead } from "../../backendApi.js";
+import { compressImageFile } from "../../imageUpload.js";
 import PasswordResetLink from "../PasswordResetLink.jsx";
 import HelpdeskChat, { HelpdeskIncomingToast } from "../shared/HelpdeskChat.jsx";
+import { buildAttendanceReportRows, filterAttendanceReportRows, getAttendanceReportDateRange, getAttendanceReportMonths } from "./attendanceReport.js";
+import { isValidAadhaar, isValidBankAccount, isValidBankText, isValidEmail, isValidIfsc, isValidIndianMobile, isValidPan, isValidPersonName, isValidProfileDob, isValidRelationship } from "../../../shared/profileValidation.js";
+import SalesTableHead from "./SalesTableHead.jsx";
+import SalesDropdown from "../../SalesDropdown.jsx";
 import { TRAINING_CALL_LIST_PROGRAMS, SERVICE_CALL_LIST_SERVICES, CALL_STATUS_OPTIONS, CALL_LIST_INTEREST_STATUS_OPTIONS, normalizeCallStatus, normalizeInterestStatus, normalizeCallProgram, isCallContactLocked, matchesCallListFilters, callListRecordDate, callLeadRecordDate } from "../../callListConfig.js";
 import { isCrmPageLoading } from "./crmPageLoading.js";
-import { BellRing, CalendarDays, Check, CircleAlert, CircleX, Hourglass, RefreshCw, Search } from "lucide-react";
+import { BellRing, CalendarDays, Check, CheckCircle2, CircleAlert, CircleX, Clock3, CreditCard, Download, Eye, FileText, Hourglass, ImagePlus, ListChecks, LoaderCircle, LockKeyhole, MessageSquareText, Phone, RefreshCw, Search, Upload, UploadCloud, UserCircle, Users, Wallet } from "lucide-react";
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { jsPDF } from "jspdf";
@@ -32,6 +37,15 @@ const genId = (prefix) => `${prefix}_${Date.now().toString(36)}_${__idSeq++}`;
 const pad2 = (n) => String(n).padStart(2, "0");
 const toISO = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 const todayISO = () => toISO(new Date());
+const todayIndiaISO = (date = new Date()) => {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date).filter((part) => part.type !== "literal").map(({ type, value }) => [type, value]));
+  return `${parts.year}-${parts.month}-${parts.day}`;
+};
 const addDays = (iso, days) => {
   const d = new Date(`${iso}T00:00:00`);
   d.setDate(d.getDate() + days);
@@ -45,6 +59,18 @@ const formatDisplayDate = (iso) => {
   const d = new Date(`${dateValue}T00:00:00`);
   if (Number.isNaN(d.getTime())) return "-";
   return d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+};
+const formatWeekday = (iso) => {
+  if (!iso) return "-";
+  const dateValue = String(iso).slice(0, 10);
+  const date = new Date(`${dateValue}T00:00:00.000Z`);
+  if (Number.isNaN(date.getTime())) return "-";
+  return date.toLocaleDateString("en-US", { weekday: "long", timeZone: "UTC" });
+};
+const formatWorkedTime = (minutes) => {
+  if (minutes === null || minutes === undefined || minutes === "" || !Number.isFinite(Number(minutes))) return "Not recorded";
+  const value = Math.max(0, Math.floor(Number(minutes)));
+  return `${Math.floor(value / 60)}h ${String(value % 60).padStart(2, "0")}m`;
 };
 const currentMonthKey = () => {
   const d = new Date();
@@ -98,107 +124,21 @@ const CALL_STATUS_CHOICES = [
   { value: "Follow Up", label: "Follow Up", Icon: RefreshCw },
   { value: "Completed", label: "Completed", Icon: Check },
 ];
-function CallListStatusSelect({ contact, disabled, onChange }) {
+function CallListStatusSelect({ contact, disabled, completionOnly = false, onChange }) {
   const status = normalizeCallStatus(contact.callStatus);
   const selected = CALL_STATUS_CHOICES.find((choice) => choice.value === status) || CALL_STATUS_CHOICES[0];
-  const triggerRef = useRef(null);
-  const menuRef = useRef(null);
-  const optionRefs = useRef([]);
-  const [open, setOpen] = useState(false);
-  const [position, setPosition] = useState(null);
+  const availableChoices = completionOnly ? CALL_STATUS_CHOICES.filter((choice) => choice.value === "Completed") : CALL_STATUS_CHOICES;
+  const statusClass = (selected.value || "choose").toLowerCase().replace(/\s+/g, "-");
 
-  useLayoutEffect(() => {
-    if (!open) return undefined;
-    const updatePosition = () => {
-      const rect = triggerRef.current?.getBoundingClientRect();
-      if (!rect) return;
-      const width = Math.max(150, rect.width);
-      const height = CALL_STATUS_CHOICES.length * 30 + 8;
-      const below = window.innerHeight - rect.bottom;
-      const top = below >= height || below >= rect.top ? rect.bottom + 4 : rect.top - height - 4;
-      setPosition({
-        top: Math.max(4, Math.min(top, window.innerHeight - height - 4)),
-        left: Math.max(4, Math.min(rect.left, window.innerWidth - width - 4)),
-        width: Math.min(width, window.innerWidth - 8),
-      });
-    };
-    const closeOnOutsideClick = (event) => {
-      if (!triggerRef.current?.contains(event.target) && !menuRef.current?.contains(event.target)) setOpen(false);
-    };
-    updatePosition();
-    window.addEventListener("resize", updatePosition);
-    window.addEventListener("scroll", updatePosition, true);
-    document.addEventListener("pointerdown", closeOnOutsideClick);
-    return () => {
-      window.removeEventListener("resize", updatePosition);
-      window.removeEventListener("scroll", updatePosition, true);
-      document.removeEventListener("pointerdown", closeOnOutsideClick);
-    };
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    const index = CALL_STATUS_CHOICES.findIndex((choice) => choice.value === selected.value);
-    optionRefs.current[index]?.focus();
-  }, [open, selected.value]);
-
-  const closeMenu = () => {
-    setOpen(false);
-    triggerRef.current?.focus();
-  };
-  const handleKeyDown = (event, index) => {
-    let next;
-    if (event.key === "ArrowDown") next = (index + 1) % CALL_STATUS_CHOICES.length;
-    else if (event.key === "ArrowUp") next = (index - 1 + CALL_STATUS_CHOICES.length) % CALL_STATUS_CHOICES.length;
-    else if (event.key === "Home") next = 0;
-    else if (event.key === "End") next = CALL_STATUS_CHOICES.length - 1;
-    else if (event.key === "Escape") {
-      event.preventDefault();
-      closeMenu();
-      return;
-    } else return;
-    event.preventDefault();
-    optionRefs.current[next]?.focus();
-  };
-
-  return (
-    <span className={clsx("call-list-status-control", `call-list-status-${(selected.value || "choose").toLowerCase().replace(/\s+/g, "-")}`)}>
-      <button
-        ref={triggerRef}
-        type="button"
-        className="inline-select call-list-status-trigger"
-        aria-label={`Call status for ${contact.name || "contact"}`}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        disabled={disabled}
-        onClick={() => setOpen((current) => !current)}
-      >
-        <selected.Icon size={15} aria-hidden="true" />
-        <span>{selected.label}</span>
-        <Icon size={14} aria-hidden="true"><path d="m6 9 6 6 6-6" /></Icon>
-      </button>
-      {open && position && createPortal(
-        <div ref={menuRef} className="call-lead-status-menu" role="listbox" aria-label={`Call status options for ${contact.name || "contact"}`} style={{ ...position, position: "fixed" }}>
-          {CALL_STATUS_CHOICES.map(({ value, label, Icon: StatusIcon }, index) => (
-            <button
-              key={label}
-              ref={(element) => { optionRefs.current[index] = element; }}
-              type="button"
-              className={`call-lead-status-option ${value ? value.toLowerCase().replace(/\s+/g, "-") : "choose"}`}
-              role="option"
-              aria-selected={selected.value === value}
-              onKeyDown={(event) => handleKeyDown(event, index)}
-              onClick={() => { onChange(value); closeMenu(); }}
-            >
-              <StatusIcon size={14} aria-hidden="true" />
-              <span>{label}</span>
-            </button>
-          ))}
-        </div>,
-        document.body,
-      )}
-    </span>
-  );
+  return <SalesDropdown
+    value={status}
+    options={availableChoices.map(({ value, label, Icon: StatusIcon }) => ({ value, label, icon: StatusIcon, className: value ? value.toLowerCase().replace(/\s+/g, "-") : "choose" }))}
+    onChange={(event) => onChange(event.target.value)}
+    disabled={disabled}
+    wrapperClassName={`call-list-status-control call-list-status-${statusClass}`}
+    className="inline-select call-list-status-trigger"
+    aria-label={`Call status for ${contact.name || "contact"}`}
+  />;
 }
 const IconUsers = (p) => (
   <Icon {...p}>
@@ -523,12 +463,21 @@ function EmptyRow({ colSpan, text }) {
   );
 }
 
-function Pagination({ page, totalPages, totalItems, pageSize, onChange }) {
+const TABLE_PAGE_SIZE_OPTIONS = [50, 100, 200, 500, 1000];
+
+function Pagination({ page, totalPages, totalItems, pageSize, onChange, onPageSizeChange, className = "" }) {
   const firstItem = totalItems ? (page - 1) * pageSize + 1 : 0;
   const lastItem = Math.min(page * pageSize, totalItems);
   return (
-    <div className="pagination-row call-list-pagination">
-      <span>Showing {firstItem}-{lastItem} of {totalItems}</span>
+    <div className={clsx("pagination-row call-list-pagination", className)}>
+      <div className="pagination-summary">
+        <span>Showing {firstItem}-{lastItem} of {totalItems}</span>
+        {onPageSizeChange && <label className="pagination-page-size">Rows per page
+          <SalesDropdown aria-label="Rows per page" value={pageSize} onChange={(event) => onPageSizeChange(Number(event.target.value))}>
+            {TABLE_PAGE_SIZE_OPTIONS.map((size) => <option key={size} value={size}>{size}</option>)}
+          </SalesDropdown>
+        </label>}
+      </div>
       <div className="call-list-pagination-actions">
         <button type="button" className="ghost-button compact" disabled={page <= 1} onClick={() => onChange(page - 1)}>Previous</button>
         <span>Page {page} of {totalPages}</span>
@@ -536,6 +485,66 @@ function Pagination({ page, totalPages, totalItems, pageSize, onChange }) {
       </div>
     </div>
   );
+}
+
+function useStickySalesTableHeaders(contentRef, enabled, activeTab) {
+  useEffect(() => {
+    const content = contentRef.current;
+    if (!content || !enabled) return undefined;
+    const tables = [...content.querySelectorAll(
+      ".shared-call-leads .crm-call-leads-table, .sales-report-table-scroll .sales-report-table",
+    )];
+    const entries = tables.map((table) => ({
+      table,
+      cells: [...table.tHead?.querySelectorAll("th") || []],
+    })).filter((entry) => entry.cells.length);
+    const originalTransforms = new Map(entries.flatMap(({ cells }) => cells.map((cell) => [cell, cell.style.transform])));
+
+    const update = () => {
+      const contentRect = content.getBoundingClientRect();
+      const controls = content.querySelector(".call-list-controls");
+      const controlsRect = controls?.getBoundingClientRect();
+      const contentTop = Math.max(0, contentRect.top);
+      const stickyTop = controlsRect && controlsRect.top <= contentTop + 1
+        ? Math.max(contentTop, controlsRect.bottom)
+        : contentTop;
+      entries.forEach(({ table, cells }) => {
+        const tableRect = table.getBoundingClientRect();
+        const headerHeight = table.tHead?.offsetHeight || 0;
+        const offset = Math.min(Math.max(0, stickyTop - tableRect.top), Math.max(0, tableRect.height - headerHeight));
+        const transform = offset > 0 && tableRect.bottom > contentTop
+          ? `translateY(${offset}px)`
+          : "";
+        cells.forEach((cell) => {
+          const next = transform || originalTransforms.get(cell) || "";
+          if (cell.style.transform !== next) cell.style.transform = next;
+        });
+      });
+    };
+    let frame = 0;
+    const scheduleUpdate = () => {
+      if (frame) return;
+      frame = window.requestAnimationFrame(() => {
+        frame = 0;
+        update();
+      });
+    };
+    window.addEventListener("scroll", scheduleUpdate, true);
+    window.addEventListener("resize", scheduleUpdate);
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(scheduleUpdate);
+    const mutationObserver = typeof MutationObserver === "undefined" ? null : new MutationObserver(scheduleUpdate);
+    mutationObserver?.observe(content, { childList: true, subtree: true, characterData: true });
+    entries.forEach(({ table }) => observer?.observe(table));
+    update();
+    return () => {
+      window.removeEventListener("scroll", scheduleUpdate, true);
+      window.removeEventListener("resize", scheduleUpdate);
+      observer?.disconnect();
+      mutationObserver?.disconnect();
+      if (frame) window.cancelAnimationFrame(frame);
+      originalTransforms.forEach((value, cell) => { cell.style.transform = value; });
+    };
+  }, [contentRef, enabled, activeTab]);
 }
 
 function downloadCSV(filename, rows) {
@@ -690,7 +699,7 @@ function DashboardTab({ contacts, leads, tasks, leaveRequests, onNavigate }) {
               <div className="follow-up-item" key={c.id}>
                 <span className="dot" />
                 <div>
-                  <strong style={{ display: "block" }}>{c.name}</strong>
+                        <strong style={{ display: "block" }} title={c.updatedAt ? `Last updated: ${new Date(c.updatedAt).toLocaleString()}` : ""}>{c.name}</strong>
                   <span style={{ color: "var(--text-soft)", fontSize: "16px" }}>
                     {[c.program, c.contact, normalizeCallStatus(c.callStatus)].filter(Boolean).join(" · ")}
                   </span>
@@ -736,8 +745,6 @@ function DashboardTab({ contacts, leads, tasks, leaveRequests, onNavigate }) {
 }
 
 /* ============================== CALL LIST TAB ============================= */
-
-const CONTACT_PAGE_SIZE = 15;
 
 function emptyContactForm() {
   return {
@@ -844,7 +851,7 @@ function ContactFormModal({ initial, onClose, onSave, category, templates, templ
         </div>
         <div className="field">
           <span>{category === "Training" ? "Training" : "Service"}</span>
-          <select value={resolveLeadTemplate(form, leadType, templates)?.id || (form.program ? `legacy:${form.program}` : "")} disabled={templatesLoading || Boolean(templatesError)} onChange={(e) => {
+          <SalesDropdown searchable aria-label={category === "Training" ? "Training" : "Service"} value={resolveLeadTemplate(form, leadType, templates)?.id || (form.program ? `legacy:${form.program}` : "")} disabled={templatesLoading || Boolean(templatesError)} onChange={(e) => {
             const selected = templates.find((template) => template.id === e.target.value);
             setForm((current) => ({ ...current, ...templateSelectionPatch(leadType, selected) }));
             setErrors((current) => ({ ...current, program: undefined }));
@@ -854,37 +861,37 @@ function ContactFormModal({ initial, onClose, onSave, category, templates, templ
             {templates.map((template) => (
               <option key={template.id} value={template.id}>{template.title}</option>
             ))}
-          </select>
+          </SalesDropdown>
           {templatesError && <span className="field-error" role="alert">Could not load message templates: {templatesError}</span>}
           {errors.program && <span className="field-error">{errors.program}</span>}
         </div>
         <div className="field">
           <span>Call Status</span>
-          <select value={form.callStatus} onChange={(e) => set("callStatus", e.target.value)}>
+          <SalesDropdown aria-label="Call Status" value={form.callStatus} onChange={(e) => set("callStatus", e.target.value)}>
             <option value="">Choose</option>
             {CALL_STATUS_OPTIONS.map((p) => (
               <option key={p}>{p}</option>
             ))}
-          </select>
+          </SalesDropdown>
           {errors.callStatus && <span className="field-error">{errors.callStatus}</span>}
         </div>
         <div className="field">
           <span>Interaction Type</span>
-          <select value={form.interactionType} onChange={(e) => set("interactionType", e.target.value)}>
+          <SalesDropdown aria-label="Interaction Type" value={form.interactionType} onChange={(e) => set("interactionType", e.target.value)}>
             <option value="">Select Interaction</option>
             {INTERACTION_TYPES.map((p) => (
               <option key={p}>{p}</option>
             ))}
-          </select>
+          </SalesDropdown>
           {errors.interactionType && <span className="field-error">{errors.interactionType}</span>}
         </div>
         <div className="field">
           <span>Interest Status</span>
-          <select value={normalizeInterestStatus(form.interestStatus)} onChange={(e) => set("interestStatus", e.target.value)}>
+          <SalesDropdown aria-label="Interest Status" value={normalizeInterestStatus(form.interestStatus)} onChange={(e) => set("interestStatus", e.target.value)}>
             {INTEREST_STATUS_OPTIONS.map((p) => (
               <option key={p}>{p}</option>
             ))}
-          </select>
+          </SalesDropdown>
           {errors.interestStatus && <span className="field-error">{errors.interestStatus}</span>}
         </div>
         <div className="field span-full">
@@ -909,6 +916,12 @@ function ContactFormModal({ initial, onClose, onSave, category, templates, templ
 }
 
 function CallListTab({ contacts, setContacts, showToast, category, title, addLabel, currentUser, onContactChange, onPersistContact, onCreateContact }) {
+  const [saveStatuses, setSaveStatuses] = useState({});
+  useEffect(() => {
+    const handleStatus = (event) => setSaveStatuses((current) => ({ ...current, [`${event.detail.type}:${event.detail.id}`]: event.detail.status }));
+    window.addEventListener("crm:call-save-status", handleStatus);
+    return () => window.removeEventListener("crm:call-save-status", handleStatus);
+  }, []);
   const leadType = category === "Training" ? "training" : "service";
   const { templates, loading: templatesLoading, error: templatesError } = useMessageTemplates(leadType);
   const [searchInput, setSearchInput] = useState("");
@@ -921,22 +934,11 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
   const [sortKey, setSortKey] = useState("date");
   const [sortDir, setSortDir] = useState("desc");
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(100);
   const [modalState, setModalState] = useState(null); // null | form object
   const [savingContact, setSavingContact] = useState(false);
   const [whatsAppLead, setWhatsAppLead] = useState(null);
   const tableRef = useRef(null);
-  const panelRef = useRef(null);
-  const controlsRef = useRef(null);
-  useEffect(() => {
-    const panel = panelRef.current;
-    const controls = controlsRef.current;
-    if (!panel || !controls) return;
-    const updateHeaderOffset = () => panel.style.setProperty("--call-list-controls-height", `${controls.offsetHeight}px`);
-    updateHeaderOffset();
-    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(updateHeaderOffset);
-    observer?.observe(controls);
-    return () => observer?.disconnect();
-  }, []);
   // The displayed date is the immutable upload/manual-add date. CRM activity
   // remains available in lastWorkedAt without changing row order.
   const contactDate = callListRecordDate;
@@ -971,8 +973,8 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
 
   useEffect(() => { setPage(1); }, [category, search, programFilter, callStatusFilter, interestFilter, fromDate, toDate]);
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / CONTACT_PAGE_SIZE));
-  const pageRows = filtered.slice((page - 1) * CONTACT_PAGE_SIZE, page * CONTACT_PAGE_SIZE);
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const pageRows = filtered.slice((page - 1) * pageSize, page * pageSize);
 
   useEffect(() => {
     if (page > totalPages) setPage(totalPages);
@@ -989,10 +991,10 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
   const updateContact = (id, patch, persist = true) => {
     const existing = contacts.find((contact) => contact.id === id);
     const activityFields = ["callStatus", "interestStatus", "remark", "callClicked", "whatsappClicked"];
-    const activityRecorded = activityFields.some((key) => Object.prototype.hasOwnProperty.call(patch, key));
+    const activityRecorded = persist && activityFields.some((key) => Object.prototype.hasOwnProperty.call(patch, key));
     const unchanged = Object.entries(patch).every(([key, value]) => String(existing?.[key] ?? "") === String(value ?? ""));
-    if (!existing || (unchanged && !activityRecorded)) return;
-    if (["Follow Up", "Completed"].includes(patch.callStatus) && !callLeadProgram(existing)) {
+    if (!existing || (unchanged && !activityRecorded && !(persist && Object.prototype.hasOwnProperty.call(patch, "remark")))) return;
+    if (["Follow Up", "Completed"].includes(patch.callStatus) && !callLeadProgram({ ...existing, ...patch })) {
       showToast(`Please select a ${category === "Training" ? "training" : "service"} before marking this contact ${patch.callStatus}.`);
       return;
     }
@@ -1005,21 +1007,6 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
     }));
     if (persist && existing?.sourceRecord) {
       Promise.resolve(onPersistContact?.(existing, { ...patch, ...(activityRecorded ? { activityRecorded: true } : {}) })).catch((error) => {
-        setContacts((prev) => prev.map((contact) => {
-          if (contact.id !== id) return contact;
-          const rollback = Object.fromEntries(Object.entries(patch)
-            .filter(([key, value]) => Object.is(contact[key], value))
-            .map(([key]) => [key, existing[key]]));
-          const restoreActivityDate = activityRecorded && contact.lastWorkedAt === optimisticLastWorkedAt;
-          if (!Object.keys(rollback).length && !restoreActivityDate) return contact;
-          const restored = {
-            ...contact,
-            ...rollback,
-            ...(restoreActivityDate ? { lastWorkedAt: existing.lastWorkedAt } : {}),
-          };
-          onContactChange?.(restored);
-          return restored;
-        }));
         showToast(error?.message || "Could not save this update");
       });
     }
@@ -1031,6 +1018,7 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
     window.location.href = `tel:${c.contact}`;
   };
   const handleWhatsapp = (c) => {
+    updateContact(c.id, { whatsappClicked: true });
     setWhatsAppLead(c);
   };
   const handleSnooze = (c) => {
@@ -1073,6 +1061,22 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
     setModalState(null);
   };
 
+  const handleSaveRow = async (contact) => {
+    if (!contact?.sourceRecord || isConvertedToLead(contact)) return;
+    try {
+      await onPersistContact?.(contact, {
+        callStatus: normalizeCallStatus(contact.callStatus),
+        interestStatus: normalizeInterestStatus(contact.interestStatus),
+        program: normalizeCallProgram(contact.program),
+        ...(leadType === "training" ? { programId: contact.programId || "" } : { serviceId: contact.serviceId || "" }),
+        remark: contact.remark || "",
+      });
+      showToast(`${contact.name || "Contact"} saved`);
+    } catch (error) {
+      showToast(error?.message || "Could not save this contact");
+    }
+  };
+
   const resetFilters = () => {
     setSearchInput("");
     setSearch("");
@@ -1102,8 +1106,8 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
   };
 
   return (
-    <div className="panel call-list-panel" ref={panelRef}>
-      <div className="call-list-controls" ref={controlsRef}>
+    <div className="panel call-list-panel">
+      <div className="call-list-controls">
       <div className="panel-head">
         <h3>{title}</h3>
         <div className="row-actions"><button className="primary-button call-list-export-button" onClick={exportPdf} disabled={!filtered.length}><IconDownload size={16} /> Export PDF <span className="call-list-button-count">{filtered.length}</span></button><button className="primary-button call-list-add-button" onClick={() => setModalState({ ...emptyContactForm(), program: "", callListCategory: category })}><IconPlus size={16} /> {addLabel}</button></div>
@@ -1128,26 +1132,26 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
           {searchInput && <button type="button" className="toolbar-search-clear" aria-label="Clear search" title="Clear search" onClick={() => { setSearchInput(""); setSearch(""); setPage(1); }}><IconClose size={16} /></button>}
         </div>
         <div className="toolbar-filters">
-          <select aria-label={category === "Services" ? "Filter by service" : "Filter by training"} value={programFilter} onChange={(e) => setProgramFilter(e.target.value)}>
+          <SalesDropdown searchable aria-label={category === "Services" ? "Filter by service" : "Filter by training"} value={programFilter} onChange={(e) => setProgramFilter(e.target.value)}>
             <option value="All">{category === "Services" ? "All Services" : "All Training"}</option>
             <option value="">Unspecified</option>
             {[...new Set([...templates.map((template) => template.title), ...contacts.filter((contact) => (contact.callListCategory || getCallListCategory(contact.program)) === category).map((contact) => normalizeCallProgram(contact.program)).filter(Boolean)])].map((p) => (
               <option key={p}>{p}</option>
             ))}
-          </select>
-          <select aria-label="Filter by call status" value={callStatusFilter} onChange={(e) => setCallStatusFilter(e.target.value)}>
+          </SalesDropdown>
+          <SalesDropdown aria-label="Filter by call status" value={callStatusFilter} onChange={(e) => setCallStatusFilter(e.target.value)}>
             <option value="All">All Call Status</option>
             <option value="">Choose</option>
             {CALL_STATUS_OPTIONS.map((p) => (
               <option key={p}>{p}</option>
             ))}
-          </select>
-          <select aria-label="Filter by interest status" value={interestFilter} onChange={(e) => setInterestFilter(e.target.value)}>
+          </SalesDropdown>
+          <SalesDropdown aria-label="Filter by interest status" value={interestFilter} onChange={(e) => setInterestFilter(e.target.value)}>
             <option value="All">All Interest</option>
             {CALL_LIST_INTEREST_STATUS_OPTIONS.map((p) => (
               <option key={p}>{p}</option>
             ))}
-          </select>
+          </SalesDropdown>
         </div>
         <div className="call-list-date-row">
           <span className="call-list-date-caption"><CalendarDays size={15} aria-hidden="true" /> Added date</span>
@@ -1160,7 +1164,7 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
 
       <div className="table-wrap" ref={tableRef} tabIndex={0} role="region" aria-label="Call list table. Scroll horizontally to see all columns.">
         <table className="table">
-          <thead>
+          <SalesTableHead>
             <tr>
               <th>Sr No</th>
               <th className="sortable-table-header" title="Sort by date" aria-sort={sortKey === "date" ? (sortDir === "asc" ? "ascending" : "descending") : "none"} onClick={() => toggleSort("date")}>
@@ -1177,14 +1181,20 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
               <th>Remark</th>
               <th>Action</th>
             </tr>
-          </thead>
+          </SalesTableHead>
           <tbody>
             {pageRows.length === 0 && <EmptyRow colSpan={10} text={`No ${category.toLowerCase()} contacts match the selected filters.`} />}
             {pageRows.map((c, idx) => {
               const locked = isConvertedToLead(c);
+              const canCompleteSavedLead = Boolean(c.leadDraft)
+                && normalizeCallStatus(c.callStatus) === "Follow Up";
+              const saveStatus = saveStatuses[`${c.listType}:${c.id}`];
+              const saveLabel = locked || saveStatus === "saved" ? "Saved"
+                : saveStatus === "saving" ? "Saving…"
+                  : saveStatus === "failed" || saveStatus === "offline" ? "Retry" : "Save";
               const statusClass = `call-list-status-${(normalizeCallStatus(c.callStatus) || "choose").toLowerCase().replace(/\s+/g, "-")}`;
               return <tr key={c.id} className={clsx(statusClass, locked && "call-list-locked")}>
-                <td><span className="call-list-serial">{(page - 1) * CONTACT_PAGE_SIZE + idx + 1}</span></td>
+                <td><span className="call-list-serial">{(page - 1) * pageSize + idx + 1}</span></td>
                 <td>{formatDisplayDate(contactDate(c))}</td>
                 <td>
                   <div className="person-cell">
@@ -1197,10 +1207,10 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
                 <td>{c.contact}</td>
                 <td>
                   <div className="row-actions">
-                    <button className="row-icon-btn call" title={locked ? "Completed contact is view-only" : "Call"} disabled={locked} onClick={() => handleCall(c)}>
+                    <button className="row-icon-btn call" title={locked ? "Saved lead contact is view-only" : c.lastCallClickedAt ? `Last call button click: ${new Date(c.lastCallClickedAt).toLocaleString()}` : "Call"} disabled={locked} onClick={() => handleCall(c)}>
                       <IconPhone size={16} />
                     </button>
-                    <button className="row-icon-btn whatsapp" title={locked ? "Completed contact is view-only" : "WhatsApp"} disabled={locked} onClick={() => handleWhatsapp(c)}>
+                    <button className="row-icon-btn whatsapp" title={locked ? "Saved lead contact is view-only" : "WhatsApp"} disabled={locked} onClick={() => handleWhatsapp(c)}>
                       <IconWhatsapp size={16} />
                     </button>
                   </div>
@@ -1208,13 +1218,15 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
                 <td>
                   <CallListStatusSelect
                     contact={c}
-                    disabled={locked}
+                    disabled={locked && !canCompleteSavedLead}
+                    completionOnly={canCompleteSavedLead}
                     onChange={(value) => updateContact(c.id, { callStatus: value })}
                   />
                 </td>
                 <td>
-                  <select
+                  <SalesDropdown
                     className="inline-select"
+                    aria-label={`Interest status for ${c.name || "contact"}`}
                     value={normalizeInterestStatus(c.interestStatus)}
                     disabled={locked}
                     onChange={(e) => updateContact(c.id, { interestStatus: e.target.value })}
@@ -1222,18 +1234,18 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
                     {CALL_LIST_INTEREST_STATUS_OPTIONS.map((s) => (
                       <option key={s}>{s}</option>
                     ))}
-                  </select>
+                  </SalesDropdown>
                 </td>
                 <td>
-                  <select
+                  <SalesDropdown searchable
                     className="inline-select call-list-program-select"
+                    aria-label={category === "Services" ? `Service for ${c.name || "contact"}` : `Training for ${c.name || "contact"}`}
                     value={resolveLeadTemplate(c, leadType, templates)?.id || (normalizeCallProgram(c.program) ? `legacy:${normalizeCallProgram(c.program)}` : "")}
                     disabled={locked || templatesLoading || Boolean(templatesError)}
                     onChange={(e) => {
                       const selected = templates.find((template) => template.id === e.target.value);
                       updateContact(c.id, { ...templateSelectionPatch(leadType, selected), callListCategory: category });
                     }}
-                    aria-label={category === "Services" ? "Service" : "Training"}
                   >
                     <option value="">
                       {templatesLoading ? "Loading options..." : templatesError ? "Could not load options" : category === "Services" ? "Select Service" : "Select Training"}
@@ -1244,7 +1256,7 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
                     {templates.map((template) => (
                       <option key={template.id} value={template.id}>{template.title}</option>
                     ))}
-                  </select>
+                  </SalesDropdown>
                 </td>
                 <td>
                     <div className="remark-cell">
@@ -1252,10 +1264,22 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
                   </div>
                 </td>
                 <td>
-                  <div className="row-actions">
-                    <button className="row-icon-btn edit" title={isConvertedToLead(c) ? "View" : "Edit"} onClick={() => setModalState(c)}>
-                      {isConvertedToLead(c) ? <IconView size={16} /> : <IconEdit size={16} />}
+                  <div className="call-list-save-action">
+                    <button
+                      type="button"
+                      className={clsx("call-list-save-button", (locked || saveStatus === "saved") && "is-saved", (saveStatus === "failed" || saveStatus === "offline") && "needs-retry")}
+                      disabled={locked || saveStatus === "saving" || !c.sourceRecord}
+                      title={locked ? "This lead form is saved and locked" : `Save ${c.name || "contact"}`}
+                      aria-label={locked ? `${c.name || "Contact"} saved` : `Save ${c.name || "contact"}`}
+                      onClick={() => handleSaveRow(c)}
+                    >
+                      <IconCheck size={15} /> <span>{saveLabel}</span>
                     </button>
+                    <small aria-live="polite">
+                      {locked || saveStatus === "saved" ? "Saved in database"
+                        : saveStatus === "offline" ? "Offline — retry"
+                          : saveStatus === "failed" ? "Save failed — retry" : ""}
+                    </small>
                   </div>
                 </td>
               </tr>
@@ -1263,9 +1287,9 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
           </tbody>
         </table>
       </div>
-      <Pagination page={page} totalPages={totalPages} totalItems={filtered.length} pageSize={CONTACT_PAGE_SIZE} onChange={(nextPage) => {
+      <Pagination page={page} totalPages={totalPages} totalItems={filtered.length} pageSize={pageSize} onPageSizeChange={(size) => { setPageSize(size); setPage(1); }} onChange={(nextPage) => {
         setPage(nextPage);
-        tableRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+        tableRef.current?.scrollTo({ top: 0, behavior: "smooth" });
       }} />
 
       {modalState && (
@@ -1280,7 +1304,7 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
           onSave={handleSaveModal}
         />
       )}
-      {whatsAppLead && <WhatsAppModal lead={whatsAppLead} leadType={leadType} currentUser={currentUser} onClose={() => setWhatsAppLead(null)} onSelectTemplate={(template) => updateContact(whatsAppLead.id, templateSelectionPatch(leadType, template))} onSent={() => updateContact(whatsAppLead.id, { whatsappClicked: true })} />}
+      {whatsAppLead && <WhatsAppModal lead={whatsAppLead} leadType={leadType} currentUser={currentUser} onClose={() => setWhatsAppLead(null)} onSelectTemplate={(template) => updateContact(whatsAppLead.id, templateSelectionPatch(leadType, template))} />}
     </div>
   );
 }
@@ -1341,15 +1365,15 @@ function AddLeadTab({ setLeads, showToast, currentUser }) {
         <div className="field"><span>Company / Organization</span><input value={form.company} onChange={(e) => set("company", e.target.value)} placeholder="Enter the company or organization here" /></div>
 
         <p className="form-section-title">Lead Information</p>
-        <div className="field"><span>Lead Type *</span><select value={form.type} onChange={(e) => { const type = e.target.value; setForm((current) => ({ ...current, type, interest: interestOptions(type)[0] })); }}><option>Training</option><option>Service</option><option>Internship</option></select></div>
-        <div className="field"><span>Interest *</span><select value={form.interest} onChange={(e) => set("interest", e.target.value)}>{interestOptions(form.type).map((program) => <option key={program}>{program}</option>)}</select></div>
+        <div className="field"><span>Lead Type *</span><SalesDropdown aria-label="Lead Type" value={form.type} onChange={(e) => { const type = e.target.value; setForm((current) => ({ ...current, type, interest: interestOptions(type)[0] })); }}><option>Training</option><option>Service</option><option>Internship</option></SalesDropdown></div>
+        <div className="field"><span>Interest *</span><SalesDropdown searchable aria-label="Interest" value={form.interest} onChange={(e) => set("interest", e.target.value)}>{interestOptions(form.type).map((program) => <option key={program}>{program}</option>)}</SalesDropdown></div>
         <div className="field"><span>Value</span><input type="number" min="0" value={form.value} onChange={(e) => set("value", e.target.value)} placeholder="Enter the estimated value here" /></div>
-        <div className="field"><span>Lead Source *</span><select value={form.leadSource} onChange={(e) => set("leadSource", e.target.value)}>{["Website", "Referral", "Facebook", "Instagram", "Google", "Walk-in", "Phone Call", "Other"].map((source) => <option key={source}>{source}</option>)}</select></div>
-        <div className="field"><span>Status *</span><select value={form.status} onChange={(e) => set("status", e.target.value)}><option>Pending</option><option>Interested</option><option>Not Interested</option></select></div>
+        <div className="field"><span>Lead Source *</span><SalesDropdown aria-label="Lead Source" value={form.leadSource} onChange={(e) => set("leadSource", e.target.value)}>{["Website", "Referral", "Facebook", "Instagram", "Google", "Walk-in", "Phone Call", "Other"].map((source) => <option key={source}>{source}</option>)}</SalesDropdown></div>
+        <div className="field"><span>Status *</span><SalesDropdown aria-label="Status" value={form.status} onChange={(e) => set("status", e.target.value)}><option>Pending</option><option>Interested</option><option>Not Interested</option></SalesDropdown></div>
 
         <p className="form-section-title">Assignment</p>
         <div className="field"><span>Entered By *</span><input value={enteredBy} readOnly /></div>
-        <div className="field"><span>Assigned To *</span><select value={form.assignedTo} onChange={(e) => set("assignedTo", e.target.value)}>{TEAM_MEMBERS.map((member) => <option key={member}>{member}</option>)}</select></div>
+        <div className="field"><span>Assigned To *</span><SalesDropdown searchable aria-label="Assigned To" value={form.assignedTo} onChange={(e) => set("assignedTo", e.target.value)}>{TEAM_MEMBERS.map((member) => <option key={member}>{member}</option>)}</SalesDropdown></div>
         <div className="field"><span>Assigned Date</span><input type="date" value={form.assignedDate} onChange={(e) => set("assignedDate", e.target.value)} /></div>
 
         <p className="form-section-title">Additional Information</p>
@@ -1380,7 +1404,7 @@ function AssignedLeadsTab({ leads, callLeadRows, currentUser }) {
       </div>
       <div className="table-wrap" hidden>
         <table className="table">
-          <thead>
+          <SalesTableHead>
             <tr>
               <th>Sr No</th>
               <th>Name</th>
@@ -1391,7 +1415,7 @@ function AssignedLeadsTab({ leads, callLeadRows, currentUser }) {
               <th>Entered By</th>
               <th>Assigned Date</th>
             </tr>
-          </thead>
+          </SalesTableHead>
           <tbody>
             {!assignedLeads.length && <EmptyRow colSpan={8} text="No leads have been assigned to you yet." />}
             {assignedLeads.map((lead, index) => (
@@ -1551,19 +1575,19 @@ function LeadFormModal({ initial, onClose, onSave, currentUser, users = [], savi
         <p className="form-section-title">Lead Information</p>
         <div className="field">
           <span>Lead Type *</span>
-          <select value={form.type} required aria-required="true" aria-invalid={Boolean(errors.type)} onChange={(e) => { const type = e.target.value; setForm((current) => ({ ...current, type, interest: interestOptions(type)[0] })); clearErrors("type", "interest"); }}>
+          <SalesDropdown aria-label="Lead Type" value={form.type} required aria-required="true" aria-invalid={Boolean(errors.type)} onChange={(e) => { const type = e.target.value; setForm((current) => ({ ...current, type, interest: interestOptions(type)[0] })); clearErrors("type", "interest"); }}>
             <option>Training</option>
             <option>Service</option>
             <option>Internship</option>
-          </select>
+          </SalesDropdown>
           {errors.type && <span className="field-error">{errors.type}</span>}
         </div>
         <div className="field">
           <span>Interest *</span>
-          <select value={form.interest} onChange={(e) => set("interest", e.target.value)} required aria-required="true" aria-invalid={Boolean(errors.interest)}>
+          <SalesDropdown searchable aria-label="Interest" value={form.interest} onChange={(e) => set("interest", e.target.value)} required aria-required="true" aria-invalid={Boolean(errors.interest)}>
             <option value="">Select interest</option>
             {availableInterests.map((interest) => <option key={interest}>{interest}</option>)}
-          </select>
+          </SalesDropdown>
           {errors.interest && <span className="field-error">{errors.interest}</span>}
         </div>
         <div className="field">
@@ -1573,19 +1597,19 @@ function LeadFormModal({ initial, onClose, onSave, currentUser, users = [], savi
         </div>
         <div className="field">
           <span>Lead Source *</span>
-          <select value={form.leadSource} onChange={(e) => set("leadSource", e.target.value)} required aria-required="true" aria-invalid={Boolean(errors.leadSource)}>
+          <SalesDropdown aria-label="Lead Source" value={form.leadSource} onChange={(e) => set("leadSource", e.target.value)} required aria-required="true" aria-invalid={Boolean(errors.leadSource)}>
             {["Website", "Referral", "Facebook", "Instagram", "Google", "Walk-in", "Phone Call", "Other"].map((source) => <option key={source}>{source}</option>)}
-          </select>
+          </SalesDropdown>
           {errors.leadSource && <span className="field-error">{errors.leadSource}</span>}
         </div>
         <div className="field">
           <span>Status *</span>
-          <select value={form.status} onChange={(e) => set("status", e.target.value)} required aria-required="true" aria-invalid={Boolean(errors.status)}>
+          <SalesDropdown aria-label="Status" value={form.status} onChange={(e) => set("status", e.target.value)} required aria-required="true" aria-invalid={Boolean(errors.status)}>
             <option>Pending</option>
             <option>Interested</option>
             <option>Not Interested</option>
             {form.status && !["Pending", "Interested", "Not Interested"].includes(form.status) ? <option>{form.status}</option> : null}
-          </select>
+          </SalesDropdown>
           {errors.status && <span className="field-error">{errors.status}</span>}
         </div>
 
@@ -1603,10 +1627,10 @@ function LeadFormModal({ initial, onClose, onSave, currentUser, users = [], savi
           </div>
           <div className="field">
             <span>Assigned To *</span>
-            <select value={form.assignedTo} onChange={(e) => set("assignedTo", e.target.value)} required aria-required="true" aria-invalid={Boolean(errors.assignedTo)}>
+            <SalesDropdown searchable aria-label="Assigned To" value={form.assignedTo} onChange={(e) => set("assignedTo", e.target.value)} required aria-required="true" aria-invalid={Boolean(errors.assignedTo)}>
               <option value="">Select Assignee</option>
               {users.map((user) => <option key={user.id || user._id} value={user.id || user._id}>{user.name || user.username}</option>)}
-            </select>
+            </SalesDropdown>
             {errors.assignedTo && <span className="field-error">{errors.assignedTo}</span>}
           </div>
           <div className="field">
@@ -1708,6 +1732,10 @@ function SalesReportTableTab({ contacts, setContacts, currentUser, users, onSave
   const [scope, setScope] = useState("All");
   const [query, setQuery] = useState("");
   const [action, setAction] = useState("All");
+  const [enquiriesPage, setEnquiriesPage] = useState(1);
+  const [enquiriesPageSize, setEnquiriesPageSize] = useState(100);
+  const [filledPage, setFilledPage] = useState(1);
+  const [filledPageSize, setFilledPageSize] = useState(100);
   const [formState, setFormState] = useState(null);
   const [saving, setSaving] = useState(false);
   const candidates = contacts.filter((contact) => isCallLead(contact) || contact.leadDraft || salesReportApproved(contact));
@@ -1720,6 +1748,16 @@ function SalesReportTableTab({ contacts, setContacts, currentUser, users, onSave
     return matchesQuery && matchesAction;
   });
   const filled = filtered.filter((contact) => contact.leadDraft);
+  const enquiriesTotalPages = Math.max(1, Math.ceil(filtered.length / enquiriesPageSize));
+  const filledTotalPages = Math.max(1, Math.ceil(filled.length / filledPageSize));
+  const visibleEnquiries = filtered.slice((enquiriesPage - 1) * enquiriesPageSize, enquiriesPage * enquiriesPageSize);
+  const visibleFilled = filled.slice((filledPage - 1) * filledPageSize, filledPage * filledPageSize);
+  useEffect(() => {
+    setEnquiriesPage(1);
+    setFilledPage(1);
+  }, [scope, query, action]);
+  useEffect(() => { setEnquiriesPage((current) => Math.min(current, enquiriesTotalPages)); }, [enquiriesTotalPages]);
+  useEffect(() => { setFilledPage((current) => Math.min(current, filledTotalPages)); }, [filledTotalPages]);
   const exportSalesEnquiriesPdf = () => {
     if (!filtered.length) return;
     const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
@@ -1769,15 +1807,16 @@ function SalesReportTableTab({ contacts, setContacts, currentUser, users, onSave
       <div className="sales-report-table-filters">
         <div className="sales-report-scope" role="tablist" aria-label="Report type">{["All", "Services", "Training"].map((item) => <button key={item} type="button" role="tab" aria-selected={scope === item} className={scope === item ? "active" : ""} onClick={() => setScope(item)}>{item}</button>)}</div>
         <div className="sales-report-search"><Search size={17} aria-hidden="true" /><input type="search" aria-label="Search sales enquiries" placeholder="Search name, contact or program" value={query} onChange={(event) => setQuery(event.target.value)} /></div>
-        <select aria-label="Filter by action" value={action} onChange={(event) => setAction(event.target.value)}><option value="All">All actions</option><option>Approved</option><option>Form filled</option><option>Form needed</option></select>
+        <SalesDropdown aria-label="Filter by action" value={action} onChange={(event) => setAction(event.target.value)}><option value="All">All actions</option><option>Approved</option><option>Form filled</option><option>Form needed</option></SalesDropdown>
       </div>
-      <div className="sales-report-table-scroll"><table className="sales-report-table"><thead><tr><th>SR NO</th><th>PROGRAM</th><th>LEAD NAME</th><th>CONTACT</th><th>CALL STATUS</th><th>INTEREST</th><th>APPROVAL</th><th>ENQUIRY</th><th>ACTION</th></tr></thead><tbody>
-        {filtered.length ? filtered.map((contact, index) => <tr key={`${contact.listType}-${contact.id}`}><td>{index + 1}</td><td>{contact.program || "—"}</td><td className="sales-report-name">{contact.name || "—"}</td><td>{contact.contact || "—"}</td><td>{normalizeCallStatus(contact.callStatus) || "—"}</td><td>{normalizeInterestStatus(contact.interestStatus) || "—"}</td><td><span className={`sales-report-badge ${salesReportApproved(contact) ? "approved" : "pending"}`}>{salesReportApproved(contact) ? "Approved" : callLeadReviewStatus(contact) || "Not reviewed"}</span></td><td><span className={`sales-report-badge ${contact.leadDraft ? "filled" : "needed"}`}>{contact.leadDraft ? "Filled" : "Not filled"}</span></td><td>{renderActions(contact)}</td></tr>) : <tr><td colSpan={9} className="sales-report-no-results">No enquiries match these filters.</td></tr>}
+      <div className="sales-report-table-scroll" tabIndex={0} role="region" aria-label="Sales enquiries table. Scroll horizontally to see all columns."><table className="sales-report-table sales-report-enquiries-table"><SalesTableHead><tr><th>SR NO</th><th>PROGRAM</th><th>LEAD NAME</th><th>CONTACT</th><th>CALL STATUS</th><th>INTEREST</th><th>APPROVAL</th><th>ENQUIRY</th><th>ACTION</th></tr></SalesTableHead><tbody>
+        {filtered.length ? visibleEnquiries.map((contact, index) => <tr key={`${contact.listType}-${contact.id}`}><td>{(enquiriesPage - 1) * enquiriesPageSize + index + 1}</td><td>{contact.program || "—"}</td><td className="sales-report-name">{contact.name || "—"}</td><td>{contact.contact || "—"}</td><td>{normalizeCallStatus(contact.callStatus) || "—"}</td><td>{normalizeInterestStatus(contact.interestStatus) || "—"}</td><td><span className={`sales-report-badge ${salesReportApproved(contact) ? "approved" : "pending"}`}>{salesReportApproved(contact) ? "Approved" : callLeadReviewStatus(contact) || "Not reviewed"}</span></td><td><span className={`sales-report-badge ${contact.leadDraft ? "filled" : "needed"}`}>{contact.leadDraft ? "Filled" : "Not filled"}</span></td><td>{renderActions(contact)}</td></tr>) : <tr><td colSpan={9} className="sales-report-no-results">No enquiries match these filters.</td></tr>}
       </tbody></table></div>
+      <Pagination page={enquiriesPage} totalPages={enquiriesTotalPages} totalItems={filtered.length} pageSize={enquiriesPageSize} onPageSizeChange={(size) => { setEnquiriesPageSize(size); setEnquiriesPage(1); }} onChange={setEnquiriesPage} className="sales-report-pagination" />
     </div>
-    <div className="panel sales-report-table-panel"><div className="panel-head"><div><h3>Filled enquiries</h3><p className="panel-subtitle">Saved form details from your sales contacts</p></div><div className="sales-report-head-actions"><span className="sales-report-count">{filled.length} forms</span><button type="button" className="primary-button sales-report-export-button" disabled={!filled.length} onClick={exportFilledEnquiriesPdf}><IconDownload size={16} /> Export PDF <span>{filled.length}</span></button></div></div><div className="sales-report-table-scroll"><table className="sales-report-table"><thead><tr><th>SR NO</th><th>PROGRAM</th><th>LEAD NAME</th><th>CONTACT</th><th>CITY</th><th>COMPANY</th><th>FORM STATUS</th><th>ACTION</th></tr></thead><tbody>
-      {filled.length ? filled.map((contact, index) => <tr key={`${contact.listType}-${contact.id}`}><td>{index + 1}</td><td>{contact.leadDraft.interest || contact.program || "—"}</td><td className="sales-report-name">{contact.leadDraft.name || contact.name}</td><td>{contact.leadDraft.phone || contact.contact}</td><td>{contact.leadDraft.city || "—"}</td><td>{contact.leadDraft.company || "—"}</td><td><span className="sales-report-badge filled">Filled</span></td><td>{renderActions(contact)}</td></tr>) : <tr><td colSpan={8} className="sales-report-no-results">No filled enquiry forms match these filters.</td></tr>}
-    </tbody></table></div></div>
+    <div className="panel sales-report-table-panel"><div className="panel-head"><div><h3>Filled enquiries</h3><p className="panel-subtitle">Saved form details from your sales contacts</p></div><div className="sales-report-head-actions"><span className="sales-report-count">{filled.length} forms</span><button type="button" className="primary-button sales-report-export-button" disabled={!filled.length} onClick={exportFilledEnquiriesPdf}><IconDownload size={16} /> Export PDF <span>{filled.length}</span></button></div></div><div className="sales-report-table-scroll" tabIndex={0} role="region" aria-label="Filled enquiries table. Scroll horizontally to see all columns."><table className="sales-report-table sales-report-filled-table"><SalesTableHead><tr><th>SR NO</th><th>PROGRAM</th><th>LEAD NAME</th><th>CONTACT</th><th>CITY</th><th>COMPANY</th><th>FORM STATUS</th><th>ACTION</th></tr></SalesTableHead><tbody>
+      {filled.length ? visibleFilled.map((contact, index) => <tr key={`${contact.listType}-${contact.id}`}><td>{(filledPage - 1) * filledPageSize + index + 1}</td><td>{contact.leadDraft.interest || contact.program || "—"}</td><td className="sales-report-name">{contact.leadDraft.name || contact.name}</td><td>{contact.leadDraft.phone || contact.contact}</td><td>{contact.leadDraft.city || "—"}</td><td>{contact.leadDraft.company || "—"}</td><td><span className="sales-report-badge filled">Filled</span></td><td>{renderActions(contact)}</td></tr>) : <tr><td colSpan={8} className="sales-report-no-results">No filled enquiry forms match these filters.</td></tr>}
+    </tbody></table></div><Pagination page={filledPage} totalPages={filledTotalPages} totalItems={filled.length} pageSize={filledPageSize} onPageSizeChange={(size) => { setFilledPageSize(size); setFilledPage(1); }} onChange={setFilledPage} className="sales-report-pagination" /></div>
     {formState && <LeadFormModal key={`${formState.contact.listType}-${formState.contact.id}-${formState.mode}`} initial={{ ...callLeadForm(formState.contact), ...formState.contact.leadDraft }} currentUser={currentUser} users={users} onClose={() => setFormState(null)} onSave={saveForm} saving={saving} readOnly={formState.mode === "view"} hideAssignment draftSaved={Boolean(formState.contact.leadDraft)} saveLabel={formState.mode === "edit" ? "Save changes" : "Save enquiry"} title={`${formState.mode === "view" ? "View" : formState.mode === "edit" ? "Edit" : "Fill"} enquiry form`} />}
   </div>;
 }
@@ -2038,12 +2077,12 @@ function SalesReportAnalysisTab({ contacts, showToast }) {
 
       <div className="module-toolbar">
         <div className="toolbar-filters">
-          <select value={program} onChange={(e) => setProgram(e.target.value)}>
+          <SalesDropdown searchable aria-label="Filter by program" value={program} onChange={(e) => setProgram(e.target.value)}>
             <option value="All">All Programs</option>
             {programOptions.map((p) => (
               <option key={p}>{p}</option>
             ))}
-          </select>
+          </SalesDropdown>
           <div className="date-chip">
             <input type="date" aria-label="Analysis start date" max={dateTo || undefined} value={dateFrom} onChange={(e) => { const value = e.target.value; setDateFrom(value); if (value && dateTo && value > dateTo) setDateTo(""); }} />
             <span>–</span>
@@ -2266,7 +2305,7 @@ function TasksTab({ tasks, setTasks, showToast, currentUser }) {
 
       <div className="table-wrap">
         <table className="table tasks-table">
-          <thead>
+          <SalesTableHead>
             <tr>
               <th>Sr No</th>
               <th>Task</th>
@@ -2278,7 +2317,7 @@ function TasksTab({ tasks, setTasks, showToast, currentUser }) {
               <th>Created Date</th>
               <th>Due Date</th>
             </tr>
-          </thead>
+          </SalesTableHead>
           <tbody>
             {filtered.length === 0 && <EmptyRow colSpan={9} text="No tasks match the selected filters." />}
             {filtered.map((t, index) => (
@@ -2313,6 +2352,9 @@ const ATTENDANCE_STATUS_OPTIONS = [
   { value: "", label: "Select Status", Icon: CircleAlert },
   { value: "Present", label: "Present", Icon: Check },
   { value: "Absent", label: "Absent", Icon: CircleX },
+];
+const SUNDAY_ATTENDANCE_STATUS_OPTIONS = [
+  { value: "Holiday", label: "Holiday", Icon: CalendarDays },
 ];
 
 function AttendanceStatusSelect({
@@ -2432,26 +2474,66 @@ function AttendanceStatusSelect({
 }
 
 function MarkAttendanceTab({ attendance, setAttendance, showToast, profile }) {
-  const today = todayISO();
+  const today = todayIndiaISO();
   const todaysRecord = attendance.find((a) => a.date === today) || null;
   const [currentTime, setCurrentTime] = useState(() => new Date());
   const [status, setStatus] = useState(todaysRecord?.status || "");
   const [remark, setRemark] = useState(todaysRecord?.remark || "");
+  const refreshedAttendanceDate = useRef("");
+  const isSundayHoliday = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Kolkata",
+    weekday: "short",
+  }).format(currentTime) === "Sun";
+  const indiaHour = Number(new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Kolkata",
+    hour: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(currentTime).find((part) => part.type === "hour")?.value || 0);
+  const isCheckInClosed = !isSundayHoliday && indiaHour >= 12;
   const checkIn = todaysRecord?.checkIn && todaysRecord.checkIn !== "-" ? todaysRecord.checkIn : "";
   const checkOut = todaysRecord?.checkOut && todaysRecord.checkOut !== "-" ? todaysRecord.checkOut : "";
-  const formatTime = (date) => date.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
+  const isAutoAbsent = Boolean(todaysRecord?.autoMarked && !todaysRecord?.correctedAt && todaysRecord?.status === "Absent");
+  const canCheckOut = Boolean(checkIn && !checkOut && todaysRecord?.status === "Present");
+  const formatTime = (date) => date.toLocaleTimeString("en-US", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" });
+  const checkInTimestamp = Date.parse(todaysRecord?.checkInAt || "");
+  const liveWorkedMinutes = todaysRecord?.workedMinutes !== null && todaysRecord?.workedMinutes !== undefined && Number.isFinite(Number(todaysRecord.workedMinutes)) && checkOut
+    ? Number(todaysRecord.workedMinutes)
+    : Number.isFinite(checkInTimestamp) && todaysRecord?.status === "Present"
+      ? Math.max(0, Math.floor((currentTime.getTime() - checkInTimestamp) / 60_000))
+      : null;
+  const workedTime = formatWorkedTime(liveWorkedMinutes);
 
   useEffect(() => {
     const timer = window.setInterval(() => setCurrentTime(new Date()), 30000);
     return () => window.clearInterval(timer);
   }, []);
 
+  useEffect(() => {
+    const parts = Object.fromEntries(new Intl.DateTimeFormat("en-US", {
+      timeZone: "Asia/Kolkata",
+      hour: "2-digit",
+      weekday: "short",
+      hourCycle: "h23",
+    }).formatToParts(currentTime).filter((part) => part.type !== "literal").map(({ type, value }) => [type, value]));
+    if (parts.hour < 12 || parts.weekday === "Sun" || refreshedAttendanceDate.current === today) return;
+    refreshedAttendanceDate.current = today;
+    fetchTodayAttendance()
+      .then((record) => {
+        if (!record) return;
+        setAttendance((records) => [record, ...records.filter((item) => item.id !== record.id && item.date !== record.date)]);
+      })
+      .catch((error) => {
+        refreshedAttendanceDate.current = "";
+        showToast(error.message || "Could not refresh attendance after the cutoff.");
+      });
+  }, [currentTime, setAttendance, showToast, today]);
+
   useEffect(() => { setStatus(todaysRecord?.status || ""); setRemark(todaysRecord?.remark || ""); }, [todaysRecord?.id]);
 
   const handleCheckIn = async () => {
-    if (checkIn || !status) return;
+    if (isSundayHoliday || isCheckInClosed || todaysRecord || !status) return;
     try {
-      const saved = await createAttendance({ date: today, status, remark });
+      const saved = await checkInAttendance({ status, remark });
       setAttendance((prev) => [saved, ...prev.filter((record) => record.id !== saved.id)]);
     } catch (error) { showToast(error.message || "Could not mark attendance"); }
   };
@@ -2459,7 +2541,7 @@ function MarkAttendanceTab({ attendance, setAttendance, showToast, profile }) {
   const handleCheckOut = async () => {
     if (!checkIn || checkOut) return;
     try {
-      const saved = await updateAttendance(todaysRecord.id, {});
+      const saved = await checkOutAttendance();
       setAttendance((prev) => prev.map((record) => record.id === saved.id ? saved : record));
       showToast("Checked out successfully");
     } catch (error) { showToast(error.message || "Could not check out"); }
@@ -2468,35 +2550,69 @@ function MarkAttendanceTab({ attendance, setAttendance, showToast, profile }) {
   return (
     <div className="crm-attendance-page">
       <div className="panel crm-attendance-panel">
-        {checkIn && (
+        {isSundayHoliday && (
+          <div className="crm-attendance-holiday" role="status">
+            Sunday is a holiday. Attendance cannot be marked today.
+          </div>
+        )}
+        {isAutoAbsent && (
+          <div className="crm-attendance-auto-absent" role="status" aria-live="polite">
+            Attendance was automatically marked Absent after 12:00 PM IST.
+          </div>
+        )}
+        {checkIn && todaysRecord?.status === "Present" && (
           <div className="crm-attendance-success" role="status" aria-live="polite">
             <Check size={17} aria-hidden="true" />
-            <span>You Have Checked In Successfully Today</span>
+            <span>{checkOut ? `Attendance complete: ${checkIn} - ${checkOut} (${workedTime})` : `Checked in at ${checkIn} · Worked ${workedTime}`}</span>
           </div>
         )}
         <div className="crm-attendance-form">
           <label className="crm-attendance-field">
-            <span>Employee Name</span>
+            <span className="crm-attendance-label"><UserCircle size={15} aria-hidden="true" />Employee Name</span>
             <input value={profile?.name || "CRM Executive"} readOnly />
           </label>
           <div className="crm-attendance-field">
-            <span>Select Status</span>
-            <AttendanceStatusSelect value={status} onChange={setStatus} disabled={Boolean(checkIn)} />
+            <span className="crm-attendance-label"><ListChecks size={15} aria-hidden="true" />Select Status</span>
+            <AttendanceStatusSelect
+              value={isSundayHoliday ? "Holiday" : status}
+              onChange={setStatus}
+              disabled={isSundayHoliday || isCheckInClosed || Boolean(todaysRecord)}
+              options={isSundayHoliday ? SUNDAY_ATTENDANCE_STATUS_OPTIONS : ATTENDANCE_STATUS_OPTIONS}
+            />
           </div>
           <label className="crm-attendance-field">
-            <span>Remark</span>
-            <input value={remark} onChange={(event) => setRemark(event.target.value)} placeholder="Remark (optional)" disabled={Boolean(checkIn)} />
+            <span className="crm-attendance-label"><MessageSquareText size={15} aria-hidden="true" />Remark</span>
+            <input value={remark} onChange={(event) => setRemark(event.target.value)} placeholder="Remark (optional)" disabled={isSundayHoliday || isCheckInClosed || Boolean(todaysRecord)} />
           </label>
-          <button
-            className={clsx("crm-attendance-submit", checkIn && !checkOut && "checkout", checkOut && "completed")}
-            onClick={checkOut ? undefined : checkIn ? handleCheckOut : handleCheckIn}
-            disabled={Boolean(checkOut) || (!checkIn && !status)}
-          >
-            {checkOut ? "Completed" : checkIn ? "Check Out" : "Check In"}
-          </button>
+          <div className="crm-attendance-action">
+            <div className="crm-attendance-clock" aria-label={`Current India time ${formatTime(currentTime)} IST`}>
+              <span className="crm-attendance-live-dot" aria-hidden="true" />
+              <span>India time</span>
+              <strong>{formatTime(currentTime)} IST</strong>
+              {checkIn && <span className="crm-attendance-worked-time">· {workedTime}</span>}
+            </div>
+            <button
+              className={clsx("crm-attendance-submit", canCheckOut && "checkout", (checkOut || (todaysRecord && !canCheckOut)) && "completed")}
+              onClick={!todaysRecord ? handleCheckIn : canCheckOut ? handleCheckOut : undefined}
+              disabled={isSundayHoliday || (todaysRecord ? !canCheckOut || Boolean(checkOut) : isCheckInClosed || !status)}
+            >
+              {isSundayHoliday ? "Holiday" : isAutoAbsent ? "Marked Absent" : checkOut ? "Completed" : canCheckOut ? "Check Out" : todaysRecord ? "Marked" : isCheckInClosed ? "Check-in Closed" : "Check In"}
+            </button>
+          </div>
         </div>
-        <div className="crm-attendance-clock">
-          Current time: <strong>{formatTime(currentTime)}</strong>
+        <div className="crm-attendance-policy" role="note">
+          <div className="crm-attendance-policy-item">
+            <span className="crm-attendance-policy-icon" aria-hidden="true"><Clock3 size={17} /></span>
+            <div><strong>Check-in window</strong><span>Monday–Saturday, before 12:00 PM IST</span></div>
+          </div>
+          <div className="crm-attendance-policy-item">
+            <span className="crm-attendance-policy-icon" aria-hidden="true"><CircleAlert size={17} /></span>
+            <div><strong>After 12:00 PM</strong><span>Unmarked attendance becomes Absent; approved leave stays unchanged</span></div>
+          </div>
+          <div className="crm-attendance-policy-item">
+            <span className="crm-attendance-policy-icon" aria-hidden="true"><CalendarDays size={17} /></span>
+            <div><strong>Sunday &amp; checkout</strong><span>Sunday holiday · Checkout until midnight</span></div>
+          </div>
         </div>
       </div>
     </div>
@@ -2505,45 +2621,75 @@ function MarkAttendanceTab({ attendance, setAttendance, showToast, profile }) {
 
 /* =========================== ATTENDANCE REPORT TAB ========================== */
 
-function AttendanceReportTab({ attendance, showToast }) {
+function AttendanceReportTab({ attendance, leaveRequests, joiningDate, employeeId, calendar, showToast, onMonthRequested }) {
+  const today = todayIndiaISO();
   const [monthFilter, setMonthFilter] = useState(currentMonthKey());
   const [statusFilter, setStatusFilter] = useState("All");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
-  const [page, setPage] = useState(1);
-  const pageSize = 15;
 
-  const monthOptions = useMemo(() => {
-    const set = new Set(attendance.map((a) => monthKeyOf(a.date)));
-    set.add(currentMonthKey());
-    return Array.from(set).sort().reverse();
-  }, [attendance]);
+  const monthOptions = useMemo(() => getAttendanceReportMonths(joiningDate, today), [joiningDate, today]);
+  const reportDateRange = useMemo(() => getAttendanceReportDateRange(monthFilter, today), [monthFilter, today]);
   const monthSelectOptions = useMemo(() => monthOptions.map((month) => ({
     value: month,
     label: new Date(`${month}-01T00:00:00`).toLocaleDateString("en-US", { month: "long", year: "numeric" }),
   })), [monthOptions]);
-  const statusOptions = useMemo(() => [
+  const monthOptionsForSelect = monthSelectOptions.length
+    ? monthSelectOptions
+    : [{ value: "", label: "No attendance months available" }];
+  const statusOptions = [
     { value: "All", label: "All statuses" },
-    ...Array.from(new Set(attendance.map((row) => row.status).filter(Boolean)))
-      .map((status) => ({ value: status, label: status })),
-  ], [attendance]);
+    { value: "Present", label: "Present" },
+    { value: "Absent", label: "Absent" },
+    { value: "Leave", label: "Leave" },
+    { value: "Holiday", label: "Holiday" },
+    { value: "Pending", label: "Pending" },
+  ];
 
-  const rows = attendance.filter((a) => monthKeyOf(a.date) === monthFilter
-    && (statusFilter === "All" || a.status === statusFilter)
-    && (!dateFrom || a.date >= dateFrom) && (!dateTo || a.date <= dateTo))
-    .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
-  const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
-  const currentPage = Math.min(page, totalPages);
-  const pageRows = rows.slice((currentPage - 1) * pageSize, currentPage * pageSize);
-  useEffect(() => { setPage(1); }, [monthFilter, statusFilter, dateFrom, dateTo]);
-  useEffect(() => { setPage((current) => Math.min(current, totalPages)); }, [totalPages]);
+  useEffect(() => {
+    if (monthOptions.length && !monthOptions.includes(monthFilter)) setMonthFilter(monthOptions[0]);
+  }, [monthOptions, monthFilter]);
+
+  useEffect(() => {
+    if (!monthFilter) return;
+    Promise.resolve(onMonthRequested?.(monthFilter))
+      .catch((error) => showToast(error.message || "Could not load monthly attendance"));
+  }, [monthFilter, onMonthRequested, showToast]);
+
+  const allRows = useMemo(() => buildAttendanceReportRows({
+    attendance,
+    leaves: leaveRequests,
+    month: monthFilter,
+    joinedDate: joiningDate,
+    today,
+    employeeId,
+    calendar,
+  }), [attendance, calendar, employeeId, joiningDate, leaveRequests, monthFilter, today]);
+  const rows = filterAttendanceReportRows(allRows, { status: statusFilter, dateFrom, dateTo });
+  const statusIcon = {
+    Present: Check,
+    Absent: CircleX,
+    Leave: Hourglass,
+    Holiday: CalendarDays,
+    Pending: Clock3,
+  };
 
   const handleExport = () => {
     if (!rows.length) {
       showToast("No records for the selected month");
       return;
     }
-    downloadCSV(`attendance-${monthFilter}.csv`, rows.map((r) => ({ Date: formatDisplayDate(r.date), Status: r.status, "Punch In Time": r.checkIn, "Punch Out Time": r.checkOut })));
+    downloadCSV(`attendance-${monthFilter}.csv`, rows.map((r, index) => ({
+      "Sr. No.": index + 1,
+      Date: formatDisplayDate(r.date),
+      Day: formatWeekday(r.date),
+      "Punch In Time": r.checkIn,
+      "Punch Out Time": r.checkOut,
+      "Worked Time": formatWorkedTime(r.workedMinutes),
+      Status: r.status,
+      Classification: r.reason,
+      Payable: r.payable ? "Yes" : "No",
+    })));
     showToast("Attendance report exported");
   };
   const handleExportPdf = () => {
@@ -2551,8 +2697,18 @@ function AttendanceReportTab({ attendance, showToast }) {
     exportReportPdf({
       title: "Attendance Report",
       filename: `attendance-${monthFilter}.pdf`,
-      head: ["Date", "Status", "Punch In", "Punch Out"],
-      body: rows.map((row) => [formatDisplayDate(row.date), row.status || "-", row.checkIn || "Not recorded", row.checkOut || "Not recorded"]),
+      head: ["Sr. No.", "Date", "Day", "Punch In", "Punch Out", "Worked", "Status", "Classification", "Payable"],
+      body: rows.map((row, index) => [
+        index + 1,
+        formatDisplayDate(row.date),
+        formatWeekday(row.date),
+        row.checkIn || "Not recorded",
+        row.checkOut || "Not recorded",
+        formatWorkedTime(row.workedMinutes),
+        row.status || "-",
+        row.reason || "-",
+        row.payable ? "Yes" : "No",
+      ]),
     });
   };
 
@@ -2566,57 +2722,67 @@ function AttendanceReportTab({ attendance, showToast }) {
         </div>
       </div>
       <div className="report-summary">
-        <div><span>Records</span><strong>{rows.length}</strong></div>
         <div><span>Present</span><strong>{rows.filter((row) => row.status === "Present").length}</strong></div>
-        <div><span>On leave</span><strong>{rows.filter((row) => row.status === "On Leave").length}</strong></div>
-        <div><span>Other</span><strong>{rows.filter((row) => !["Present", "On Leave"].includes(row.status)).length}</strong></div>
+        <div><span>Absent</span><strong>{rows.filter((row) => row.status === "Absent").length}</strong></div>
+        <div><span>Leave</span><strong>{rows.filter((row) => row.status === "Leave").length}</strong></div>
+        <div><span>Holiday</span><strong>{rows.filter((row) => row.status === "Holiday").length}</strong></div>
+        <div><span>Pending</span><strong>{rows.filter((row) => row.status === "Pending").length}</strong></div>
       </div>
       <div className="report-toolbar">
-        <label><span>Month</span><AttendanceStatusSelect value={monthFilter} onChange={setMonthFilter} options={monthSelectOptions} ariaLabel="Filter attendance by month" wrapperClassName="attendance-report-filter-select" triggerClassName="attendance-report-filter-trigger" menuClassName="attendance-report-select-menu" colorByValue={false} /></label>
+        <label><span>Month</span><AttendanceStatusSelect value={monthFilter} onChange={setMonthFilter} options={monthOptionsForSelect} disabled={!monthOptions.length} ariaLabel="Filter attendance by month" wrapperClassName="attendance-report-filter-select" triggerClassName="attendance-report-filter-trigger" menuClassName="attendance-report-select-menu" colorByValue={false} /></label>
         <label><span>Status</span><AttendanceStatusSelect value={statusFilter} onChange={setStatusFilter} options={statusOptions} ariaLabel="Filter attendance by status" wrapperClassName="attendance-report-filter-select" triggerClassName="attendance-report-filter-trigger" menuClassName="attendance-report-select-menu" colorByValue={false} /></label>
-        <CallListDatePicker label="From" value={dateFrom} max={dateTo || undefined} onChange={(value) => { setDateFrom(value); if (value && dateTo && value > dateTo) setDateTo(""); }} />
-        <CallListDatePicker label="To" value={dateTo} min={dateFrom || undefined} onChange={setDateTo} />
-        <button type="button" className="ghost-button" onClick={() => { setMonthFilter(currentMonthKey()); setStatusFilter("All"); setDateFrom(""); setDateTo(""); }}>Reset</button>
+        <CallListDatePicker
+          label="From"
+          value={dateFrom}
+          min={reportDateRange.start || undefined}
+          max={dateTo && dateTo < (reportDateRange.end || today) ? dateTo : reportDateRange.end || today}
+          onChange={(value) => { setDateFrom(value); if (value && dateTo && value > dateTo) setDateTo(""); }}
+        />
+        <CallListDatePicker
+          label="To"
+          value={dateTo}
+          min={dateFrom && dateFrom > reportDateRange.start ? dateFrom : reportDateRange.start || undefined}
+          max={reportDateRange.end || today}
+          onChange={setDateTo}
+        />
+        <button type="button" className="ghost-button" onClick={() => { setMonthFilter(monthOptions[0] || today.slice(0, 7)); setStatusFilter("All"); setDateFrom(""); setDateTo(""); }}>Reset</button>
       </div>
       <div className="table-wrap">
-        <table className="table">
-          <thead>
+        <table className="table attendance-report-table">
+          <SalesTableHead>
             <tr>
-              <th>Date</th>
-              <th>Status</th>
-              <th>Punch In Time</th>
-              <th>Punch Out Time</th>
+              <th>Sr. No.</th>
+              <th><span className="attendance-report-heading"><CalendarDays size={14} aria-hidden="true" />Date</span></th>
+              <th><span className="attendance-report-heading"><CalendarDays size={14} aria-hidden="true" />Day</span></th>
+              <th><span className="attendance-report-heading"><Clock3 size={14} aria-hidden="true" />Punch In Time</span></th>
+              <th><span className="attendance-report-heading"><Clock3 size={14} aria-hidden="true" />Punch Out Time</span></th>
+              <th><span className="attendance-report-heading"><UserCircle size={14} aria-hidden="true" />Status</span></th>
             </tr>
-          </thead>
+          </SalesTableHead>
           <tbody>
-            {rows.length === 0 && <EmptyRow colSpan={4} text="No attendance records match these filters." />}
-            {pageRows.map((r) => (
-              <tr key={r.id}>
-                <td>{formatDisplayDate(r.date)}</td>
-                <td>
-                  <span
-                    className={clsx(
-                      "badge",
-                      r.status === "Present"
-                        ? "success"
-                        : r.status === "Absent"
-                        ? "danger"
-                        : r.status === "On Leave"
-                        ? "warning"
-                        : "info"
-                    )}
-                  >
-                    {r.status}
-                  </span>
-                </td>
-                <td>{r.checkIn || "Not recorded"}</td>
-                <td>{r.checkOut || "Not recorded"}</td>
-              </tr>
-            ))}
+            {!monthOptions.length && <EmptyRow colSpan={6} text="No attendance months available for this account." />}
+            {monthOptions.length > 0 && rows.length === 0 && <EmptyRow colSpan={6} text={reportDateRange.isFutureMonth ? "Attendance is not available for a future month." : "No attendance records match these filters."} />}
+            {rows.map((r, index) => {
+              const StatusIcon = statusIcon[r.status] || CircleAlert;
+              return (
+                <tr key={r.id}>
+                  <td className="attendance-report-serial">{index + 1}</td>
+                  <td className="attendance-report-date">{formatDisplayDate(r.date)}</td>
+                  <td>{formatWeekday(r.date)}</td>
+                  <td>{r.checkIn || "Not recorded"}</td>
+                  <td>{r.checkOut || "Not recorded"}</td>
+                  <td className="attendance-report-status-cell">
+                    <span title={`${r.reason || "attendance"} · ${r.payable ? "payable" : "non-payable"}`} className={clsx("attendance-report-status-pill", `is-${String(r.status || "unknown").toLowerCase()}`)}>
+                      <StatusIcon size={13} strokeWidth={2.5} aria-hidden="true" />
+                      {r.status}
+                    </span>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
-      <Pagination page={currentPage} totalPages={totalPages} totalItems={rows.length} pageSize={pageSize} onChange={setPage} />
     </div>
   );
 }
@@ -2762,7 +2928,7 @@ function LeaveRequestTab({ leaveRequests, setLeaveRequests, showToast }) {
         </div>
         <div className="table-wrap">
           <table className="table">
-            <thead>
+            <SalesTableHead>
               <tr>
                 <th>Type</th>
                 <th>From</th>
@@ -2772,7 +2938,7 @@ function LeaveRequestTab({ leaveRequests, setLeaveRequests, showToast }) {
                 <th>Applied On</th>
                 <th>Status</th>
               </tr>
-            </thead>
+            </SalesTableHead>
             <tbody>
               {filteredRequests.length === 0 && <EmptyRow colSpan={7} text="No leave requests match these filters." />}
               {pageRows.map((l) => (
@@ -2799,65 +2965,442 @@ function LeaveRequestTab({ leaveRequests, setLeaveRequests, showToast }) {
 
 /* ================================ SETTINGS TAB ============================== */
 
-function SettingsTab({ profile, setProfile, showToast, currentUser, onProfileUpdated }) {
-  const [profileForm, setProfileForm] = useState(profile);
-  const [message, setMessage] = useState(null);
+function validateCrmSettings(form) {
+  const errors = {};
+  const text = (key) => String(form[key] || "").trim();
+  if (!text("name")) errors.name = "Full name is required.";
+  else if (!isValidPersonName(text("name"))) errors.name = "Use letters and standard name punctuation only.";
+  if (!isValidEmail(text("email"))) errors.email = "Enter a valid official email address.";
+  if (text("personalEmail") && !isValidEmail(text("personalEmail"))) errors.personalEmail = "Enter a valid personal email address.";
+  if (text("phone") && !isValidIndianMobile(text("phone"))) errors.phone = "Enter 10 digits beginning with 6, 7, 8, or 9.";
+  if (text("dob") && !isValidProfileDob(text("dob"), todayISO())) errors.dob = "Choose a valid date between 1900 and today.";
+  if (text("gender") && !["Female", "Male", "Non-binary", "Prefer not to say"].includes(text("gender"))) errors.gender = "Select a valid gender.";
+  if (text("maritalStatus") && !["Single", "Married", "Divorced", "Widowed"].includes(text("maritalStatus"))) errors.maritalStatus = "Select a valid marital status.";
+  if (text("education") && !isValidBankText(text("education"))) errors.education = "Use letters, numbers, and standard punctuation only.";
+  if (/[\u0000-\u001f]/.test(text("address"))) errors.address = "Address contains unsupported characters.";
 
-  const handleSaveProfile = async () => {
-    try {
-      const saved = await updateMyProfile({ name: profileForm.name, email: profileForm.email, phone: profileForm.phone });
-      const nextProfile = { ...profileForm, ...saved };
-      setProfile(nextProfile);
-      setProfileForm(nextProfile);
-      onProfileUpdated?.(saved);
-      setMessage({ type: "success", text: "Profile updated successfully" });
-      showToast("Profile saved");
-    } catch (error) { setMessage({ type: "error", text: error.message || "Could not save profile" }); }
+  const emergencyKeys = ["emergencyName", "emergencyRelationship", "emergencyPhone"];
+  if (emergencyKeys.some((key) => text(key))) {
+    if (!text("emergencyName")) errors.emergencyName = "Contact name is required when emergency details are added.";
+    else if (!isValidPersonName(text("emergencyName"))) errors.emergencyName = "Use letters and standard name punctuation only.";
+    if (!text("emergencyRelationship")) errors.emergencyRelationship = "Relationship is required.";
+    else if (!isValidRelationship(text("emergencyRelationship"))) errors.emergencyRelationship = "Use letters and standard punctuation only.";
+    if (!isValidIndianMobile(text("emergencyPhone"))) errors.emergencyPhone = "Enter 10 digits beginning with 6, 7, 8, or 9.";
+  }
+
+  if (text("panNumber") && !isValidPan(text("panNumber"))) errors.panNumber = "Use PAN format ABCDE1234F.";
+  if (text("aadhaarNumber") && !isValidAadhaar(text("aadhaarNumber"))) errors.aadhaarNumber = "Enter a valid 12-digit Aadhaar number.";
+
+  const bankKeys = ["bankName", "accountHolder", "accountNumber", "ifscCode", "bankBranch"];
+  if (bankKeys.some((key) => text(key))) {
+    if (!text("bankName")) errors.bankName = "Bank name is required when bank details are added.";
+    else if (!isValidBankText(text("bankName"))) errors.bankName = "Enter a valid bank name.";
+    if (!text("accountHolder")) errors.accountHolder = "Account holder name is required.";
+    else if (!isValidPersonName(text("accountHolder"))) errors.accountHolder = "Enter the account holder's legal name.";
+    if (!isValidBankAccount(text("accountNumber"))) errors.accountNumber = "Account number must contain 6–18 digits.";
+    if (!isValidIfsc(text("ifscCode"))) errors.ifscCode = "Use IFSC format ABCD0123456.";
+    if (!text("bankBranch")) errors.bankBranch = "Bank branch is required.";
+    else if (!isValidBankText(text("bankBranch"))) errors.bankBranch = "Enter a valid branch name.";
+  }
+  return errors;
+}
+
+function SettingsTab({ profile, setProfile, showToast, currentUser, onProfileUpdated }) {
+  const [profileForm, setProfileForm] = useState(() => ({
+    ...currentUser,
+    ...profile,
+    name: profile.name || currentUser?.name || "",
+    role: profile.role || currentUser?.role || "",
+    email: profile.email || currentUser?.email || "",
+    phone: profile.phone || currentUser?.phone || "",
+    dob: currentUser?.dob || "",
+    gender: currentUser?.gender || "",
+    personalEmail: currentUser?.personalEmail || "",
+    maritalStatus: currentUser?.maritalStatus || "",
+    education: currentUser?.education || "",
+    address: currentUser?.address || "",
+    emergencyName: currentUser?.emergencyName || "",
+    emergencyRelationship: currentUser?.emergencyRelationship || "",
+    emergencyPhone: currentUser?.emergencyPhone || currentUser?.emergencyContact || "",
+    panNumber: currentUser?.panNumber || "",
+    aadhaarNumber: currentUser?.aadhaarNumber || "",
+    bankName: currentUser?.bankName || "",
+    accountHolder: currentUser?.accountHolder || "",
+    accountNumber: currentUser?.accountNumber || "",
+    ifscCode: currentUser?.ifscCode || "",
+    bankBranch: currentUser?.bankBranch || "",
+    photo: profile.avatarUrl || currentUser?.imageUrl || "",
+    imageUrl: currentUser?.imageUrl || profile.avatarUrl || "",
+    imagePublicId: currentUser?.imagePublicId || "",
+    documents: currentUser?.documents || {},
+  }));
+  const [message, setMessage] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [uploadingDocument, setUploadingDocument] = useState("");
+  const [fileErrors, setFileErrors] = useState({});
+  const [validationErrors, setValidationErrors] = useState({});
+  const [pendingPhoto, setPendingPhoto] = useState(null);
+  const [photoPreviewOpen, setPhotoPreviewOpen] = useState(false);
+  const photoPreviewUrl = useRef("");
+  const accountId = String(currentUser?.id || currentUser?._id || "");
+  const formatFileSize = (bytes) => {
+    const size = Number(bytes) || 0;
+    if (!size) return "";
+    return size < 1024 * 1024 ? `${Math.max(1, Math.round(size / 1024))} KB` : `${(size / (1024 * 1024)).toFixed(1)} MB`;
   };
 
-  return (
-    <div style={{ display: "grid", gap: 18 }}>
-      <div className="settings-section">
-        <div className="settings-section-header">
-          <h3>Profile</h3>
-        </div>
-        <div className="form-grid" style={{ marginTop: 16 }}>
-          <div className="field">
-            <span>Full Name</span>
-            <input value={profileForm.name} onChange={(e) => setProfileForm((f) => ({ ...f, name: e.target.value }))} />
-          </div>
-          <div className="field">
-            <span>Role</span>
-            <input value={profileForm.role} readOnly />
-          </div>
-          <div className="field">
-            <span>Email</span>
-            <input type="email" value={profileForm.email} onChange={(e) => setProfileForm((f) => ({ ...f, email: e.target.value }))} />
-          </div>
-          <div className="field">
-            <span>Phone</span>
-            <input value={profileForm.phone} onChange={(e) => setProfileForm((f) => ({ ...f, phone: e.target.value }))} />
-          </div>
-        </div>
-        {message && <div className={clsx("settings-message", message.type)} style={{ marginTop: 14 }}>{message.text}</div>}
-        <div className="form-actions">
-          <button className="primary-button" onClick={handleSaveProfile}>
-            <IconCheck size={16} /> Save Profile
-          </button>
-        </div>
-      </div>
+  useEffect(() => {
+    let active = true;
+    fetchMyProfile()
+      .then((savedProfile) => {
+        if (!active) return;
+        setProfileForm((current) => ({
+          ...current,
+          ...savedProfile,
+          role: profile.role || savedProfile.role || current.role,
+          photo: savedProfile.imageUrl || current.photo || "",
+          documents: savedProfile.documents || {},
+        }));
+      })
+      .catch((error) => { if (active) setMessage({ type: "error", text: error.message || "Unable to load account settings." }); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [accountId, profile.role]);
 
-      <div className="settings-layout">
-        <div className="settings-section">
-          <div className="settings-section-header">
-            <h3>Change Password</h3>
-          </div>
-          <div className="settings-form">
+  useEffect(() => () => {
+    if (photoPreviewUrl.current) URL.revokeObjectURL(photoPreviewUrl.current);
+  }, []);
+
+  const clearValidationError = (key) => setValidationErrors((errors) => errors[key] ? { ...errors, [key]: "" } : errors);
+  const validateField = (key) => setValidationErrors((errors) => ({ ...errors, [key]: validateCrmSettings(profileForm)[key] || "" }));
+  const setField = (key, normalize = (value) => value) => (event) => {
+    setProfileForm((form) => ({ ...form, [key]: normalize(event.target.value) }));
+    clearValidationError(key);
+  };
+  const setIndianPhone = (key) => (event) => {
+    const digits = String(event.target.value || "").replace(/\D/g, "").slice(0, 10);
+    setProfileForm((form) => ({ ...form, [key]: digits }));
+    clearValidationError(key);
+  };
+  const field = (key, label, options = {}) => (
+    <label className={`crm-settings-field${options.wide ? " crm-settings-wide" : ""}`}>
+      <span>{label}</span>
+      <input
+        type={options.type || "text"}
+        value={profileForm[key] || ""}
+        onChange={setField(key, options.normalize)}
+        placeholder={options.placeholder}
+        required={options.required}
+        readOnly={options.readOnly}
+        maxLength={options.maxLength}
+        pattern={options.pattern}
+        inputMode={options.inputMode}
+        autoComplete={options.autoComplete}
+        aria-invalid={Boolean(validationErrors[key])}
+        aria-describedby={validationErrors[key] ? `${key}-error` : undefined}
+        onBlur={() => validateField(key)}
+      />
+      {validationErrors[key] && <small id={`${key}-error`} className="crm-settings-field-error">{validationErrors[key]}</small>}
+    </label>
+  );
+  const indianPhoneField = (key, label, autoComplete) => (
+    <label className="crm-settings-field crm-settings-phone-field">
+      <span>{label}</span>
+      <span className="crm-settings-phone-control">
+        <span className="crm-settings-phone-prefix" aria-hidden="true"><span className="crm-settings-india-flag">🇮🇳</span><b>+91</b></span>
+        <input
+          type="tel"
+          value={profileForm[key] || ""}
+          onChange={setIndianPhone(key)}
+          inputMode="numeric"
+          pattern="[6-9][0-9]{9}"
+          maxLength={10}
+          autoComplete={autoComplete}
+          placeholder="98765 43210"
+          aria-label={`${label}, India country code plus 91`}
+          aria-invalid={Boolean(validationErrors[key])}
+          aria-describedby={validationErrors[key] ? `${key}-error` : undefined}
+          title="Enter a valid 10-digit Indian mobile number beginning with 6, 7, 8, or 9."
+          onBlur={() => validateField(key)}
+        />
+      </span>
+      {validationErrors[key] && <small id={`${key}-error`} className="crm-settings-field-error">{validationErrors[key]}</small>}
+    </label>
+  );
+
+  const handlePhotoChange = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setFileErrors((errors) => ({ ...errors, photo: "Choose an image file." }));
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setFileErrors((errors) => ({ ...errors, photo: "Choose an image smaller than 5 MB." }));
+      return;
+    }
+    try {
+      const processed = await compressImageFile(file);
+      if (photoPreviewUrl.current) URL.revokeObjectURL(photoPreviewUrl.current);
+      photoPreviewUrl.current = URL.createObjectURL(processed);
+      setPendingPhoto(processed);
+      setProfileForm((form) => ({ ...form, photo: photoPreviewUrl.current }));
+      setFileErrors((errors) => ({ ...errors, photo: "" }));
+    } catch (error) {
+      setFileErrors((errors) => ({ ...errors, photo: error.message || "Unable to process this photo." }));
+    }
+  };
+
+  const handleDocumentUpload = async (event, key) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) {
+      setFileErrors((errors) => ({ ...errors, [key]: "Choose a document smaller than 5 MB." }));
+      return;
+    }
+    if (!["application/pdf", "image/jpeg", "image/png"].includes(file.type)) {
+      setFileErrors((errors) => ({ ...errors, [key]: "Choose a PDF, JPG, or PNG document." }));
+      return;
+    }
+    setUploadingDocument(key);
+    setFileErrors((errors) => ({ ...errors, [key]: "" }));
+    try {
+      const saved = await uploadMyProfileDocument(key, file);
+      const documents = { ...profileForm.documents, [key]: saved };
+      setProfileForm((form) => ({ ...form, documents: { ...form.documents, [key]: saved } }));
+      setProfile((current) => ({ ...current, documents }));
+      onProfileUpdated?.({ documents });
+    } catch (error) {
+      setFileErrors((errors) => ({ ...errors, [key]: error.message || "Unable to upload this document." }));
+    } finally {
+      setUploadingDocument("");
+    }
+  };
+
+  const handleDocumentDownload = async (key, documentInfo) => {
+    try {
+      const blob = await downloadMyProfileDocument(key);
+      const url = URL.createObjectURL(blob);
+      const link = window.document.createElement("a");
+      link.href = url;
+      link.download = documentInfo.name || "account-document";
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (error) {
+      setFileErrors((errors) => ({ ...errors, [key]: error.message || "Unable to download this document." }));
+    }
+  };
+
+  const handleSaveProfile = async (event) => {
+    event.preventDefault();
+    if (saving || uploadingDocument) return;
+    if (Object.values(fileErrors).some(Boolean)) {
+      setMessage({ type: "error", text: "Resolve the highlighted upload error before saving." });
+      return;
+    }
+    const errors = validateCrmSettings(profileForm);
+    setValidationErrors(errors);
+    if (Object.keys(errors).length) {
+      setMessage({ type: "error", text: "Please correct the highlighted fields before saving." });
+      const form = event.currentTarget;
+      requestAnimationFrame(() => form.querySelector('[aria-invalid="true"]')?.focus());
+      return;
+    }
+    setSaving(true);
+    setMessage(null);
+    try {
+      let saved = await updateMyProfile({
+        name: profileForm.name,
+        email: profileForm.email,
+        phone: profileForm.phone,
+        dob: profileForm.dob,
+        gender: profileForm.gender,
+        personalEmail: profileForm.personalEmail,
+        maritalStatus: profileForm.maritalStatus,
+        education: profileForm.education,
+        address: profileForm.address,
+        emergencyName: profileForm.emergencyName,
+        emergencyRelationship: profileForm.emergencyRelationship,
+        emergencyPhone: profileForm.emergencyPhone,
+        panNumber: profileForm.panNumber,
+        aadhaarNumber: profileForm.aadhaarNumber,
+        bankName: profileForm.bankName,
+        accountHolder: profileForm.accountHolder,
+        accountNumber: profileForm.accountNumber,
+        ifscCode: profileForm.ifscCode,
+        bankBranch: profileForm.bankBranch,
+      });
+      if (pendingPhoto) {
+        const uploadedPhoto = await uploadMyProfilePhoto(pendingPhoto);
+        if (!uploadedPhoto.imageUrl) throw new Error("ImageKit did not return a profile photo URL.");
+        saved = { ...saved, ...uploadedPhoto };
+      }
+      if (photoPreviewUrl.current) URL.revokeObjectURL(photoPreviewUrl.current);
+      photoPreviewUrl.current = "";
+      setPendingPhoto(null);
+      setProfileForm((form) => ({ ...form, ...saved, photo: saved.imageUrl || "" }));
+      setProfile((current) => ({ ...current, ...saved, avatarUrl: saved.imageUrl || "" }));
+      onProfileUpdated?.({ ...saved, avatarUrl: saved.imageUrl || "" });
+      setMessage({ type: "success", text: "Account settings saved." });
+      showToast("Account settings saved");
+    } catch (error) {
+      setMessage({ type: "error", text: error.message || "Unable to save account settings." });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const documentLabels = [
+    ["aadhaarDocument", "Aadhaar Card", CreditCard],
+    ["panDocument", "PAN Card", CreditCard],
+    ["bankDocument", "Bank Passbook / Cheque", Wallet],
+    ["resumeDocument", "Resume / CV", FileText],
+    ["offerDocument", "Offer Letter", FileText],
+    ["appointmentDocument", "Appointment Letter", FileText],
+    ["otherDocument", "Other Documents", FileText],
+  ];
+
+  return (
+    <section className="crm-settings-page">
+      <header className="crm-settings-page-heading">
+        <h2><UserCircle size={23} /> Account Settings</h2>
+      </header>
+      {message && <p className={`crm-settings-message ${message.type}`} role={message.type === "error" ? "alert" : "status"}>{message.text}</p>}
+      {loading ? <div className="crm-settings-loading" role="status">Loading account settings…</div> : <div className="crm-settings-layout">
+        <form className="crm-settings-form" onSubmit={handleSaveProfile} noValidate>
+          <section className="crm-settings-section">
+            <h3><Users size={16} /> 1. Personal Details</h3>
+            <div className="crm-settings-section-content">
+              <div className="crm-settings-photo">
+                {profileForm.photo
+                  ? <img src={profileForm.photo} alt="Profile" />
+                  : <div className="crm-settings-photo-placeholder"><UserCircle size={42} /></div>}
+                <div className="crm-settings-photo-input">
+                  <strong>Profile picture</strong>
+                  <label className="crm-settings-file-picker crm-settings-photo-picker">
+                    <input type="file" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" onChange={handlePhotoChange} />
+                    <ImagePlus size={17} />
+                    <span>{pendingPhoto ? "Choose another photo" : profileForm.photo ? "Replace photo" : "Choose photo"}</span>
+                  </label>
+                  <small>JPG, PNG or WEBP · maximum 5 MB</small>
+                  {pendingPhoto && <span className="crm-settings-file-selected"><CheckCircle2 size={14} /><span><b>{pendingPhoto.name}</b><small>{formatFileSize(pendingPhoto.size)} · Ready to upload when saved</small></span></span>}
+                  {profileForm.photo && <button className="crm-settings-view-photo" type="button" onClick={() => setPhotoPreviewOpen(true)}><Eye size={14} /> View Current Photo</button>}
+                  {fileErrors.photo && <small className="crm-settings-field-error">{fileErrors.photo}</small>}
+                </div>
+              </div>
+              <div className="crm-settings-fields">
+                {field("name", "Full Name *", { required: true, maxLength: 120, autoComplete: "name" })}
+                <div className="crm-settings-field crm-settings-date-field">
+                  <span>Date of Birth</span>
+                  <CallListDatePicker label="Date of Birth" value={profileForm.dob || ""} min="1900-01-01" max={todayISO()} hideLabel quickMonthYear showToday={false} ariaInvalid={Boolean(validationErrors.dob)} ariaDescribedBy={validationErrors.dob ? "dob-error" : undefined} onChange={(value) => { setProfileForm((form) => ({ ...form, dob: value })); clearValidationError("dob"); }} />
+                  {validationErrors.dob && <small id="dob-error" className="crm-settings-field-error">{validationErrors.dob}</small>}
+                </div>
+                <label className="crm-settings-field">
+                  <span>Gender</span>
+                  <select value={profileForm.gender || ""} onChange={setField("gender")} onBlur={() => validateField("gender")} aria-invalid={Boolean(validationErrors.gender)} aria-describedby={validationErrors.gender ? "gender-error" : undefined}>
+                    <option value="">Select Gender</option>
+                    {["Female", "Male", "Non-binary", "Prefer not to say"].map((value) => <option key={value}>{value}</option>)}
+                  </select>
+                  {validationErrors.gender && <small id="gender-error" className="crm-settings-field-error">{validationErrors.gender}</small>}
+                </label>
+                {field("personalEmail", "Personal Email", { type: "email", maxLength: 254, autoComplete: "email" })}
+                {field("email", "Work / Official Email *", { type: "email", required: true, maxLength: 254 })}
+                {indianPhoneField("phone", "Personal Mobile Number", "tel")}
+                <label className="crm-settings-field">
+                  <span>Marital Status</span>
+                  <select value={profileForm.maritalStatus || ""} onChange={setField("maritalStatus")} onBlur={() => validateField("maritalStatus")} aria-invalid={Boolean(validationErrors.maritalStatus)} aria-describedby={validationErrors.maritalStatus ? "maritalStatus-error" : undefined}>
+                    <option value="">Select Status</option>
+                    {["Single", "Married", "Divorced", "Widowed"].map((value) => <option key={value}>{value}</option>)}
+                  </select>
+                  {validationErrors.maritalStatus && <small id="maritalStatus-error" className="crm-settings-field-error">{validationErrors.maritalStatus}</small>}
+                </label>
+                {field("education", "Education / Qualification", { maxLength: 160 })}
+                <label className="crm-settings-field crm-settings-wide">
+                  <span>Residential Address</span>
+                  <textarea rows={3} maxLength={500} value={profileForm.address || ""} onChange={setField("address")} onBlur={() => validateField("address")} aria-invalid={Boolean(validationErrors.address)} aria-describedby={validationErrors.address ? "address-error" : undefined} />
+                  {validationErrors.address && <small id="address-error" className="crm-settings-field-error">{validationErrors.address}</small>}
+                </label>
+              </div>
+            </div>
+          </section>
+
+          <section className="crm-settings-section">
+            <h3><Phone size={16} /> 2. Emergency Contact</h3>
+            <div className="crm-settings-section-content crm-settings-fields">
+              {field("emergencyName", "Emergency Contact Name", { maxLength: 120, pattern: "[A-Za-z][A-Za-z .'-]*", placeholder: "e.g. Priya Sharma" })}
+              {field("emergencyRelationship", "Relationship", { maxLength: 80, pattern: "[A-Za-z][A-Za-z .'-]*", placeholder: "e.g. Parent, Spouse, Sibling" })}
+              {indianPhoneField("emergencyPhone", "Emergency Contact Number", "tel")}
+            </div>
+          </section>
+
+          <section className="crm-settings-section">
+            <h3><CreditCard size={16} /> 3. Identity &amp; KYC Details (PAN &amp; Aadhaar)</h3>
+            <div className="crm-settings-section-content crm-settings-fields">
+              {field("panNumber", "PAN Card Number (10 Characters)", { maxLength: 10, inputMode: "text", placeholder: "ABCDE1234F", normalize: (value) => value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 10) })}
+              {field("aadhaarNumber", "Aadhaar Card Number (12 Digits)", { maxLength: 12, inputMode: "numeric", placeholder: "12-digit Aadhaar Number", normalize: (value) => value.replace(/\D/g, "").slice(0, 12) })}
+            </div>
+          </section>
+
+          <section className="crm-settings-section">
+            <h3><Wallet size={16} /> 4. Bank Details</h3>
+            <div className="crm-settings-section-content crm-settings-fields">
+              {field("bankName", "Bank Name", { maxLength: 120 })}
+              {field("accountHolder", "Account Holder Name", { maxLength: 120 })}
+              {field("accountNumber", "Account Number", { maxLength: 18, inputMode: "numeric", normalize: (value) => value.replace(/\D/g, "").slice(0, 18) })}
+              {field("ifscCode", "IFSC Code", { maxLength: 11, placeholder: "ABCD0123456", normalize: (value) => value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 11) })}
+              {field("bankBranch", "Bank Branch", { maxLength: 120 })}
+            </div>
+          </section>
+
+          <section className="crm-settings-section">
+            <h3><Upload size={16} /> 5. Document Attachments &amp; Uploads</h3>
+            <div className="crm-settings-section-content crm-settings-documents">
+              {documentLabels.map(([key, label, Icon]) => {
+                const documentInfo = profileForm.documents?.[key];
+                const uploading = uploadingDocument === key;
+                return <div className={`crm-settings-document${documentInfo?.name ? " uploaded" : ""}`} key={key}>
+                  <div className="crm-settings-document-head">
+                    <strong><span><Icon size={15} /></span>{label}</strong>
+                    <span className={`crm-settings-document-status ${documentInfo?.name ? "ready" : "empty"}`}>
+                      {documentInfo?.name ? <><CheckCircle2 size={12} /> Uploaded</> : "Not uploaded"}
+                    </span>
+                  </div>
+                  <label className={`crm-settings-file-picker${uploading ? " uploading" : ""}`}>
+                    <input type="file" accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png" aria-label={`Upload ${label}`} disabled={uploading} onChange={(event) => handleDocumentUpload(event, key)} />
+                    {uploading ? <LoaderCircle className="crm-settings-file-spinner" size={17} /> : <UploadCloud size={17} />}
+                    <span>{uploading ? "Uploading to ImageKit..." : documentInfo?.name ? "Replace file" : "Choose file"}</span>
+                  </label>
+                  <small className="crm-settings-document-hint">PDF, JPG or PNG - maximum 5 MB</small>
+                  {fileErrors[key] && <small className="crm-settings-field-error">{fileErrors[key]}</small>}
+                  {documentInfo?.name
+                    ? <div className="crm-settings-document-file"><FileText size={17} /><span><b title={documentInfo.name}>{documentInfo.name}</b><small>{formatFileSize(documentInfo.size)}{documentInfo.updatedAt ? ` - Updated ${formatDisplayDate(documentInfo.updatedAt)}` : ""}</small></span><button type="button" title={`Download ${label}`} aria-label={`Download ${label}`} onClick={() => handleDocumentDownload(key, documentInfo)}><Download size={15} /></button></div>
+                    : <span className="crm-settings-document-empty">No file has been added yet</span>}
+                </div>;
+              })}
+            </div>
+          </section>
+          <button className="crm-settings-save" type="submit" disabled={saving || Boolean(uploadingDocument) || loading}>
+            <Check size={15} /> {saving ? "Saving…" : "Save Profile & KYC Changes"}
+          </button>
+        </form>
+
+        <aside className="crm-settings-password">
+          <h3><LockKeyhole size={16} /> Change Password</h3>
+          <div className="crm-settings-password-content">
             <PasswordResetLink userId={currentUser?.id || currentUser?._id} email={currentUser?.email || profileForm.email} />
           </div>
+        </aside>
+      </div>}
+      {photoPreviewOpen && profileForm.photo && <div className="crm-settings-photo-modal" onClick={() => setPhotoPreviewOpen(false)}>
+        <div role="dialog" aria-modal="true" aria-label="Current profile photo" onClick={(event) => event.stopPropagation()}>
+          <button type="button" aria-label="Close photo preview" onClick={() => setPhotoPreviewOpen(false)}><CircleX size={18} /></button>
+          <img src={profileForm.photo} alt="Current profile" />
         </div>
-      </div>
-    </div>
+      </div>}
+    </section>
   );
 }
 
@@ -3100,11 +3643,23 @@ export default function CrmExecutiveDashboard({
   const [activeTab, setActiveTab] = useState(initialTab);
   const [toast, showToast] = useToast();
   const [topMenu, setTopMenu] = useState("");
+  const [darkMode, setDarkMode] = useState(() => {
+    try { return window.localStorage.getItem("crm_dashboard_dark_mode") === "true"; }
+    catch (error) {
+      console.warn("Unable to read the CRM dashboard theme preference.", error);
+      return false;
+    }
+  });
   const [helpdeskMessageAlert, setHelpdeskMessageAlert] = useState(false);
   const topbarMenusRef = useRef(null);
   const contentRef = useRef(null);
 
   useEffect(() => { if (contentRef.current) contentRef.current.scrollTop = 0; }, [activeTab]);
+
+  useEffect(() => {
+    try { window.localStorage.setItem("crm_dashboard_dark_mode", String(darkMode)); }
+    catch (error) { console.warn("Unable to save the CRM dashboard theme preference.", error); }
+  }, [darkMode]);
 
   useEffect(() => {
     let timer;
@@ -3125,6 +3680,7 @@ export default function CrmExecutiveDashboard({
   const [leads, setLeads] = useState([]);
   const [tasks, setTasks] = useState([]);
   const [attendance, setAttendance] = useState([]);
+  const [attendanceCalendar, setAttendanceCalendar] = useState(null);
   const [leaveRequests, setLeaveRequests] = useState([]);
   const [profile, setProfile] = useState(() => ({
     name: currentUser?.name || currentUser?.username || "",
@@ -3134,6 +3690,8 @@ export default function CrmExecutiveDashboard({
     avatarUrl: currentUser?.avatarUrl || currentUser?.imageUrl || "",
   }));
   const [loaded, setLoaded] = useState({ tasks: false, attendance: false, leaves: false, notifications: false });
+  const attendanceMonthsLoaded = useRef(new Set());
+  const attendanceCalendarLoaded = useRef(false);
   const qualifiedLeadsInitialized = useRef(false);
 
   useEffect(() => {
@@ -3141,13 +3699,44 @@ export default function CrmExecutiveDashboard({
     catch { /* Ignore unavailable browser storage. */ }
   }, []);
 
+  const loadAttendanceMonth = useCallback(async (month, { force = false } = {}) => {
+    if (!/^\d{4}-\d{2}$/.test(String(month || ""))) return;
+    const needsRecords = force || !attendanceMonthsLoaded.current.has(month);
+    const needsCalendar = !attendanceCalendarLoaded.current;
+    if (!needsRecords && !needsCalendar) return;
+    const [records, calendar] = await Promise.all([
+      needsRecords ? fetchAttendanceMonth(month) : Promise.resolve(null),
+      needsCalendar ? fetchAttendanceCalendar() : Promise.resolve(null),
+    ]);
+    if (records !== null) {
+      if (!Array.isArray(records)) throw new Error("Attendance returned an invalid response.");
+      attendanceMonthsLoaded.current.add(month);
+      setAttendance((current) => {
+        const outsideMonth = current.filter((record) => String(record.date || record.workDate || "").slice(0, 7) !== month);
+        return [...records, ...outsideMonth];
+      });
+    }
+    if (calendar !== null) {
+      if (!calendar || !Array.isArray(calendar.weeklyHolidays) || !Array.isArray(calendar.holidays)) {
+        throw new Error("Attendance calendar returned an invalid response.");
+      }
+      attendanceCalendarLoaded.current = true;
+      setAttendanceCalendar(calendar);
+    }
+  }, []);
+  const refreshAttendanceMonth = useCallback(
+    (month) => loadAttendanceMonth(month, { force: true }),
+    [loadAttendanceMonth],
+  );
+
   useEffect(() => {
     let active = true;
-    fetchAttendance().then((records) => { if (active && Array.isArray(records)) setAttendance(records); })
+    const month = todayIndiaISO().slice(0, 7);
+    loadAttendanceMonth(month)
       .catch((error) => { if (active) showToast(error.message || "Could not load attendance"); })
       .finally(() => { if (active) setLoaded((current) => ({ ...current, attendance: true })); });
     return () => { active = false; };
-  }, [showToast]);
+  }, [loadAttendanceMonth, showToast]);
 
   useEffect(() => {
     let active = true;
@@ -3169,7 +3758,9 @@ export default function CrmExecutiveDashboard({
       .finally(() => { pending = false; if (active) setLoaded((current) => current.notifications ? current : { ...current, notifications: true }); });
     };
     refresh();
-    const timer = window.setInterval(refresh, 30000);
+    // The backend keeps a mutation-aware notification snapshot. A one-minute
+    // poll is responsive without repeatedly querying Firestore in every tab.
+    const timer = window.setInterval(refresh, 60000);
     document.addEventListener("visibilitychange", refresh);
     return () => { active = false; window.clearInterval(timer); document.removeEventListener("visibilitychange", refresh); };
   }, []);
@@ -3252,9 +3843,10 @@ export default function CrmExecutiveDashboard({
     attendanceLoaded: loaded.attendance, leavesLoaded: loaded.leaves,
     notificationsLoaded: loaded.notifications,
   });
+  useStickySalesTableHeaders(contentRef, !pageLoading && ["leads", "approvedleads", "salesreports"].includes(activeTab), activeTab);
 
   return (
-    <div className="crm-root">
+    <div className={clsx("crm-root", darkMode && "crm-dark-mode")}>
       <div className="crm-shell">
         <Sidebar
           activeTab={activeTab}
@@ -3301,7 +3893,7 @@ export default function CrmExecutiveDashboard({
             </div>
           </div>
 
-          <div ref={contentRef} className={clsx("content", ["servicecalllist", "trainingcalllist"].includes(activeTab) && "call-list-content", ["leads", "approvedleads"].includes(activeTab) && "leads-content", activeTab === "salesreports" && "sales-report-list-content")}>
+          <div ref={contentRef} className={clsx("content", ["servicecalllist", "trainingcalllist"].includes(activeTab) && "call-list-content", ["leads", "approvedleads"].includes(activeTab) && "leads-content", activeTab === "salesreports" && "sales-report-list-content", activeTab === "hrhelpdesk" && "helpdesk-content")}>
             {pageLoading ? <div className="crm-page-loader" role="status" aria-live="polite"><span className="crm-page-spinner" aria-hidden="true" />Loading {title.toLowerCase()}...</div> : <>
             {activeTab === "dashboard" && (
               <DashboardTab
@@ -3359,7 +3951,15 @@ export default function CrmExecutiveDashboard({
               <MarkAttendanceTab attendance={attendance} setAttendance={setAttendance} showToast={showToast} profile={profile} />
             )}
             {activeTab === "attendancereport" && (
-              <AttendanceReportTab attendance={attendance} showToast={showToast} />
+              <AttendanceReportTab
+                attendance={attendance}
+                leaveRequests={leaveRequests}
+                joiningDate={currentUser?.joined}
+                employeeId={currentUser?.id || currentUser?._id}
+                calendar={attendanceCalendar}
+                showToast={showToast}
+                onMonthRequested={refreshAttendanceMonth}
+              />
             )}
             {activeTab === "leaverequest" && (
               <LeaveRequestTab leaveRequests={leaveRequests} setLeaveRequests={setLeaveRequests} showToast={showToast} />

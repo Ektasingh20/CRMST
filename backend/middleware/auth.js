@@ -2,7 +2,10 @@ import jwt from "jsonwebtoken";
 import User from "../models/User.js";
 
 const secret = process.env.JWT_SECRET || "crmst-secret";
-const AUTH_CACHE_TTL_MS = 30 * 1000;
+// Authentication previously reread the same user document every 30 seconds
+// per active browser. This bounded token cache removes that steady read source;
+// account changes can take at most five minutes to reach an existing session.
+const AUTH_CACHE_TTL_MS = 5 * 60 * 1000;
 const authCache = new Map();
 
 export async function authenticate(req, res, next) {

@@ -1,18 +1,36 @@
 import express from "express";
+import multer from "multer";
 import { authenticate } from "../middleware/auth.js";
-import { listUsers, listAssignableUsers, createUser, updateUser, updateMyProfile, deleteUser } from "../controllers/usersController.js";
+import { listUsers, listAssignableUsers, createUser, updateUser, getMyProfile, updateMyProfile, deleteUser } from "../controllers/usersController.js";
 import { changePassword, requestPasswordResetEmail } from "../controllers/authController.js";
 import { isAdmin, isHrUser, canAccessUserDirectory, canCreateEmployeeUsers } from "../utils/roles.js";
 import User from "../models/User.js";
-import { downloadPriorExperienceDocument, uploadPriorExperienceDocument } from "../controllers/priorExperienceDocumentsController.js";
+import {
+  downloadMyProfileDocument,
+  downloadPriorExperienceDocument,
+  uploadMyProfilePhoto,
+  uploadMyProfileDocument,
+  uploadPriorExperienceDocument,
+} from "../controllers/priorExperienceDocumentsController.js";
 
 import { isITDepartment, isTeamOnlyITUser } from "../../frontend/src/itUserRoles.js";
 
 const router = express.Router();
 
+const profileAssetUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024, files: 1 } }).single("file");
+const receiveProfileAsset = (req, res, next) => profileAssetUpload(req, res, (error) => {
+  if (!error) return next();
+  const tooLarge = error.code === "LIMIT_FILE_SIZE";
+  return res.status(tooLarge ? 413 : 400).json({ error: tooLarge ? "Files must be 5 MB or smaller." : "Could not read the selected file." });
+});
+
 router.use(authenticate);
 
+router.get("/me/profile", getMyProfile);
 router.put("/me/profile", updateMyProfile);
+router.post("/me/photo", receiveProfileAsset, uploadMyProfilePhoto);
+router.post("/me/documents/:key", receiveProfileAsset, uploadMyProfileDocument);
+router.get("/me/documents/:key", downloadMyProfileDocument);
 
 router.post("/:id/change-password", changePassword);
 router.post("/:id/password-reset", requestPasswordResetEmail);

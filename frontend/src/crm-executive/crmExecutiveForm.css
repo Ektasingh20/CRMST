@@ -318,17 +318,17 @@
 }
 
 .crm-attendance-page {
-  max-width: 1440px;
+  max-width: 1220px;
   margin: 0 auto;
   padding: 18px 20px;
 }
 
 .crm-attendance-panel {
   overflow: hidden;
-  border-radius: 18px;
-  border-color: rgba(178, 147, 118, 0.22);
+  border-radius: 16px;
+  border-color: rgba(178, 106, 60, 0.2);
   background: #fff;
-  box-shadow: 0 12px 28px rgba(90, 63, 39, 0.07);
+  box-shadow: 0 16px 40px rgba(58, 35, 26, 0.08);
 }
 
 .crm-attendance-success {
@@ -348,6 +348,89 @@
 .crm-attendance-success svg {
   flex: 0 0 auto;
   color: #9a5c35;
+}
+
+.crm-attendance-auto-absent {
+  margin: 20px 22px 0;
+  padding: 13px 15px;
+  border: 1px solid #f0c99d;
+  border-radius: 8px;
+  background: #fff3e7;
+  color: #844322;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.crm-attendance-holiday {
+  margin: 20px 22px 0;
+  padding: 13px 15px;
+  border: 1px solid #ddc1a8;
+  border-radius: 8px;
+  background: #f6e8dc;
+  color: #67351f;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.crm-attendance-policy {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0 22px 20px;
+  overflow: hidden;
+  border: 1px solid #ead8c9;
+  border-radius: 12px;
+  background: #fffaf6;
+}
+
+.crm-attendance-policy-icon {
+  display: grid;
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border-radius: 9px;
+  background: #f1d7c3;
+  color: #6b3e2b;
+}
+
+.crm-attendance-policy-item {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 11px;
+  padding: 14px 16px;
+}
+
+.crm-attendance-policy-item + .crm-attendance-policy-item {
+  border-left: 1px solid #ead8c9;
+}
+
+.crm-attendance-policy-item > div {
+  min-width: 0;
+}
+
+.crm-attendance-policy-item strong,
+.crm-attendance-policy-item span {
+  display: block;
+}
+
+.crm-attendance-policy-item > .crm-attendance-policy-icon {
+  display: grid;
+  place-items: center;
+  line-height: 0;
+}
+
+.crm-attendance-policy-item strong {
+  margin-bottom: 3px;
+  color: #3a231a;
+  font-size: 0.78rem;
+  line-height: 1.25;
+}
+
+.crm-attendance-policy-item > div > span {
+  color: #7b685c;
+  font-size: 0.7rem;
+  line-height: 1.35;
 }
 
 .crm-attendance-form {
@@ -370,6 +453,17 @@
 
 :where(.crm-root) .crm-attendance-field {
   font-size: max(15px, 0.82rem);
+}
+
+.crm-attendance-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.crm-attendance-label svg {
+  flex: 0 0 auto;
+  color: #9a5c35;
 }
 
 .crm-attendance-field input,
@@ -430,6 +524,12 @@
   color: #a44712;
 }
 
+.crm-attendance-status-holiday .crm-attendance-status-trigger {
+  border-color: #ddc1a8;
+  background: #f6e8dc;
+  color: #67351f;
+}
+
 .crm-attendance-status-menu {
   z-index: 2200;
 }
@@ -438,6 +538,7 @@
 .crm-attendance-status-menu button.call-lead-status-option.attendance-absent svg { color: #a44712; }
 
 .crm-attendance-submit {
+  width: 100%;
   min-height: 42px;
   padding: 0 16px;
   border: 0;
@@ -472,17 +573,38 @@
   color: var(--text);
 }
 
+.crm-attendance-action {
+  display: grid;
+  min-width: 0;
+  gap: 7px;
+}
+
 .crm-attendance-clock {
-  padding: 13px 20px;
-  border-top: 1px solid rgba(178, 147, 118, 0.16);
-  background: #fffdfa;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+  min-height: 18px;
   color: var(--text-soft);
-  text-align: center;
-  font-size: 0.82rem;
+  font-size: 0.72rem;
+}
+
+.crm-attendance-live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #b26a3c;
+  box-shadow: 0 0 0 3px rgba(178, 106, 60, 0.12);
+}
+
+.crm-attendance-worked-time {
+  color: #6b3e2b;
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 :where(.crm-root) .crm-attendance-clock {
-  font-size: max(15px, 0.82rem);
+  font-size: max(13px, 0.72rem);
 }
 
 /* Inline "quick-add" bar used above tables (Call List / Leads / Tasks) */
@@ -613,6 +735,15 @@
   .crm-attendance-form {
     grid-template-columns: 1fr 1fr;
   }
+
+  .crm-attendance-policy {
+    grid-template-columns: 1fr;
+  }
+
+  .crm-attendance-policy-item + .crm-attendance-policy-item {
+    border-top: 1px solid #ead8c9;
+    border-left: 0;
+  }
 }
 
 @media (max-width: 480px) {
@@ -625,10 +756,18 @@
     padding: 12px;
   }
 
+  .crm-attendance-policy {
+    margin: 0 16px 16px;
+  }
+
   .crm-attendance-form {
     grid-template-columns: 1fr;
     gap: 13px;
     padding: 16px;
+  }
+
+  .crm-attendance-clock {
+    justify-content: center;
   }
 
 }

@@ -3,17 +3,19 @@ import { getAuth } from "firebase-admin/auth";
 import User from "../models/User.js";
 import { isMongoConnected } from "../config/db.js";
 import { normalizeEmployment } from "../utils/itUserRoles.js";
+import { listProfileDocuments } from "./priorExperienceDocumentsController.js";
+import { isValidAadhaar, isValidBankAccount, isValidBankText, isValidEmail as isValidProfileEmail, isValidIfsc, isValidIndianMobile, isValidPan, isValidPersonName, isValidProfileDob, isValidRelationship } from "../../shared/profileValidation.js";
 
 function mongoUnavailable(res) {
   return res.status(503).json({ error: "Database is unavailable. Please try again later." });
 }
 
 function validatePhone(value) {
-  return /^[6-9]\d{9}$/.test(String(value || "").trim());
+  return isValidIndianMobile(value);
 }
 
 function validateEmail(value) {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || "").trim());
+  return isValidProfileEmail(value);
 }
 
 async function saveWithSyncedAuthEmail(user, email, save) {
@@ -93,6 +95,148 @@ function studentProfileFields(payload = {}) {
   return fields;
 }
 
+function employeeProfileFields(payload = {}, current = {}) {
+  const fields = {};
+  const textLimits = {
+    personalEmail: 254,
+    maritalStatus: 30,
+    education: 160,
+    address: 500,
+    emergencyName: 120,
+    emergencyRelationship: 80,
+    panNumber: 10,
+    aadhaarNumber: 12,
+    bankName: 120,
+    accountHolder: 120,
+    accountNumber: 18,
+    ifscCode: 11,
+    bankBranch: 120,
+  };
+  for (const [field, limit] of Object.entries(textLimits)) {
+    if (payload[field] === undefined) continue;
+    const value = String(payload[field] || "").trim();
+    if (value.length > limit) throw new Error(`${field} must be ${limit} characters or fewer.`);
+    fields[field] = field === "ifscCode" ? value.toUpperCase() : value;
+  }
+  if (payload.name !== undefined) {
+    const name = String(payload.name || "").trim();
+    if (!name) throw new Error("Full name is required.");
+    if (name.length > 120) throw new Error("Full name must be 120 characters or fewer.");
+    if (!isValidPersonName(name)) throw new Error("Full name may contain letters and standard name punctuation only.");
+    fields.name = name;
+  }
+  if (payload.email !== undefined) {
+    const email = String(payload.email || "").trim().toLowerCase();
+    if (!validateEmail(email) || email.length > 254) throw new Error("Enter a valid work email address.");
+    fields.email = email;
+  }
+  if (payload.phone !== undefined) {
+    const phone = String(payload.phone || "").trim();
+    if (phone && !validatePhone(phone)) throw new Error("Mobile number must be a valid 10-digit number.");
+    fields.phone = phone;
+  }
+  if (payload.dob !== undefined) {
+    const dob = String(payload.dob || "").trim();
+    if (dob && !isValidProfileDob(dob)) throw new Error("Date of birth must be between 1900 and today.");
+    fields.dob = dob;
+  }
+  if (payload.gender !== undefined) {
+    const gender = String(payload.gender || "").trim();
+    if (!["", "Female", "Male", "Non-binary", "Prefer not to say"].includes(gender)) throw new Error("Select a valid gender option.");
+    fields.gender = gender;
+  }
+  if (payload.personalEmail !== undefined && fields.personalEmail && !validateEmail(fields.personalEmail)) {
+    throw new Error("Enter a valid personal email address.");
+  }
+  if (payload.emergencyPhone !== undefined) {
+    const phone = String(payload.emergencyPhone || "").trim();
+    if (phone && !validatePhone(phone)) throw new Error("Emergency contact must be a valid 10-digit mobile number.");
+    fields.emergencyPhone = phone;
+  }
+  for (const [field, label] of [["emergencyName", "Emergency contact name"], ["emergencyRelationship", "Relationship"]]) {
+    const valid = field === "emergencyName" ? isValidPersonName : isValidRelationship;
+    if (fields[field] && !valid(fields[field])) {
+      throw new Error(`${label} may contain letters, spaces, apostrophes, periods, and hyphens only.`);
+    }
+  }
+  if (payload.maritalStatus !== undefined && !["", "Single", "Married", "Divorced", "Widowed"].includes(fields.maritalStatus)) {
+    throw new Error("Select a valid marital status.");
+  }
+  if (fields.panNumber !== undefined) {
+    fields.panNumber = fields.panNumber.toUpperCase();
+    if (fields.panNumber && !isValidPan(fields.panNumber)) throw new Error("PAN must use the format ABCDE1234F.");
+  }
+  if (fields.aadhaarNumber !== undefined && fields.aadhaarNumber && !isValidAadhaar(fields.aadhaarNumber)) {
+    throw new Error("Enter a valid 12-digit Aadhaar number.");
+  }
+  if (fields.ifscCode && !isValidIfsc(fields.ifscCode)) throw new Error("IFSC code must use the format ABCD0123456.");
+  if (fields.accountNumber && !isValidBankAccount(fields.accountNumber)) throw new Error("Account number must contain 6 to 18 digits.");
+  if (fields.bankName && !isValidBankText(fields.bankName)) throw new Error("Enter a valid bank name.");
+  if (fields.accountHolder && !isValidPersonName(fields.accountHolder)) throw new Error("Enter the account holder's legal name.");
+  if (fields.bankBranch && !isValidBankText(fields.bankBranch)) throw new Error("Enter a valid bank branch name.");
+  if (fields.education && !isValidBankText(fields.education)) throw new Error("Education may contain letters, numbers, and standard punctuation only.");
+  if (fields.address && /[\u0000-\u001f]/.test(fields.address)) throw new Error("Address contains unsupported characters.");
+
+  const finalValues = { ...current, ...fields };
+  const present = (key) => Boolean(String(finalValues[key] || "").trim());
+  const emergencyKeys = ["emergencyName", "emergencyRelationship", "emergencyPhone"];
+  if (emergencyKeys.some(present) && !emergencyKeys.every(present)) throw new Error("Complete all emergency contact fields or leave all of them blank.");
+  const bankKeys = ["bankName", "accountHolder", "accountNumber", "ifscCode", "bankBranch"];
+  if (bankKeys.some(present) && !bankKeys.every(present)) throw new Error("Complete all bank detail fields or leave all of them blank.");
+  if (payload.imageUrl !== undefined) {
+    const imageUrl = String(payload.imageUrl || "").trim();
+    if (imageUrl && (!/^https:\/\//i.test(imageUrl) || imageUrl.length > 2000)) throw new Error("Profile photo URL must be secure.");
+    fields.imageUrl = imageUrl;
+  }
+  if (payload.imagePublicId !== undefined) {
+    const imagePublicId = String(payload.imagePublicId || "").trim();
+    if (imagePublicId.length > 200) throw new Error("Profile photo ID is too long.");
+    fields.imagePublicId = imagePublicId;
+  }
+  return fields;
+}
+
+export async function getMyProfile(req, res) {
+  if (!isMongoConnected) return mongoUnavailable(res);
+  try {
+    const currentUserId = String(req.user?.id || req.user?._id || "");
+    const user = await User.findOne({ id: currentUserId }) || await User.findOne({ _id: currentUserId });
+    if (!user) return res.status(404).json({ error: "User not found." });
+    const profile = user.toObject();
+    const documents = await listProfileDocuments(user);
+    return res.json({
+      id: profile.id || String(user._id),
+      name: profile.name || "",
+      username: profile.username || "",
+      email: profile.email || "",
+      phone: profile.phone || "",
+      role: profile.role || "",
+      dept: profile.dept || profile.department || "",
+      dob: profile.dob || "",
+      gender: profile.gender || "",
+      personalEmail: profile.personalEmail || "",
+      maritalStatus: profile.maritalStatus || "",
+      education: profile.education || "",
+      address: profile.address || "",
+      emergencyName: profile.emergencyName || "",
+      emergencyRelationship: profile.emergencyRelationship || "",
+      emergencyPhone: profile.emergencyPhone || "",
+      panNumber: profile.panNumber || "",
+      aadhaarNumber: profile.aadhaarNumber || "",
+      bankName: profile.bankName || "",
+      accountHolder: profile.accountHolder || "",
+      accountNumber: profile.accountNumber || "",
+      ifscCode: profile.ifscCode || "",
+      bankBranch: profile.bankBranch || "",
+      imageUrl: profile.imageUrl || "",
+      imagePublicId: profile.imagePublicId || "",
+      documents,
+    });
+  } catch (error) {
+    return res.status(500).json({ error: error.message || "Unable to load account settings." });
+  }
+}
+
 export async function updateMyProfile(req, res) {
   if (!isMongoConnected) return mongoUnavailable(res);
   try {
@@ -114,11 +258,14 @@ export async function updateMyProfile(req, res) {
       }
       Object.assign(changes, fields, { email, personalEmail: email });
     } else {
-      if (payload.name !== undefined) changes.name = String(payload.name).trim();
-      if (payload.email !== undefined) changes.email = String(payload.email).trim().toLowerCase();
-      if (payload.phone !== undefined) changes.phone = String(payload.phone).trim();
-      if (payload.imageUrl !== undefined) changes.imageUrl = String(payload.imageUrl).trim();
-      if (payload.imagePublicId !== undefined) changes.imagePublicId = String(payload.imagePublicId).trim();
+      const fields = employeeProfileFields(payload, typeof user.toObject === "function" ? user.toObject() : user);
+      if (fields.email && fields.email !== String(user.email || "").trim().toLowerCase()) {
+        const existingEmail = await User.findOne({ email: fields.email });
+        if (existingEmail && String(existingEmail._id) !== String(user._id)) {
+          return res.status(409).json({ error: "Email already exists" });
+        }
+      }
+      Object.assign(changes, fields);
       if (payload.notificationPreferences !== undefined) changes.notificationPreferences = payload.notificationPreferences;
     }
     await saveWithSyncedAuthEmail(user, String(changes.email ?? user.email ?? "").trim().toLowerCase(), async () => {

@@ -1,5 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { useEffect, useState } from "react";
 import { CalendarDays, Check, Clock3, Download, Eye, Layers, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -9,8 +8,10 @@ import { callLeadRecordDate, callListStableSortDate } from "./callListConfig.js"
 import RemarkField from "./RemarkField.jsx";
 import CallListDatePicker from "./CallListDatePicker.jsx";
 import WhatsAppModal from "./WhatsAppModal.jsx";
+import SalesTableHead from "./src/crm-executive/SalesTableHead.jsx";
 import { useMessageTemplates } from "./useMessageTemplates.js";
 import { resolveLeadTemplate, templateSelectionPatch } from "./whatsAppMessage.js";
+import SalesDropdown from "./SalesDropdown.jsx";
 import "./callLeads.css";
 
 const leadStatus = callLeadReviewStatus;
@@ -23,110 +24,21 @@ const CALL_LEAD_STATUSES = [
   { value: "Approved", label: "Approved", Icon: Check },
   { value: "Rejected", label: "Rejected", Icon: X },
 ];
+const CALL_LEADS_PAGE_SIZE_OPTIONS = [50, 100, 200, 500, 1000];
 
 function CallLeadStatusSelect({ row, disabled, onChange }) {
   const selectedStatus = leadStatus(row);
   const selected = CALL_LEAD_STATUSES.find((item) => item.value === selectedStatus) || CALL_LEAD_STATUSES[0];
-  const buttonRef = useRef(null);
-  const menuRef = useRef(null);
-  const optionRefs = useRef([]);
-  const [open, setOpen] = useState(false);
-  const [position, setPosition] = useState(null);
-
-  useLayoutEffect(() => {
-    if (!open) return undefined;
-    const updatePosition = () => {
-      const rect = buttonRef.current?.getBoundingClientRect();
-      if (!rect) return;
-      const width = Math.max(132, rect.width);
-      const menuHeight = CALL_LEAD_STATUSES.length * 40 + 8;
-      const below = window.innerHeight - rect.bottom;
-      const top = below >= menuHeight || below >= rect.top ? rect.bottom + 4 : rect.top - menuHeight - 4;
-      setPosition({
-        top: Math.max(4, Math.min(top, window.innerHeight - menuHeight - 4)),
-        left: Math.max(4, Math.min(rect.left, window.innerWidth - width - 4)),
-        width: Math.min(width, window.innerWidth - 8),
-      });
-    };
-    const closeOnOutsideClick = (event) => {
-      if (!buttonRef.current?.contains(event.target) && !menuRef.current?.contains(event.target)) setOpen(false);
-    };
-    updatePosition();
-    window.addEventListener("resize", updatePosition);
-    window.addEventListener("scroll", updatePosition, true);
-    document.addEventListener("pointerdown", closeOnOutsideClick);
-    return () => {
-      window.removeEventListener("resize", updatePosition);
-      window.removeEventListener("scroll", updatePosition, true);
-      document.removeEventListener("pointerdown", closeOnOutsideClick);
-    };
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    const selectedIndex = CALL_LEAD_STATUSES.findIndex((item) => item.value === selected.value);
-    optionRefs.current[selectedIndex]?.focus();
-  }, [open, selected.value]);
-
-  const closeMenu = () => {
-    setOpen(false);
-    buttonRef.current?.focus();
-  };
-  const handleOptionKeyDown = (event, index) => {
-    let nextIndex;
-    if (event.key === "ArrowDown") nextIndex = (index + 1) % CALL_LEAD_STATUSES.length;
-    else if (event.key === "ArrowUp") nextIndex = (index - 1 + CALL_LEAD_STATUSES.length) % CALL_LEAD_STATUSES.length;
-    else if (event.key === "Home") nextIndex = 0;
-    else if (event.key === "End") nextIndex = CALL_LEAD_STATUSES.length - 1;
-    else if (event.key === "Escape") {
-      event.preventDefault();
-      closeMenu();
-      return;
-    } else return;
-    event.preventDefault();
-    optionRefs.current[nextIndex]?.focus();
-  };
-
   return (
-    <div className="call-lead-status-picker">
-      <button
-        ref={buttonRef}
-        type="button"
-        className={`inline-select lead-status-select ${selected.value.toLowerCase() || "choose"}`}
-        aria-label={`Status for ${row.name}`}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        disabled={disabled}
-        onClick={() => setOpen((current) => !current)}
-      >
-        <selected.Icon size={14} aria-hidden="true" />
-        <span>{selected.label}</span>
-        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 7.5 5 5 5-5" /></svg>
-      </button>
-      {open && position && createPortal(
-        <div ref={menuRef} className="call-lead-status-menu" role="listbox" aria-label={`Status options for ${row.name}`} style={{ ...position, position: "fixed" }}>
-          {CALL_LEAD_STATUSES.map(({ value, label, Icon }, index) => (
-            <button
-              key={label}
-              ref={(element) => { optionRefs.current[index] = element; }}
-              type="button"
-              className={`call-lead-status-option ${value ? value.toLowerCase() : "choose"}`}
-              role="option"
-              aria-selected={selected.value === value}
-              onKeyDown={(event) => handleOptionKeyDown(event, index)}
-              onClick={() => {
-                onChange(value);
-                closeMenu();
-              }}
-            >
-              <Icon size={16} aria-hidden="true" />
-              <span>{label}</span>
-            </button>
-          ))}
-        </div>,
-        document.body,
-      )}
-    </div>
+    <SalesDropdown
+      value={selected.value}
+      options={CALL_LEAD_STATUSES.map(({ value, label, Icon }) => ({ value, label, icon: Icon, className: value ? value.toLowerCase() : "choose" }))}
+      onChange={(event) => onChange(event.target.value)}
+      disabled={disabled}
+      className={`inline-select lead-status-select ${selected.value.toLowerCase() || "choose"}`}
+      wrapperClassName="call-lead-status-picker"
+      aria-label={`Status for ${row.name}`}
+    />
   );
 }
 
@@ -151,6 +63,7 @@ export default function CallLeadsPanel({
   const [sortKey, setSortKey] = useState("date");
   const [sortDir, setSortDir] = useState("desc");
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(100);
   const [drafts, setDrafts] = useState({});
   const [error, setError] = useState("");
   const assigneeUsers = users.filter((user) => {
@@ -224,9 +137,9 @@ export default function CallLeadsPanel({
     if (sortKey === key) setSortDir((current) => current === "asc" ? "desc" : "asc");
     else { setSortKey(key); setSortDir("asc"); }
   };
-  const pageSize = 15;
   const totalPages = Math.max(1, Math.ceil(sortedRows.length / pageSize));
   const pageRows = sortedRows.slice((page - 1) * pageSize, page * pageSize);
+  const visibleColumnCount = 9 + Number(showSourceOwner) + Number(showActions) + Number(showAssignee) + Number(showContactActions);
   useEffect(() => { setPage(1); }, [search, status, selectedTypes, program, fromDate, toDate]);
   useEffect(() => { setPage((current) => Math.min(current, totalPages)); }, [totalPages]);
   const exportPdf = () => {
@@ -255,15 +168,15 @@ export default function CallLeadsPanel({
         <input type="search" aria-label="Search qualified leads" placeholder="Search by name or contact number" value={searchInput} onChange={(e) => { setSearchInput(e.target.value); setSearch(e.target.value.trim()); }} />
         {searchInput && <button type="button" className="call-leads-search-clear" aria-label="Clear search" title="Clear search" onClick={() => { setSearchInput(""); setSearch(""); }}><X size={16} aria-hidden="true" /></button>}
       </div>
-      <select aria-label="Filter lead status" value={status} onChange={(e) => setStatus(e.target.value)}><option value="">All lead statuses</option><option value="__choose__">Choose</option>{["Pending", "Approved", "Rejected"].map((item) => <option key={item}>{item}</option>)}</select>
-      <select aria-label="Filter service or training" value={program} onChange={(e) => setProgram(e.target.value)}><option value="All">{selectedCatalog === "training" ? "All Training" : selectedCatalog === "services" ? "All Services" : "All Services / Training"}</option><option value="">Unspecified</option>{programOptions.map((item) => <option key={item}>{item}</option>)}</select>
+      <SalesDropdown aria-label="Filter lead status" value={status} onChange={(e) => setStatus(e.target.value)}><option value="">All lead statuses</option><option value="__choose__">Choose</option>{["Pending", "Approved", "Rejected"].map((item) => <option key={item}>{item}</option>)}</SalesDropdown>
+      <SalesDropdown searchable aria-label="Filter service or training" value={program} onChange={(e) => setProgram(e.target.value)}><option value="All">{selectedCatalog === "training" ? "All Training" : selectedCatalog === "services" ? "All Services" : "All Services / Training"}</option><option value="">Unspecified</option>{programOptions.map((item) => <option key={item}>{item}</option>)}</SalesDropdown>
       <div className="call-leads-date-row call-list-date-row"><span className="call-leads-date-caption call-list-date-caption"><CalendarDays size={15} aria-hidden="true" /> Lead date</span><CallListDatePicker label="From" value={fromDate} onChange={(value) => { setFromDate(value); if (value && toDate && value > toDate) setToDate(""); }} /><CallListDatePicker label="To" value={toDate} min={fromDate} onChange={setToDate} />
       <button type="button" className="ghost-button compact call-leads-reset" onClick={() => { setSearchInput(""); setSearch(""); setStatus(""); setSelectedTypes([]); setProgram("All"); setFromDate(""); setToDate(""); }}>Reset</button>
       </div>
     </form>
     </div>
-    <div className="table-wrap crm-call-leads-table-wrap" tabIndex={0} role="region" aria-label="Call leads table. Scroll horizontally to see all columns."><table className={`table crm-call-leads-table${showContactActions && showActions && !showSourceOwner && !showAssignee ? " call-leads-table-standard" : ""}`}>
-      <thead><tr>
+    <div className="table-wrap crm-call-leads-table-wrap" tabIndex={0} role="region" aria-label="Call leads table. Scroll horizontally to see all columns."><table className={`table crm-call-leads-table${showContactActions && showActions && !showSourceOwner && !showAssignee ? " call-leads-table-standard" : ""}`} style={{ minWidth: `${Math.max(1500, visibleColumnCount * 175)}px` }}>
+      <SalesTableHead><tr>
         <th>S. No.</th>
         <th className="sortable-call-leads-header" title="Sort by date" aria-sort={sortKey === "date" ? (sortDir === "asc" ? "ascending" : "descending") : "none"} onClick={() => toggleSort("date")}>Date {sortKey === "date" ? (sortDir === "asc" ? "↑" : "↓") : ""}</th>
         <th className="sortable-call-leads-header" title="Sort names alphabetically" aria-sort={sortKey === "name" ? (sortDir === "asc" ? "ascending" : "descending") : "none"} onClick={() => toggleSort("name")}>Name {sortKey === "name" ? (sortDir === "asc" ? "↑" : "↓") : ""}</th>
@@ -277,12 +190,12 @@ export default function CallLeadsPanel({
         {showSourceOwner && <th>CRM Executive</th>}
         {showActions && <th>Action</th>}
         {showAssignee && <th>Assigned To</th>}
-      </tr></thead>
-      <tbody>{!filtered.length && <tr><td colSpan={9 + Number(showSourceOwner) + Number(showActions) + Number(showAssignee) + Number(showContactActions)}>No qualifying call leads assigned to you.</td></tr>}{pageRows.map((row, index) => {
+      </tr></SalesTableHead>
+      <tbody>{!filtered.length && <tr><td colSpan={visibleColumnCount}>No qualifying call leads assigned to you.</td></tr>}{pageRows.map((row, index) => {
         const key = `${row.listType}:${row.id}`;
-        const locked = lockCreatedLead && Boolean(row.leadCreated || row.callLeadStatus === "Approved");
-        const leadExists = Boolean(row.leadCreated);
         const hasSavedLeadDraft = Boolean(row.leadDraft);
+        const locked = lockCreatedLead && Boolean(hasSavedLeadDraft || row.leadCreated || row.callLeadStatus === "Approved");
+        const leadExists = Boolean(row.leadCreated);
         const hasValidAssignee = assigneeUsers.some((user) => String(user.id || user._id) === String(row.callLeadAssignedTo || ""));
         const assignedReadOnly = highlightAssigned && hasValidAssignee;
         const originalOwnerId = String(row.assignedTo || "");
@@ -305,33 +218,43 @@ export default function CallLeadsPanel({
           <td>{rowDate(row) ? new Date(`${rowDate(row)}T00:00:00`).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "-"}</td>
           <td><div className="call-leads-name"><strong title={row.name}>{row.name}</strong></div></td>
           <td>{row.contact || row.phone || "-"}</td>
-          {showContactActions && <td><div className="row-actions"><button type="button" className="row-icon-btn call" title={locked || assignedReadOnly ? "Lead locked" : "Call now"} aria-label={locked || assignedReadOnly ? `Calling locked for ${row.name}` : `Call ${row.name}`} disabled={locked || assignedReadOnly} onClick={() => { void save(row, { callClicked: true, activityRecorded: true }); window.location.href = `tel:${row.contact || row.phone || ""}`; }}><ContactPhoneIcon /></button><button type="button" className="row-icon-btn whatsapp" title={locked || assignedReadOnly ? "Lead locked" : "Open WhatsApp"} aria-label={locked || assignedReadOnly ? `WhatsApp locked for ${row.name}` : `Open WhatsApp for ${row.name}`} disabled={locked || assignedReadOnly} onClick={() => setWhatsAppLead(row)}><ContactWhatsappIcon /></button></div></td>}
+          {showContactActions && <td><div className="row-actions"><button type="button" className="row-icon-btn call" title={locked || assignedReadOnly ? "Lead locked" : "Call now"} aria-label={locked || assignedReadOnly ? `Calling locked for ${row.name}` : `Call ${row.name}`} disabled={locked || assignedReadOnly} onClick={() => { void save(row, { callClicked: true, activityRecorded: true }); window.location.href = `tel:${row.contact || row.phone || ""}`; }}><ContactPhoneIcon /></button><button type="button" className="row-icon-btn whatsapp" title={locked || assignedReadOnly ? "Lead locked" : "Open WhatsApp"} aria-label={locked || assignedReadOnly ? `WhatsApp locked for ${row.name}` : `Open WhatsApp for ${row.name}`} disabled={locked || assignedReadOnly} onClick={() => { void save(row, { whatsappClicked: true, activityRecorded: true }); setWhatsAppLead(row); }}><ContactWhatsappIcon /></button></div></td>}
           <td><span className={`call-lead-call-status call-list-status-${callStatusClass}`}>{normalizedCallStatus === "Completed" ? <Check size={15} aria-hidden="true" /> : normalizedCallStatus === "Follow Up" ? <RefreshCw size={15} aria-hidden="true" /> : normalizedCallStatus ? <Clock3 size={15} aria-hidden="true" /> : null}{normalizedCallStatus || "Choose"}</span></td>
           <td>{row.interestStatus || "-"}</td>
-          <td title={selectedProgram}>{canEditCallData ? <select className="inline-select call-lead-program-select" aria-label="Service or training" disabled={locked || assignedReadOnly || templatesLoading} value={selectedTemplate?.id || (selectedProgram ? `legacy:${selectedProgram}` : "")} onChange={(e) => save(row, templateSelectionPatch(rowType, rowTemplates.find((template) => template.id === e.target.value)))}>
+          <td title={selectedProgram}>{canEditCallData ? <SalesDropdown searchable className="inline-select call-lead-program-select" aria-label="Service or training" disabled={locked || assignedReadOnly || templatesLoading} value={selectedTemplate?.id || (selectedProgram ? `legacy:${selectedProgram}` : "")} onChange={(e) => save(row, templateSelectionPatch(rowType, rowTemplates.find((template) => template.id === e.target.value)))}>
             <option value="">{row.listType === "training" ? "Select Training" : "Select Service"}</option>
             {selectedProgram && !selectedTemplate && <option value={`legacy:${selectedProgram}`}>{selectedProgram} (previous selection)</option>}
             {rowTemplates.map((template) => <option key={template.id} value={template.id}>{template.title}</option>)}
-          </select> : (selectedProgram || "-")}</td>
+          </SalesDropdown> : (selectedProgram || "-")}</td>
           <td><RemarkField largeText={largeText} value={drafts[key] ?? row.remark ?? ""} readOnly={!canEditCallData || locked || assignedReadOnly} label={`Remark for ${row.name}`} onChange={(value) => setDrafts((current) => ({ ...current, [key]: value }))} onCommit={async (value) => { await save(row, { remark: value }); setDrafts((current) => { const next = { ...current }; delete next[key]; return next; }); }} /></td>
           <td>{canEditCallData ? <CallLeadStatusSelect row={row} disabled={locked || assignedReadOnly} onChange={(value) => save(row, { callLeadStatus: value, callLeadStatusSelected: true })} /> : leadStatus(row) || "Choose"}</td>
           {showSourceOwner && <td><strong>{sourceOwnerName(row)}</strong></td>}
           {showActions && <td><div className="row-actions"><button type="button" className="row-icon-btn call-lead-add-button" title={hasSavedLeadDraft ? "View saved lead form" : leadExists || locked ? "Lead approved" : assignedReadOnly ? "Lead assigned and locked" : "Add Lead"} aria-label={hasSavedLeadDraft ? `View saved lead form for ${row.name}` : leadExists || locked ? `Lead approved for ${row.name}` : assignedReadOnly ? `Assigned lead locked for ${row.name}` : `Add lead for ${row.name}`} disabled={!hasSavedLeadDraft && (leadExists || locked || assignedReadOnly)} onClick={() => hasSavedLeadDraft ? (onView ? onView(row) : setViewingLeadDraft(row)) : onAdd?.(row)}>{hasSavedLeadDraft ? <Eye size={18} aria-hidden="true" /> : <svg className="call-lead-form-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 3h9l5 5v13H5a2 2 0 0 1 2-2V5a2 2 0 0 1-2-2Z" /><path d="M14 3v6h6" /><path d="m9 17 7.5-7.5a2.1 2.1 0 0 1 3 3L12 20l-4 1 1-4Z" /><path d="M7 8h4M7 12h4" /></svg>}</button>{canDelete && <button type="button" className="row-icon-btn delete" title={locked || assignedReadOnly ? "Lead locked" : "Delete"} aria-label={`Delete ${row.name}`} disabled={locked || assignedReadOnly} onClick={() => remove(row)}><Trash2 size={15} /></button>}</div></td>}
-          {showAssignee && <td><select className="inline-select lead-assignee-select" aria-label={`Assigned to for ${row.name}`} disabled={locked || assignedReadOnly} value={row.callLeadAssignedTo || ""} onChange={(e) => {
+          {showAssignee && <td><SalesDropdown searchable className="inline-select lead-assignee-select" aria-label={`Assigned to for ${row.name}`} disabled={locked || assignedReadOnly} value={row.callLeadAssignedTo || ""} onChange={(e) => {
             const returningToOriginalOwner = allowReturnToOwner && e.target.value === returnValue;
             // Returning a delegated lead is an ownership change. Persist both fields
             // together so the original CRM executive receives it after a refresh.
             save(row, returningToOriginalOwner
               ? { callLeadAssignedTo: "", assignedTo: originalOwnerId, assignedToName: originalOwnerName }
               : { callLeadAssignedTo: e.target.value });
-          }}><option value="">Select Admin / Operations</option>{allowReturnToOwner && returnValue && <option value={returnValue}>Send back to {originalOwnerName}</option>}{row.callLeadAssignedTo && !assigneeUsers.some((user) => String(user.id || user._id) === String(row.callLeadAssignedTo)) && <option value={row.callLeadAssignedTo}>{row.callLeadAssignedTo}</option>}{assigneeUsers.map((user) => <option key={user.id || user._id} value={user.id || user._id}>{user.name || user.username}</option>)}</select></td>}
+          }}><option value="">Select Admin / Operations</option>{allowReturnToOwner && returnValue && <option value={returnValue}>Send back to {originalOwnerName}</option>}{row.callLeadAssignedTo && !assigneeUsers.some((user) => String(user.id || user._id) === String(row.callLeadAssignedTo)) && <option value={row.callLeadAssignedTo}>{row.callLeadAssignedTo}</option>}{assigneeUsers.map((user) => <option key={user.id || user._id} value={user.id || user._id}>{user.name || user.username}</option>)}</SalesDropdown></td>}
         </tr>;
       })}</tbody>
     </table></div>
-    <div className="call-leads-pagination"><span>Showing {filtered.length ? (page - 1) * pageSize + 1 : 0}-{Math.min(page * pageSize, filtered.length)} of {filtered.length}</span><div><button type="button" disabled={page === 1} onClick={() => setPage((current) => current - 1)}>Previous</button><span>Page {page} of {totalPages}</span><button type="button" disabled={page === totalPages} onClick={() => setPage((current) => current + 1)}>Next</button></div></div>
+    <div className="call-leads-pagination">
+      <div className="call-leads-pagination-summary">
+        <span>Showing {filtered.length ? (page - 1) * pageSize + 1 : 0}-{Math.min(page * pageSize, filtered.length)} of {filtered.length}</span>
+        <label className="call-leads-page-size">Rows per page
+          <SalesDropdown aria-label="Rows per page" value={pageSize} onChange={(event) => { setPageSize(Number(event.target.value)); setPage(1); }}>
+            {CALL_LEADS_PAGE_SIZE_OPTIONS.map((size) => <option key={size} value={size}>{size}</option>)}
+          </SalesDropdown>
+        </label>
+      </div>
+      <div><button type="button" disabled={page === 1} onClick={() => setPage((current) => current - 1)}>Previous</button><span>Page {page} of {totalPages}</span><button type="button" disabled={page === totalPages} onClick={() => setPage((current) => current + 1)}>Next</button></div>
+    </div>
     {error && <p className="call-leads-error" role="alert">{error}</p>}
     {templatesError && <p className="call-leads-error" role="alert">Could not load message templates: {templatesError}</p>}
-    {whatsAppLead && <WhatsAppModal lead={whatsAppLead} leadType={whatsAppLead.listType === "training" ? "training" : "service"} currentUser={currentUser} onClose={() => setWhatsAppLead(null)} onSelectTemplate={(template) => save(whatsAppLead, templateSelectionPatch(whatsAppLead.listType === "training" ? "training" : "service", template))} onSent={() => save(whatsAppLead, { whatsappClicked: true, activityRecorded: true })} />}
+    {whatsAppLead && <WhatsAppModal lead={whatsAppLead} leadType={whatsAppLead.listType === "training" ? "training" : "service"} currentUser={currentUser} onClose={() => setWhatsAppLead(null)} onSelectTemplate={(template) => save(whatsAppLead, templateSelectionPatch(whatsAppLead.listType === "training" ? "training" : "service", template))} />}
     {viewingLeadDraft && <div className="modal-surface" role="dialog" aria-modal="true" aria-labelledby="call-lead-draft-title">
       <div className="modal-backdrop" onClick={() => setViewingLeadDraft(null)} />
       <section className="modal-shell wide call-lead-draft-view">

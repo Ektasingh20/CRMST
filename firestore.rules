@@ -6,7 +6,7 @@ service cloud.firestore {
     }
 
     function isAdminUser() {
-      return signedIn() && request.auth.token.role == 'admin';
+      return signedIn() && request.auth.token.role in ['admin', 'Admin', 'Administrator', 'Super Admin'];
     }
 
     function isStudentUser() {
@@ -50,6 +50,13 @@ service cloud.firestore {
 
         allow delete: if isAdminUser();
       }
+
+      match /notifications/{notificationId} {
+        allow read: if signedIn() && (
+          isAdminUser() || userOwnsStudentDoc(studentId)
+        );
+        allow create, update, delete: if false;
+      }
     }
 
     match /{path=**}/enrollmentRequests/{requestId} {
@@ -69,8 +76,30 @@ service cloud.firestore {
     match /users/{userId} {
       allow read: if signedIn();
       allow create, update, delete: if isAdminUser();
+
+      match /members/{memberId} {
+        allow read: if signedIn();
+        allow create, update, delete: if isAdminUser();
+
+        match /notifications/{notificationId} {
+          allow read: if signedIn() && (
+            isAdminUser() || request.auth.uid == memberId
+              || resource.data.recipientId == request.auth.uid
+          );
+          allow create, update, delete: if false;
+        }
+
+        match /profileDocuments/{documentKey} {
+          allow read: if signedIn() && (
+            isAdminUser() || request.auth.uid == memberId
+          );
+          allow create, update, delete: if false;
+        }
+      }
     }
 
+    // Temporary read compatibility for notifications created before the
+    // per-recipient hierarchy migration. New backend writes never use it.
     match /notifications/{notificationId} {
       allow read: if signedIn() && (isAdminUser() || resource.data.recipientId == request.auth.uid);
       allow create, update, delete: if false;
@@ -79,6 +108,28 @@ service cloud.firestore {
     match /whatsappMessages/{templateId} {
       allow read: if signedIn();
       allow create, update, delete: if isAdminUser();
+    }
+
+    // Attendance mutations are performed only by the authenticated backend.
+    // Firebase Admin bypasses these rules, so API handlers enforce employee
+    // ownership and role checks before every operation.
+    match /attendance/{employeeId} {
+      allow read: if signedIn() && (
+        isAdminUser() || resource.data.employeeUid == request.auth.uid
+      );
+      allow create, update, delete: if false;
+
+      match /months/{month}/attendanceDays/{workDate} {
+        allow read: if signedIn() && (
+          isAdminUser() || resource.data.employeeUid == request.auth.uid
+        );
+        allow create, update, delete: if false;
+      }
+    }
+
+    // Call lists are served by the authenticated API, which validates ownership.
+    match /listData/{document=**} {
+      allow read, write: if false;
     }
   }
 }

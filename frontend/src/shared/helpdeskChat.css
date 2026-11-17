@@ -108,8 +108,8 @@
 }
 
 .crm-root .eh-chat-app {
-  height: min(820px, calc(100vh - 60px));
-  min-height: 520px;
+  height: min(1100px, calc(100vh - 20px));
+  min-height: 800px;
   border-color: #e8ddd2;
   border-radius: 12px;
   background: #fff;
@@ -279,20 +279,32 @@
 }
 
 .crm-root .eh-message-composer {
-  grid-template-columns: minmax(0, 1fr) 40px;
-  gap: 8px;
-  padding: 10px 12px;
-  border-color: #eee5dc;
+  grid-template-columns: minmax(0, 1fr) 58px;
+  align-items: center;
+  gap: 10px;
+  padding: 13px 16px 11px;
+  border-color: #eadfd5;
+  background: #fffdfb;
+  box-shadow: 0 -4px 14px rgba(72, 46, 28, .035);
 }
 
 .crm-root .eh-message-composer textarea,
 .crm-root .eh-compose-new input,
 .crm-root .eh-compose-new textarea {
-  padding: 9px 11px;
+  padding: 12px 14px;
   border-color: #e8ddd2;
-  border-radius: 9px;
+  border-radius: 11px;
   background: #fff;
   font-size: 14px;
+}
+
+.crm-root .eh-message-composer textarea {
+  box-sizing: border-box;
+  height: 58px;
+  min-height: 58px;
+  max-height: 58px;
+  line-height: 1.45;
+  resize: none;
 }
 
 .crm-root .eh-message-composer textarea:focus,
@@ -306,9 +318,34 @@
 
 .crm-root .eh-message-composer > button,
 .crm-root .eh-compose-new form > button {
-  min-height: 40px;
-  border-radius: 9px;
+  min-height: 42px;
+  border-radius: 10px;
   background: #895832;
+}
+
+.crm-root .eh-message-composer > button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+  width: 58px;
+  min-width: 58px;
+  min-height: 58px;
+  height: 58px;
+  padding: 0;
+  overflow: hidden;
+  border-radius: 50%;
+  background: #2d2722;
+  color: #fff;
+  box-shadow: 0 7px 16px rgba(45, 39, 34, .2);
+  transition: transform .16s ease, background-color .16s ease, box-shadow .16s ease;
+}
+
+.crm-root .eh-message-composer > button:disabled {
+  border: 1px solid #dfd1c5;
+  background: #e8ddd4;
+  color: #9b8b7e;
+  box-shadow: none;
 }
 
 .crm-root .eh-message-composer > button:hover:not(:disabled),
@@ -316,9 +353,46 @@
   background: #704522;
 }
 
+.crm-root .eh-message-composer > button:hover:not(:disabled) {
+  transform: translateY(-2px);
+  background: #1f1b18;
+  box-shadow: 0 10px 20px rgba(45, 39, 34, .25);
+}
+
+.crm-root .eh-message-composer > button:active:not(:disabled) {
+  transform: translateY(0) scale(.95);
+}
+
+.crm-root .eh-message-composer > button.is-sending {
+  border-color: transparent;
+  background: #895832;
+  color: #fff;
+}
+
+.crm-root .eh-message-composer > button.is-sending .eh-send-plane {
+  animation: eh-send-plane-flight .72s cubic-bezier(.45, 0, .2, 1);
+}
+
+@keyframes eh-send-plane-flight {
+  0% { opacity: 1; transform: translate(0, 0) rotate(0deg) scale(1); }
+  42% { opacity: 0; transform: translate(19px, -19px) rotate(-9deg) scale(.72); }
+  48% { opacity: 0; transform: translate(-16px, 16px) rotate(-9deg) scale(.72); }
+  100% { opacity: 1; transform: translate(0, 0) rotate(0deg) scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .crm-root .eh-message-composer > button,
+  .crm-root .eh-message-composer > button.is-sending .eh-send-plane {
+    animation: none;
+    transition: none;
+  }
+}
+
 .crm-root .eh-message-composer > small {
+  margin: -2px 0 0 2px;
   color: #776b60;
   font-size: 12px;
+  line-height: 1.35;
 }
 
 .crm-root .eh-compose-new h3,
@@ -357,5 +431,15 @@
   .crm-root .eh-chat-app {
     height: auto;
     min-height: 650px;
+  }
+
+  .crm-root .eh-message-composer {
+    grid-template-columns: minmax(0, 1fr) 58px;
+    padding-inline: 10px;
+  }
+
+  .crm-root .eh-message-composer > button {
+    width: 58px;
+    min-width: 58px;
   }
 }
