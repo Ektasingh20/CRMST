@@ -16,3 +16,17 @@ package.json
 
 # Local backups before project cleanup
 /backups/projects/  
+# Debug logs
+firebase-debug.log
+
+# Generated attendance data
+**/.attendance-*-manifests/
+
+# Migration backups
+**/.notification-migration-backups/
+**/.hr-helpdesk-migration-manifests/
+
+# Environment secrets
+.env
+.env.*
+!.env.example

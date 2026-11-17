@@ -1,0 +1,30 @@
+{
+  "watch": [
+    "backend/index.js",
+    "backend/.env",
+    "backend/config",
+    "backend/controllers",
+    "backend/middleware",
+    "backend/models",
+    "backend/routes",
+    "backend/services",
+    "package.json",
+    "nodemon.json"
+  ],
+  "ext": "js,mjs,cjs,json,env",
+  "ignore": [
+    "frontend/**",
+    "frontend/dist/**",
+    "frontend/node_modules/**",
+    "backend/node_modules/**",
+    "backend/dist/**",
+    "backend/build/**",
+    "backend/.attendance-test-manifests/**",
+    "backend/.attendance-demo-manifests/**",
+    "**/*.pdf",
+    "**/*.log",
+    "**/*.tmp",
+    "**/*.temp",
+    "**/~*"
+  ]
+}
