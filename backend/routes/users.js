@@ -11,6 +11,8 @@ import {
   uploadMyProfilePhoto,
   uploadMyProfileDocument,
   uploadPriorExperienceDocument,
+  listEmployeeProfileDocuments,
+  downloadEmployeeProfileDocument,
 } from "../controllers/priorExperienceDocumentsController.js";
 
 import { isITDepartment, isTeamOnlyITUser } from "../../frontend/src/itUserRoles.js";
@@ -36,6 +38,8 @@ router.post("/:id/change-password", changePassword);
 router.post("/:id/password-reset", requestPasswordResetEmail);
 router.post("/:id/prior-experience-documents/:key", uploadPriorExperienceDocument);
 router.get("/:id/prior-experience-documents/:key", downloadPriorExperienceDocument);
+router.get("/:id/profile-documents", listEmployeeProfileDocuments);
+router.get("/:id/profile-documents/:key", downloadEmployeeProfileDocument);
 router.get("/assignees", listAssignableUsers);
 router.get("/it-team", async (req, res) => {
   if (!isAdmin(req.user) && !isITDepartment(req.user)) return res.status(403).json({ error: "Admin or IT access required." });

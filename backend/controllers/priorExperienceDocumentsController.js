@@ -202,6 +202,57 @@ export async function downloadMyProfileDocument(req, res) {
   }
 }
 
+export async function listEmployeeProfileDocuments(req, res) {
+  try {
+    const employee = await getAuthorizedEmployee(req, res);
+    if (!employee) return;
+    const documents = await listProfileDocuments(employee);
+    const visible = Object.fromEntries(Object.entries(documents)
+      .filter(([key]) => PROFILE_DOCUMENT_KEYS.has(key))
+      .map(([key, document]) => [key, Object.fromEntries(
+        ["name", "type", "size", "updatedAt"].filter((field) => document[field] !== undefined).map((field) => [field, document[field]]),
+      )]));
+    return res.json(visible);
+  } catch (error) {
+    return res.status(Number(error.status) || 500).json({ error: error.message || "Unable to load employee documents." });
+  }
+}
+
+export async function downloadEmployeeProfileDocument(req, res) {
+  try {
+    const employee = await getAuthorizedEmployee(req, res);
+    if (!employee) return;
+    const key = String(req.params.key || "");
+    if (!PROFILE_DOCUMENT_KEYS.has(key)) return res.status(400).json({ error: "Unsupported account document." });
+    const employeeId = String(employee.id || employee._id);
+    const document = await nestedProfileDocument(employee, key) || employee.documents?.[key];
+    if (document?.url) {
+      const response = await fetch(document.url, { signal: AbortSignal.timeout(30000) });
+      if (!response.ok) return res.status(502).json({ error: "Unable to read the employee document." });
+      const body = Buffer.from(await response.arrayBuffer());
+      res.set("Cache-Control", "private, no-store");
+      res.type(document.type || response.headers.get("content-type") || "application/octet-stream");
+      res.attachment(safeName(document.name));
+      return res.send(body);
+    }
+    if (!document?.objectPath || !document.objectPath.startsWith(`user-profile-documents/${employeeId}/${key}/`)) {
+      return res.status(404).json({ error: "Employee document not found." });
+    }
+    res.set("Cache-Control", "private, no-store");
+    res.type(document.type || "application/octet-stream");
+    res.attachment(safeName(document.name));
+    const stream = storageBucket().file(document.objectPath).createReadStream();
+    stream.on("error", (error) => {
+      if (error.code === 404 && !res.headersSent) return res.status(404).json({ error: "Employee document not found." });
+      if (!res.headersSent) res.status(502).json({ error: "Unable to read employee document." });
+      else res.destroy(error);
+    });
+    stream.pipe(res);
+  } catch (error) {
+    return res.status(Number(error.status) || 500).json({ error: error.message || "Unable to download employee document." });
+  }
+}
+
 export async function uploadMyProfilePhoto(req, res) {
   try {
     const user = await getCurrentUser(req, res);

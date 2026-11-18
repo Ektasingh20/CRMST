@@ -4,15 +4,19 @@ import "./hrDashboardForm.css";
 import HrPeopleModules from "./HrPeopleModules";
 import HrWorkflowModules from "./HrWorkflowModules";
 import HrLeads from "./HrLeads";
+import MarkAttendance from "./HrMarkAttendance.jsx";
+import { formatAttendanceTime as formatTime, formatAttendanceDuration } from "./attendanceFormatting.js";
+import { fetchAdminAttendanceMonth } from "../../backendApi.js";
+import { buildAttendanceMonthRows, attendanceDateInIndia, calculateAttendancePayroll } from "../../../shared/attendanceClassification.js";
 import { usePageLoading, getPageTitle } from "./hrPageLoading";
 import { compressImageFile } from "../../imageUpload.js";
-import { createUser, fetchHrDashboard, fetchLeaves as fetchLeavesApi, fetchTasks as fetchTasksApi, createTask as createTaskApi, updateTask as updateTaskApi, deleteTask as deleteTaskApi, fetchUsers, updateUser, updateMyProfile, deleteUser, uploadPriorExperienceDocument, downloadPriorExperienceDocument } from "../../backendApi.js";
+import { createUser, fetchHrDashboard, fetchLeaves as fetchLeavesApi, fetchTasks as fetchTasksApi, createTask as createTaskApi, updateTask as updateTaskApi, deleteTask as deleteTaskApi, fetchUsers, updateUser, updateMyProfile, deleteUser, uploadPriorExperienceDocument, downloadPriorExperienceDocument, fetchEmployeeProfileDocuments, downloadEmployeeProfileDocument, fetchAppNotifications, markAppNotificationRead } from "../../backendApi.js";
 import { uploadImage } from "../../backendClient.js";
 import PasswordResetLink from "../PasswordResetLink.jsx";
 import { HelpdeskIncomingToast } from "../shared/HelpdeskChat.jsx";
 import {
   LayoutGrid, Users, CalendarCheck, ListChecks, Upload, Settings, LogOut, ChevronRight, ChevronDown,
-  Search, Bell, Calendar, UserPlus, Plus, CalendarClock, Check, UserX, CreditCard, FileText, Wallet,
+  Search, Calendar, UserPlus, Plus, CalendarClock, Check, UserX, CreditCard, FileText, Wallet,
   ClipboardList, UserCog, ClipboardCheck, Briefcase, Menu, X, BellRing, UserCheck, Printer, Eye, EyeOff, Pencil, Trash2, UserCircle, Download,
   Filter, RotateCcw, FileSpreadsheet, Phone, Mail, MousePointer2, LockKeyhole, CalendarDays, MessageCircle,
 } from "lucide-react";
@@ -140,7 +144,47 @@ const salaryAttendanceSummary = (db, employee, reportMonth, lookup) => {
   return { daysInMonth, employedDays, present, absent, leaveDays, paidLeaveDays, unpaidLeaveDays, holidayDays, deductedDays, payableDays: Math.max(0, daysInMonth - deductedDays), throughDate: periodEnd };
 };
 const nm = (d, id) => d.emps.find((e) => String(e.id) === String(id) || String(e.backendId || "") === String(id))?.name || "Unknown";
+const resignationRecordFor = (db, employee) => (db.hrResignations || [])
+  .filter((record) => String(record.employeeId) === String(employee.id)
+    || (employee.backendId && String(record.employeeId) === String(employee.backendId)))
+  .slice()
+  .sort((a, b) => (Date.parse(b.createdAt || "") || 0) - (Date.parse(a.createdAt || "") || 0))[0] || null;
+const profileWithResignation = (db, employee) => {
+  const resignationRecord = resignationRecordFor(db, employee);
+  return {
+    ...employee,
+    resignationRecord,
+    resignationDate: employee.resignationDate || resignationRecord?.requestedDate || resignationRecord?.lastWorkingDay || "",
+    noticePeriod: employee.noticePeriod || resignationRecord?.noticePeriod || "",
+  };
+};
 const taskEmployeeId = (employee) => String(employee?.backendId || employee?.id || "");
+const mergeBackendEmployees = (current, users) => {
+  if (!Array.isArray(users)) return current;
+  const emps = [...current.emps];
+  for (const item of users) {
+    if (String(item.role || "").toLowerCase().includes("admin")
+      || String(item.role || "").toLowerCase() === "student"
+      || String(item.dept || item.department || "").toLowerCase() === "student") continue;
+    const backendId = String(item.id || item._id || "");
+    if (!backendId) continue;
+    const index = emps.findIndex((employee) => String(employee.backendId || "") === backendId
+      || (item.email && String(employee.email || "").trim().toLowerCase() === String(item.email).trim().toLowerCase()));
+    const employee = {
+      ...(index >= 0 ? emps[index] : {}), ...item,
+      id: index >= 0 ? emps[index].id : backendId,
+      backendId,
+      name: item.name || item.username || "Employee",
+      dept: item.dept || item.department || "",
+      desig: item.position || item.role || "",
+      photo: item.imageUrl || item.photo || "",
+      status: String(item.status || "Active").toLowerCase() === "inactive" || item.exEmployee === "Yes" ? "ex" : "active",
+    };
+    if (index >= 0) emps[index] = employee;
+    else emps.push(employee);
+  }
+  return { ...current, emps };
+};
 const findTaskEmployee = (employees, id) => employees.find((employee) => [employee.id, employee.backendId].filter(Boolean).some((value) => String(value) === String(id)));
 const taskMatchesEmployee = (employees, selectedId, assignedId) => {
   if (!selectedId) return true;
@@ -151,7 +195,7 @@ const KEY = "hr_dashboard_v2";
 
 const emptyDashboard = (saved = {}) => ({
   emps: [], att: {}, leaves: [], tasks: [], paid: {}, log: [],
-  hrDocuments: [], hrResignations: [], hrTickets: [], hrNotifications: [], hrAppraisals: [],
+  hrDocuments: [], hrResignations: [], hrTickets: [], hrNotifications: [], hrNotificationReads: [], hrAppraisals: [],
   me: { name: "HR", role: "Administrator", branch: "", crm: "", company: "System Technologies", ...(saved.me || {}) },
 });
 const load = () => {
@@ -711,34 +755,110 @@ function EmployeeProfileEditor({ employee, onBack, onSave, onDocumentUploaded, o
 function EmployeeDetailsModal({ employee, onClose }) {
   const [preview, setPreview] = useState(null);
   const [documentError, setDocumentError] = useState("");
+  const [officialDocuments, setOfficialDocuments] = useState(employee.documents || {});
+  const [documentsLoading, setDocumentsLoading] = useState(true);
+  const previewRef = useRef(null);
   const details = employeeProfile(employee);
-  const downloadProfile = () => {
+  const resignation = details.resignationRecord;
+  useEffect(() => {
+    let active = true;
+    fetchEmployeeProfileDocuments(details.backendId || details.id).then((documents) => {
+      if (active) setOfficialDocuments({ ...(details.documents || {}), ...(documents || {}) });
+    }).catch((error) => {
+      if (active) setDocumentError(error.message || "Unable to load employee documents.");
+    }).finally(() => { if (active) setDocumentsLoading(false); });
+    return () => { active = false; };
+  }, [details.backendId, details.id]);
+  const downloadProfile = async () => {
     const pdf = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
     const margin = 36;
+    const contentWidth = pdf.internal.pageSize.getWidth() - margin * 2;
+    let photoData = null;
+    if (details.photo) {
+      try {
+        const image = new Image();
+        if (!details.photo.startsWith("data:")) image.crossOrigin = "anonymous";
+        image.src = details.photo;
+        await image.decode();
+        const canvas = document.createElement("canvas");
+        canvas.width = image.naturalWidth;
+        canvas.height = image.naturalHeight;
+        canvas.getContext("2d").drawImage(image, 0, 0);
+        photoData = canvas.toDataURL("image/jpeg", 0.9);
+      } catch (error) {
+        console.warn("Unable to embed the employee photo in the profile PDF.", error.message || error);
+      }
+    }
     pdf.setFontSize(18);
     pdf.text("Employee Profile", margin, 42);
     pdf.setFontSize(10);
     pdf.text(`${details.name || "Employee"} · ${details.id || ""} · ${details.dept || ""}`, margin, 60);
     let y = 76;
     PROFILE_SECTIONS.forEach((section) => {
-      const rows = section.fields.map(([key, label]) => [label, details[key] == null || details[key] === "" ? "—" : String(details[key])]);
+      const fields = section.fields.filter(([key]) => key !== "photo");
+      const moneyKeys = new Set(["salary", "oneDayBasicSalary", "grossSalary", "unpaidLeaveCalculation", "currentMonthLeaveDeduction", "joiningExitDateDeduction", "netSalary"]);
+      const labelOverrides = { salary: "Basic Salary (INR)", grossSalary: "Gross Salary (INR)", netSalary: "Net Take-Home Salary (INR)" };
+      const rows = fields.map(([key, label]) => {
+        const value = details[key];
+        const displayValue = value == null || value === "" ? "—"
+          : moneyKeys.has(key) && Number.isFinite(Number(value))
+            ? `INR ${Number(value).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`
+            : String(value);
+        return [labelOverrides[key] || label, displayValue];
+      });
       autoTable(pdf, {
         startY: y,
         head: [[section.title, ""]],
         body: rows,
         theme: "grid",
-        styles: { fontSize: 8, cellPadding: 4, overflow: "linebreak" },
+        styles: { font: "helvetica", fontSize: 9, cellPadding: 5, overflow: "linebreak", halign: "left", valign: "middle" },
         headStyles: { fillColor: [141, 94, 56] },
-        columnStyles: { 0: { cellWidth: 170 }, 1: { cellWidth: 350 } },
+        columnStyles: { 0: { cellWidth: 190 }, 1: { cellWidth: contentWidth - 190 } },
         margin: { left: margin, right: margin },
       });
       y = (pdf.lastAutoTable?.finalY || y) + 10;
+      if (section.fields.some(([key]) => key === "photo")) {
+        const photoHeight = 68;
+        if (y + photoHeight > pdf.internal.pageSize.getHeight() - margin) { pdf.addPage(); y = margin; }
+        pdf.setDrawColor(205, 195, 186);
+        pdf.rect(margin, y, contentWidth, photoHeight);
+        pdf.setFontSize(9);
+        pdf.setTextColor(70, 60, 52);
+        pdf.text("Profile Photo", margin + 6, y + 18);
+        if (photoData) pdf.addImage(photoData, "JPEG", margin + 196, y + 6, 56, 56);
+        else pdf.text(details.photo ? "Photo could not be loaded" : "Not uploaded", margin + 196, y + 20);
+        y += photoHeight + 10;
+      }
     });
+    if (details.resignationRecord) {
+      const record = details.resignationRecord;
+      autoTable(pdf, {
+        startY: y,
+        head: [["9. Resignation & Exit", ""]],
+        body: [
+          ["Status", record.status || "Notice Period"],
+          ["Received through", record.source || record.requestSource || "—"],
+          ["Received date", record.receivedDate || "—"],
+          ["Last working day", record.requestedDate || record.lastWorkingDay || "—"],
+          ["Notice period", record.noticePeriod || "—"],
+          ["Reason", record.reason || "—"],
+          ["Handover / exit notes", record.handoverNotes || "—"],
+        ],
+        theme: "grid",
+        styles: { font: "helvetica", fontSize: 9, cellPadding: 5, overflow: "linebreak", halign: "left", valign: "middle" },
+        headStyles: { fillColor: [141, 94, 56] },
+        columnStyles: { 0: { cellWidth: 190 }, 1: { cellWidth: contentWidth - 190 } },
+        margin: { left: margin, right: margin },
+      });
+    }
     const safeName = String(details.name || "employee").trim().replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").toLowerCase() || "employee";
     pdf.save(`${safeName}-profile.pdf`);
   };
   useEffect(() => () => {
     if (preview?.blobUrl) URL.revokeObjectURL(preview.data);
+  }, [preview]);
+  useEffect(() => {
+    if (preview) previewRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }, [preview]);
   const viewPriorDocument = async (key, label, document) => {
     if (preview?.key === key) { setPreview(null); return; }
@@ -747,6 +867,18 @@ function EmployeeDetailsModal({ employee, onClose }) {
       const blob = document.data
         ? await (await fetch(document.data)).blob()
         : await downloadPriorExperienceDocument(details.backendId || details.id, key);
+      setPreview({ ...document, key, label, data: URL.createObjectURL(blob), blobUrl: true });
+    } catch (error) {
+      setDocumentError(error.message || "Unable to open this document.");
+    }
+  };
+  const viewOfficialDocument = async (key, label, document) => {
+    if (preview?.key === key) { setPreview(null); return; }
+    setDocumentError("");
+    try {
+      const blob = document.data
+        ? await (await fetch(document.data)).blob()
+        : await downloadEmployeeProfileDocument(details.backendId || details.id, key);
       setPreview({ ...document, key, label, data: URL.createObjectURL(blob), blobUrl: true });
     } catch (error) {
       setDocumentError(error.message || "Unable to open this document.");
@@ -776,17 +908,27 @@ function EmployeeDetailsModal({ employee, onClose }) {
             <h3><FileText size={16} /> 7. Official Documents & Attachments</h3>
             <div className="hr-document-list">
               {PROFILE_DOCUMENTS.map(([key, label]) => {
-                const document = details.priorExperienceDocuments?.[key] || details.documents?.[key];
+                const document = officialDocuments?.[key] || details.priorExperienceDocuments?.[key];
                 return <div className="hr-document-row" key={key}>
                   <strong>{label}</strong>
                   {document
-                    ? <button className="hr-document-view" type="button" onClick={() => viewPriorDocument(key, label, document)}>
-                      <Eye size={13} /> {preview?.key === key ? "Close preview" : "View Document"}
-                    </button>
-                    : <span className="hr-document-missing">Not Uploaded</span>}
+                    ? <div className="hr-document-row-file"><small title={document.name || label}>{document.name || "Uploaded"}</small><button className="hr-document-view" type="button" onClick={() => viewOfficialDocument(key, label, document)}>
+                      <Eye size={13} /> {preview?.key === key ? "Close" : "View"}
+                    </button></div>
+                    : <span className="hr-document-missing">{documentsLoading ? "Loading…" : "Not Uploaded"}</span>}
                 </div>;
               })}
             </div>
+            {documentError && <p className="hr-form-error" role="alert">{documentError}</p>}
+            {preview && PROFILE_DOCUMENTS.some(([key]) => key === preview.key) && <div className="hr-document-preview" ref={previewRef}>
+              <div className="hr-document-preview-heading"><strong>{preview.label}: {preview.name}</strong><button type="button" onClick={() => setPreview(null)} aria-label="Close document preview"><X size={16} /></button></div>
+              {preview.type?.startsWith("image/")
+                ? <img src={preview.data} alt={preview.name} />
+                : preview.type === "application/pdf"
+                  ? <iframe title={preview.name} src={preview.data} />
+                  : <p>This file type can be downloaded but not previewed here.</p>}
+              <a className="hr-ghost sm" href={preview.data} download={preview.name}><Download size={14} /> Download document</a>
+            </div>}
           </section>
           <section className="hr-employee-section">
             <h3><Briefcase size={16} /> 8. Prior Experience Documents</h3>
@@ -809,7 +951,7 @@ function EmployeeDetailsModal({ employee, onClose }) {
               })}
             </div> : <p className="hr-employee-value hr-prior-experience-none">No prior experience recorded.</p>}
             {documentError && <p className="hr-form-error" role="alert">{documentError}</p>}
-            {preview && <div className="hr-document-preview">
+            {preview && PRIOR_EXPERIENCE_DOCUMENTS.some(([key]) => key === preview.key) && <div className="hr-document-preview" ref={previewRef}>
               <div className="hr-document-preview-heading"><strong>{preview.label}: {preview.name}</strong><button type="button" onClick={() => setPreview(null)} aria-label="Close document preview"><X size={16} /></button></div>
               {preview.type?.startsWith("image/")
                 ? <img src={preview.data} alt={preview.name} />
@@ -819,6 +961,16 @@ function EmployeeDetailsModal({ employee, onClose }) {
               <a className="hr-ghost sm" href={preview.data} download={preview.name}><Download size={14} /> Download document</a>
             </div>}
           </section>
+          {resignation && <section className="hr-employee-section hr-profile-resignation-section">
+            <h3><UserX size={16} /> 9. Resignation & Exit</h3>
+            <div className="hr-employee-fields">
+              {[["Status", resignation.status || "Notice Period"], ["Received through", resignation.source || resignation.requestSource], ["Received date", resignation.receivedDate], ["Last working day", resignation.requestedDate || resignation.lastWorkingDay], ["Notice period", resignation.noticePeriod], ["Reason", resignation.reason], ["Handover / exit notes", resignation.handoverNotes]].map(([label, value]) => <F key={label} l={label}><span className="hr-employee-value">{value || "—"}</span></F>)}
+            </div>
+            {resignation.documents && <div className="hr-document-list">{[["resignationProof", "Resignation email / letter / message"], ["handoverDocument", "Handover document"], ["clearanceDocument", "Exit clearance document"]].map(([key, label]) => {
+              const document = resignation.documents[key];
+              return <div className="hr-document-row" key={key}><strong>{label}</strong>{document?.data ? <a className="hr-document-view" href={document.data} download={document.name || label}><Download size={13} /> Download</a> : <span className="hr-document-missing">Not uploaded</span>}</div>;
+            })}</div>}
+          </section>}
         </div>
         <footer className="hr-employee-detail-footer"><button className="hr-ghost" type="button" onClick={downloadProfile}><Download size={14} /> Download profile</button><button className="hr-ghost" type="button" onClick={onClose}>Close</button></footer>
       </section>
@@ -1093,7 +1245,7 @@ function EmpList({ c: { db, upd, go, employeeRosterStatus }, cards, setId }) {
   const [actionError, setActionError] = useState("");
   const departments = DEPTS;
   const search = q.trim().toLowerCase();
-  const rows = act(db).filter((e) => (dept === "All" || e.dept === dept)
+  const rows = act(db).map((employee) => profileWithResignation(db, employee)).filter((e) => (dept === "All" || e.dept === dept)
     && `${e.name} ${e.id} ${e.email} ${e.dept} ${e.desig} ${e.phone}`.toLowerCase().includes(search));
   const groups = dept === "All"
     ? [...departments, ...new Set(rows.map((e) => e.dept).filter((name) => !departments.includes(name)))].map((name) => [name, rows.filter((e) => e.dept === name)]).filter(([, employees]) => employees.length)
@@ -1206,7 +1358,7 @@ function EmpList({ c: { db, upd, go, employeeRosterStatus }, cards, setId }) {
       </div>
       {actionError && <p className="hr-form-error" role="alert">{actionError}</p>}
       {rows.length ? groups.map(([name, employees]) => (
-        <section className="hr-department-section" key={name} aria-labelledby={`hr-department-${name}`}>
+        <section className="hr-department-section hr-employee-profile-section" key={name} aria-labelledby={`hr-department-${name}`}>
           <h2 className="hr-department-heading" id={`hr-department-${name}`}>{name}</h2>
           <div className="hr-profile-cards">{employees.map((e) => (
             <article className="hr-card hr-profile-card" key={e.id}>
@@ -1214,6 +1366,7 @@ function EmpList({ c: { db, upd, go, employeeRosterStatus }, cards, setId }) {
               <strong className="hr-profile-name">{e.name}</strong>
               <span className="hr-profile-id">ID: {e.id}</span>
               <span className="hr-profile-department">Department: {e.dept}</span>
+              {e.resignationRecord && <span className="hr-profile-id">Resignation: {e.resignationRecord.status || "Notice Period"} · Last day {e.resignationRecord.requestedDate || e.resignationRecord.lastWorkingDay || "Not recorded"}</span>}
               {acts(e)}
             </article>
           ))}</div>
@@ -1249,9 +1402,10 @@ function ExEmployees({ c: { db, upd } }) {
   const [view, setView] = useState(null);
   const departments = DEPTS;
   const search = q.trim().toLowerCase();
-  const rows = db.emps.filter((e) => isExEmployee(e)
-    && (dept === "All" || e.dept === dept)
-    && `${e.name} ${e.id} ${e.email} ${e.dept} ${e.desig} ${e.phone} ${e.left || ""}`.toLowerCase().includes(search));
+  const rows = db.emps.filter((employee) => isExEmployee(employee))
+    .map((employee) => profileWithResignation(db, employee))
+    .filter((employee) => (dept === "All" || employee.dept === dept)
+      && `${employee.name} ${employee.id} ${employee.email} ${employee.dept} ${employee.desig} ${employee.phone} ${employee.left || ""}`.toLowerCase().includes(search));
   const groups = dept === "All"
     ? [...departments, ...new Set(rows.map((e) => e.dept).filter((name) => !departments.includes(name)))].map((name) => [name, rows.filter((e) => e.dept === name)]).filter(([, employees]) => employees.length)
     : [[dept, rows]];
@@ -1329,6 +1483,7 @@ function ExEmployees({ c: { db, upd } }) {
             <span className="hr-profile-id">ID: {e.id}</span>
             <span className="hr-profile-department">Department: {e.dept}</span>
             <span className="hr-profile-id">Last day: {e.left || e.resignationDate || "Not recorded"}</span>
+            {e.resignationRecord && <span className="hr-profile-id">Exit status: {e.resignationRecord.status || "Notice Period"}</span>}
             <div className="hr-profile-actions">
               <button className="hr-employee-action view" onClick={() => setView(e)}><Eye size={14} /> View</button>
               <button className="hr-employee-action edit" onClick={() => setEdit(e)}><Pencil size={14} /> Edit</button>
@@ -1341,19 +1496,64 @@ function ExEmployees({ c: { db, upd } }) {
     {view && <EmployeeDetailsModal employee={view} onClose={() => setView(null)} />}
   </>);
 }
-function AllEmployees({ c: { db } }) {
+function AllEmployees({ c: { db, setDb } }) {
   const [q, setQ] = useState("");
   const [view, setView] = useState(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncError, setSyncError] = useState("");
+  const refreshLock = useRef(false);
   const search = q.trim().toLowerCase();
   const rows = db.emps.filter((employee) => (
     `${employee.id} ${employee.name} ${employee.username || ""} ${employee.email} ${employee.phone} ${employee.dept} ${employee.status}`.toLowerCase().includes(search)
   ));
+  const refreshDirectory = async () => {
+    if (refreshLock.current) return;
+    refreshLock.current = true;
+    setSyncing(true);
+    try {
+      const users = await fetchUsers();
+      setDb((current) => mergeBackendEmployees(current, users));
+      setSyncError("");
+    } catch (error) {
+      setSyncError(error.message || "Unable to refresh the employee directory.");
+    } finally {
+      refreshLock.current = false;
+      setSyncing(false);
+    }
+  };
+  useEffect(() => {
+    let active = true;
+    const sync = async () => {
+      if (!active || document.visibilityState === "hidden" || refreshLock.current) return;
+      refreshLock.current = true;
+      try {
+        const users = await fetchUsers();
+        if (active) setDb((current) => mergeBackendEmployees(current, users));
+      } catch (error) {
+        if (active) console.warn("Unable to refresh the HR employee directory.", error.message || error);
+      } finally {
+        refreshLock.current = false;
+      }
+    };
+    sync();
+    const timer = window.setInterval(sync, 120_000);
+    const onVisibilityChange = () => { if (document.visibilityState === "visible") sync(); };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [setDb]);
 
   return (<>
-    <Card title="Users Record" right={<span className="hr-count">{rows.length} {rows.length === 1 ? "employee" : "employees"}</span>}>
-      <div className="hr-tools">
-        <label className="hr-sbox"><Search size={16} /><input type="search" placeholder="Search employees..." aria-label="Search all employees" value={q} onChange={(event) => setQ(event.target.value)} /></label>
+    <div className="hr-all-employees">
+    <Card title="Employee directory" right={<span className="hr-count">{rows.length} {rows.length === 1 ? "employee" : "employees"}</span>}>
+      <div className="hr-tools hr-all-employees-toolbar">
+        <label className="hr-sbox"><Search size={16} /><input type="search" placeholder="Search by name, email or contact" aria-label="Search all employees" value={q} onChange={(event) => setQ(event.target.value)} /></label>
+          <button className="hr-ghost" type="button" onClick={refreshDirectory} disabled={syncing}><RotateCcw size={14} />{syncing ? "Refreshing…" : "Refresh"}</button>
       </div>
+        {syncError && <p className="hr-form-error" role="status">{syncError}</p>}
       <Table rows={rows} empty="No employees match your search." cols={[
         ["S.N", (_employee, index) => index + 1],
         ["Name", (employee) => <>{employee.name} <span className={`hr-b ${employee.status === "ex" ? "warn" : "ok"}`}>{employee.status === "ex" ? "Ex" : "Current"}</span></>],
@@ -1364,6 +1564,7 @@ function AllEmployees({ c: { db } }) {
         ["Actions", (employee) => <button className="hr-employee-action view" type="button" onClick={() => setView(employee)}><Eye size={14} /> View</button>],
       ]} />
     </Card>
+    </div>
     {view && <EmployeeDetailsModal employee={view} onClose={() => setView(null)} />}
   </>);
 }
@@ -1488,13 +1689,6 @@ function SalaryReport({ c: { db } }) {
           <div><button type="button" className="hr-ghost" onClick={exportExcel} disabled={!rows.length}><FileSpreadsheet size={15} /> Export to Excel</button><button type="button" className="hr-ghost" onClick={exportCsv} disabled={!rows.length}><FileSpreadsheet size={15} /> Export to CSV</button><button type="button" className="hr-ghost" onClick={exportPdf} disabled={!rows.length}><FileText size={15} /> Export to PDF</button></div>
         </div>
       </section>
-      {attendanceData && <section className="hr-card hr-box hr-attendance-dry-run" aria-live="polite">
-        <strong>Payroll dry run · no saved transactions changed</strong>
-        <span>Current method estimate: {money(legacyNet)}</span>
-        <span>Attendance/join-aware estimate: {money(totalNet)}</span>
-        <span>Difference: {money(totalNet - legacyNet)}</span>
-        <small>Joining/exit proration is recalculated once; only finalized absences and unpaid leave after joining are deducted.</small>
-      </section>}
       <Card title="Salary report" right={<span className="hr-count">{rows.length} employees · {reportMonth}</span>}>
         {rows.length ? <div className="hr-tw hr-salary-table-wrap"><table className="hr-t hr-salary-table">
           <thead><tr>{["S.N", "Employee", "Bank details", "Basic salary", "Present", "Absent / Leave", "Holiday", "Payable", "Earnings", "Deductions", "Net payable"].map((heading) => <th key={heading}>{heading}</th>)}</tr></thead>
@@ -2043,115 +2237,8 @@ function Payroll({ c: { db, upd } }) {
 }
 
 /* ================= Attendance ================= */
-function MarkAttendance({ c: { db, user } }) {
-  const employeeId = String(user?.id || user?._id || "");
-  const [record, setRecord] = useState(null);
-  const [status, setStatus] = useState("");
-  const [remark, setRemark] = useState("");
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [now, setNow] = useState(Date.now());
-  useEffect(() => {
-    let active = true;
-    if (!employeeId) {
-      setLoading(false);
-      return undefined;
-    }
-    setLoading(true);
-    fetchTodayAttendance().then((attendance) => {
-      if (!active) return;
-      setRecord(attendance);
-      setStatus(attendance?.status || "");
-      setRemark(attendance?.remark || "");
-    }).catch((loadError) => {
-      if (active) setError(loadError.message || "Unable to load today's attendance.");
-    }).finally(() => {
-      if (active) setLoading(false);
-    });
-    return () => { active = false; };
-  }, [employeeId]);
-  const checkedIn = Boolean(record?.checkInAt || record?.checkIn);
-  const checkedOut = Boolean(record?.checkOutAt || record?.checkOut);
-  const absent = record?.status === "Absent";
-  useEffect(() => {
-    if (!checkedIn || checkedOut || absent) return undefined;
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, [checkedIn, checkedOut, absent]);
-  const checkedInAt = record?.checkIn || "";
-  const checkedOutAt = record?.checkOut || "";
-  const checkedInTimestamp = record?.checkInAt ? Date.parse(record.checkInAt) : NaN;
-  const checkedOutTimestamp = record?.checkOutAt ? Date.parse(record.checkOutAt) : NaN;
-  const liveWorkMilliseconds = Number.isFinite(checkedInTimestamp)
-    ? Math.max(0, (Number.isFinite(checkedOutTimestamp) ? checkedOutTimestamp : now) - checkedInTimestamp)
-    : 0;
-  const workingMilliseconds = record?.workedMinutes !== null
-    && record?.workedMinutes !== undefined
-    && Number.isFinite(Number(record.workedMinutes))
-    ? Number(record.workedMinutes) * 60000
-    : checkedIn ? liveWorkMilliseconds : 0;
-  const workingHours = `${Math.floor(workingMilliseconds / 3600000)}h ${Math.floor((workingMilliseconds % 3600000) / 60000)}m`;
-  const toggleAttendance = async (event) => {
-    event.preventDefault();
-    if (!employeeId) {
-      setError("Your employee account ID is unavailable; attendance was not saved.");
-      return;
-    }
-    setError("");
-    setSaving(true);
-    try {
-      const saved = checkedIn ? await checkOutAttendance() : await checkInAttendance({ status, remark: remark.trim() });
-      setRecord(saved);
-      setStatus(saved.status || status);
-      setRemark(saved.remark || remark.trim());
-    } catch (saveError) {
-      setError(saveError.message || "Unable to save attendance.");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <Card title="Mark Attendance">
-      <form className="hr-mark-attendance-form" onSubmit={toggleAttendance}>
-        <label className="hr-f">
-          <span>Employee Name</span>
-          <input value={db.me?.name || "HR"} readOnly />
-        </label>
-        <label className="hr-f">
-          <span>Select Status</span>
-          <select value={status} disabled={loading || saving || Boolean(record)} onChange={(event) => { setStatus(event.target.value); setError(""); }}>
-            <option value="">Select Status</option>
-            {["Present", "Absent"].map((value) => <option key={value} value={value}>{value}</option>)}
-          </select>
-        </label>
-        <label className="hr-f">
-          <span>Remark</span>
-          <input type="text" maxLength={240} placeholder="Remark (optional)" value={remark} disabled={loading || saving || Boolean(record)} onChange={(event) => setRemark(event.target.value)} />
-        </label>
-        <div className="hr-mark-attendance-submit">
-          <span>Attendance</span>
-          <button className={`hr-mark-attendance-action${checkedIn ? " is-checked-in" : ""}`} type="submit" disabled={loading || saving || !employeeId || !status || checkedOut || absent}>
-            <Check size={16} /> {loading ? "Loading…" : saving ? "Saving…" : absent ? "Marked Absent" : checkedOut ? "Checked Out" : checkedIn ? "Check Out" : "Check In"}
-          </button>
-        </div>
-      </form>
-      {error && <p className="hr-form-error hr-mark-attendance-error" role="alert">{error}</p>}
-      {!employeeId && <p className="hr-form-error hr-mark-attendance-error" role="alert">Your employee account ID is unavailable; attendance cannot be saved.</p>}
-      <div className="hr-mark-attendance-status" aria-live="polite">
-        <span>{record?.workDate || TODAY} · {new Date(`${record?.workDate || TODAY}T00:00:00.000Z`).toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "UTC" })}</span>
-        {record?.status && <span>Status: <Badge s={record.status} /></span>}
-        {checkedInAt && <span>Checked in at {checkedInAt}</span>}
-        {checkedOutAt && <span>Checked out at {checkedOutAt}</span>}
-        {checkedIn && !absent && <span>Working hours: {workingHours}</span>}
-        {record?.remark && <span>Remark: {record.remark}</span>}
-      </div>
-    </Card>
-  );
-}
 function AttendanceReport({ c: { db, user } }) {
-  const initialFilters = { day: "", date: "", month: MONTH, status: "" };
+  const initialFilters = { month: MONTH, status: "", dateFrom: "", dateTo: "" };
   const [filters, setFilters] = useState(initialFilters);
   const [appliedFilters, setAppliedFilters] = useState(initialFilters);
   const [error, setError] = useState("");
@@ -2162,14 +2249,12 @@ function AttendanceReport({ c: { db, user } }) {
     .filter((record) => record?.date && record?.employeeId)
     .map((record) => [`${record.date}|${record.employeeId}`, record]));
   const selfIds = [selfEmployee?.backendId, selfEmployee?.id, user?.id, user?._id, db.me?.crm].filter(Boolean).map(String);
-  const daysOfWeek = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-  const monthDays = appliedFilters.month
-    ? attendanceRange(`${appliedFilters.month}-01`, iso(new Date(+appliedFilters.month.slice(0, 4), +appliedFilters.month.slice(5), 0)))
-      .filter((date) => date <= TODAY)
-    : attendanceRange(`${TODAY.slice(0, 7)}-01`, TODAY);
-  const reportDays = appliedFilters.date
-    ? [appliedFilters.date].filter((date) => date <= TODAY)
-    : monthDays;
+  const reportMonth = appliedFilters.month || MONTH;
+  const monthStart = `${reportMonth}-01`;
+  const monthEnd = iso(new Date(+reportMonth.slice(0, 4), +reportMonth.slice(5), 0));
+  const rangeStart = appliedFilters.dateFrom && appliedFilters.dateFrom > monthStart ? appliedFilters.dateFrom : monthStart;
+  const rangeEnd = [monthEnd, TODAY, appliedFilters.dateTo || monthEnd].sort()[0];
+  const reportDays = attendanceRange(rangeStart, rangeEnd);
   const rows = reportDays
     .map((date) => {
       const key = `${date}|1`;
@@ -2183,13 +2268,6 @@ function AttendanceReport({ c: { db, user } }) {
           ? Math.max(0, Date.parse(details.checkedOutAt) - Date.parse(details.checkedInAt))
           : 0);
       const totalSeconds = Math.floor(Math.max(0, duration) / 1000);
-      const formatTime = (value) => {
-        if (!value) return "00:00:00";
-        const parsed = new Date(value);
-        return Number.isNaN(parsed.getTime())
-          ? "00:00:00"
-          : parsed.toLocaleTimeString("en-GB", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
-      };
       return {
         id: key,
         empId: db.me?.crm || "1",
@@ -2207,18 +2285,14 @@ function AttendanceReport({ c: { db, user } }) {
         status,
       };
     })
-    .filter((row) => (!appliedFilters.day || row.day === appliedFilters.day)
-      && (!appliedFilters.status || row.status === appliedFilters.status))
+    .filter((row) => !appliedFilters.status || row.status === appliedFilters.status)
     .sort((a, b) => b.date.localeCompare(a.date));
-  const updateFilter = (key) => (event) => setFilters((current) => ({ ...current, [key]: event.target.value }));
-  const applyFilters = (event) => {
-    event.preventDefault();
-    if (filters.date && filters.month && filters.date.slice(0, 7) !== filters.month) {
-      setError("Choose a date within the selected month, or clear the date to view the full month.");
-      return;
-    }
+  const filteredRows = rows;
+  const updateFilter = (key) => (event) => {
+    const value = event.target.value;
+    setFilters((current) => ({ ...current, [key]: value }));
+    setAppliedFilters((current) => ({ ...current, [key]: value }));
     setError("");
-    setAppliedFilters({ ...filters });
   };
   const resetFilters = () => {
     setFilters(initialFilters);
@@ -2241,10 +2315,14 @@ function AttendanceReport({ c: { db, user } }) {
     Classification: row.reason,
     Payable: row.payable ? "Yes" : "No",
   }));
-  const exportExcel = () => {
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(exportRows), "Attendance Report");
-    XLSX.writeFile(workbook, `my-attendance-report-${reportMonth}.xlsx`);
+  const exportCsv = () => {
+    const csv = XLSX.utils.sheet_to_csv(XLSX.utils.json_to_sheet(exportRows));
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `my-attendance-report-${reportMonth}.csv`;
+    link.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
   const exportPdf = () => {
     const pdfRows = exportRows.map(({ Payable: _payable, ...row }) => row);
@@ -2259,7 +2337,7 @@ function AttendanceReport({ c: { db, user } }) {
       })],
       body: pdfRows.map((row) => Object.values(row)),
       styles: { fontSize: 8, cellPadding: 5 },
-      headStyles: { fillColor: [141, 94, 56] },
+      headStyles: { fillColor: [107, 62, 43] },
       theme: "grid",
     });
     pdf.save(`my-attendance-report-${reportMonth}.pdf`);
@@ -2267,60 +2345,39 @@ function AttendanceReport({ c: { db, user } }) {
 
   return (
     <section className="hr-attendance-report">
-      <h2 className="hr-attendance-report-title"><CalendarCheck size={22} /> Attendance Report</h2>
-      <form className="hr-attendance-report-filters" onSubmit={applyFilters}>
-        <F l="Select Day">
-          <select value={filters.day} onChange={updateFilter("day")}>
-            <option value="">Select Day</option>
-            {daysOfWeek.map((day) => <option key={day}>{day}</option>)}
-          </select>
-        </F>
-        <F l="Date"><input type="date" value={filters.date} onChange={updateFilter("date")} /></F>
-        <F l="Month"><input type="month" value={filters.month} onChange={updateFilter("month")} /></F>
-        <F l="Select Status">
-          <select value={filters.status} onChange={updateFilter("status")}>
-            <option value="">Select Status</option>
-            {["Present", "Absent", "Leave"].map((status) => <option key={status}>{status}</option>)}
-          </select>
-        </F>
-        <div className="hr-attendance-report-actions">
-          <button className="hr-btn" type="submit"><Filter size={15} /> Apply</button>
-          <button className="hr-ghost" type="button" onClick={resetFilters}><RotateCcw size={15} /> Reset</button>
+      <section className="hr-card hr-attendance-history-panel">
+        <header className="hr-attendance-history-heading">
+          <div><h2>Attendance History</h2><p>Review your punch times and attendance history</p></div>
+          <div className="hr-attendance-history-exports" role="group" aria-label="Export attendance history">
+            <button className="hr-attendance-export excel" type="button" onClick={exportCsv} disabled={!filteredRows.length}><Download size={14} /> Export CSV</button>
+            <button className="hr-attendance-export pdf" type="button" onClick={exportPdf} disabled={!filteredRows.length}><Download size={14} /> Export PDF ({filteredRows.length})</button>
+          </div>
+        </header>
+        <div className="hr-attendance-history-summary" aria-live="polite">
+          {["Present", "Absent", "Leave", "Holiday", "Pending"].map((status) => <div className="hr-attendance-history-stat" key={status}><span>{status}</span><strong>{filteredRows.filter((row) => row.status === status).length}</strong></div>)}
         </div>
+        <form className="hr-attendance-report-filters" onSubmit={(event) => event.preventDefault()}>
+          <F l="Month"><input type="month" value={filters.month} onChange={updateFilter("month")} /></F>
+          <F l="Status">
+            <select value={filters.status} onChange={updateFilter("status")}>
+              <option value="">All statuses</option>
+              {["Present", "Absent", "Leave", "Holiday", "Pending"].map((status) => <option key={status}>{status}</option>)}
+            </select>
+          </F>
+          <F l="From"><input type="date" value={filters.dateFrom} onChange={updateFilter("dateFrom")} /></F>
+          <F l="To"><input type="date" value={filters.dateTo} onChange={updateFilter("dateTo")} /></F>
+          <button className="hr-ghost hr-attendance-history-reset" type="button" onClick={resetFilters}>Reset</button>
+        </form>
         {error && <p className="hr-form-error hr-attendance-report-error" role="alert">{error}</p>}
-        {attendanceError && <p className="hr-form-error hr-attendance-report-error" role="alert">{attendanceError}</p>}
-      </form>
-      <div className="hr-all-attendance-results-toolbar">
-        <div className="hr-attendance-report-summary" aria-live="polite">
-          <span>{filteredRows.length} attendance day{filteredRows.length === 1 ? "" : "s"}</span>
-          <span>Present {filteredRows.filter((row) => row.status === "Present").length}</span>
-          <span>Absent {filteredRows.filter((row) => row.status === "Absent").length}</span>
-          <span>Leave {filteredRows.filter((row) => row.status === "Leave").length}</span>
-          <span>Holiday {filteredRows.filter((row) => row.status === "Holiday").length}</span>
-          <span>Pending {filteredRows.filter((row) => row.status === "Pending").length}</span>
-          <span>Upcoming {filteredRows.filter((row) => row.status === "Upcoming").length}</span>
-        </div>
-        <div className="hr-all-attendance-exports" role="group" aria-label="Export attendance report">
-          <button className="hr-attendance-export excel" type="button" onClick={exportExcel} disabled={!filteredRows.length || attendanceLoading || Boolean(attendanceError)}><FileSpreadsheet size={15} /> Excel</button>
-          <button className="hr-attendance-export pdf" type="button" onClick={exportPdf} disabled={!filteredRows.length || attendanceLoading || Boolean(attendanceError)}><FileText size={15} /> PDF</button>
-        </div>
-      </div>
-      <Card>
         <Table rows={rows} empty="No attendance records match these filters." cols={[
-          ["S.N", (_row, index) => index + 1],
-          ["EMP ID", (row) => row.empId],
-          ["EMP Name", (row) => <b>{row.name}</b>],
-          ["Department", (row) => row.department],
-          ["Branch", (row) => row.branch],
-          ["Date", (row) => row.date.split("-").reverse().join("-")],
-          ["Day", (row) => row.day],
-          ["Check-in Time", (row) => row.checkIn],
-          ["Check-out Time", (row) => row.checkOut],
-          ["Total Hours", (row) => row.totalHours],
-          ["Remarks", (row) => row.remarks],
-          ["Status", (row) => <Badge s={row.status} />],
+          ["# SR. NO.", (_row, index) => index + 1],
+          ["DATE", (row) => new Date(`${row.date}T00:00:00`).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })],
+          ["DAY", (row) => row.day],
+          ["PUNCH IN TIME", (row) => !row.checkIn || row.checkIn === "00:00:00" ? "Not recorded" : row.checkIn],
+          ["PUNCH OUT TIME", (row) => !row.checkOut || row.checkOut === "00:00:00" ? "Not recorded" : row.checkOut],
+          ["STATUS", (row) => <span className={`hr-attendance-status status-${String(row.status).toLowerCase().replace(/\s+/g, "-")}`}><Badge s={row.status} /></span>],
         ]} />
-      </Card>
+      </section>
     </section>
   );
 }
@@ -2339,12 +2396,6 @@ function AllAttendance({ c: { db } }) {
   const formatDate = (date) => date.split("-").reverse().join("-");
   const reportMonth = appliedFilters.month || MONTH;
   const { data: attendanceData, loading: attendanceLoading, error: attendanceError } = usePayrollAttendanceMonth(reportMonth);
-  const formatDuration = (minutes) => {
-    const totalSeconds = Math.floor(Math.max(0, Number(minutes) || 0) * 60);
-    return [Math.floor(totalSeconds / 3600), Math.floor((totalSeconds % 3600) / 60), totalSeconds % 60]
-      .map((part) => String(part).padStart(2, "0"))
-      .join(":");
-  };
   const reportStart = appliedFilters.dateFrom || (appliedFilters.month
     ? `${appliedFilters.month}-01`
     : appliedFilters.year ? `${appliedFilters.year}-01-01` : `${TODAY.slice(0, 7)}-01`);
@@ -2377,7 +2428,7 @@ function AllAttendance({ c: { db } }) {
       day: new Date(`${date}T00:00:00`).toLocaleDateString("en-US", { weekday: "long" }),
       checkIn: record?.checkIn || formatTime(details.checkedInAt),
       checkOut: record?.checkOut || formatTime(details.checkedOutAt),
-      totalHours: formatDuration(duration),
+      totalHours: formatAttendanceDuration(duration),
       remarks: record?.remark || details.remark || "\u2014",
       status: joined && date < joined ? "Absent" : (recordedStatus && recordedStatus !== "Not marked" ? recordedStatus : "Absent"),
     };
@@ -2663,74 +2714,76 @@ function MarkAll({ c: { db, upd } }) {
   );
 }
 function LeaveRequest({ c: { db, upd } }) {
-  const [f, setF] = useState({ type: "Casual", from: TODAY, to: TODAY, reason: "" });
+  const [f, setF] = useState({ type: "Sick Leave", from: TODAY, to: TODAY, reason: "" });
   const [error, setError] = useState("");
+  const [typeFilter, setTypeFilter] = useState("All types");
+  const [statusFilter, setStatusFilter] = useState("All statuses");
+  const [fromFilter, setFromFilter] = useState("");
+  const [toFilter, setToFilter] = useState("");
   const setField = (key) => (event) => setF((current) => ({ ...current, [key]: event.target.value }));
-  const mine = db.leaves.filter((leave) => leave.empId === 1).slice().reverse();
+  const mine = db.leaves.filter((leave) => String(leave.empId) === String(db.me?.crm || 1)).slice().sort((a, b) => (Date.parse(b.appliedAt || "") || 0) - (Date.parse(a.appliedAt || "") || 0));
+  const days = (start, end) => !start || !end || end < start ? 0 : Math.round((P(end) - P(start)) / 86400000) + 1;
+  const duration = days(f.from, f.to);
+  const count = (status) => mine.filter((leave) => leave.status === status).length;
+  const filtered = mine.filter((leave) => (typeFilter === "All types" || leave.type === typeFilter)
+    && (statusFilter === "All statuses" || leave.status === statusFilter)
+    && (!fromFilter || leave.from >= fromFilter) && (!toFilter || leave.to <= toFilter));
+  const displayDate = (value) => value ? P(value).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) : "—";
   const formatTimestamp = (value) => {
     if (!value) return "—";
     const date = new Date(value);
-    return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString("en-GB", {
-      year: "numeric", month: "2-digit", day: "2-digit",
-      hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
-    }).replace(",", "");
+    return Number.isNaN(date.getTime()) ? "—" : date.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
   };
   const submitRequest = (event) => {
     event.preventDefault();
-    if (f.to < f.from) {
-      setError("End date must be on or after the start date.");
-      return;
-    }
+    if (f.to < f.from) { setError("End date must be on or after the start date."); return; }
     setError("");
-    upd((data) => ({
-      leaves: [...data.leaves, {
-        ...f,
-        id: Date.now(),
-        empId: 1,
-        status: "Pending",
-        appliedAt: new Date().toISOString(),
-      }],
-    }), "Leave request submitted");
-    setF({ type: "Casual", from: TODAY, to: TODAY, reason: "" });
+    upd((data) => ({ leaves: [...data.leaves, { ...f, id: Date.now(), empId: db.me?.crm || 1, status: "Pending", appliedAt: new Date().toISOString() }] }), "Leave request submitted");
+    setF({ type: "Sick Leave", from: TODAY, to: TODAY, reason: "" });
+  };
+  const exportPdf = () => {
+    const pdf = new jsPDF({ orientation: "landscape" });
+    pdf.setFontSize(16);
+    pdf.text("My Leave Requests", 14, 16);
+    autoTable(pdf, { startY: 23, head: [["#", "Leave Type", "From", "To", "Days", "Reason", "Applied On", "Status"]],
+      body: filtered.map((leave, index) => [index + 1, leave.type, displayDate(leave.from), displayDate(leave.to), days(leave.from, leave.to), leave.reason || "—", formatTimestamp(leave.appliedAt), leave.status || "Pending"]),
+      headStyles: { fillColor: [128, 71, 39] }, alternateRowStyles: { fillColor: [255, 240, 227] } });
+    pdf.save(`my-leave-requests-${TODAY}.pdf`);
   };
   return (
     <section className="hr-leave-request">
       <Card>
-        <h2 className="hr-leave-request-title">Leave Request</h2>
+        <div className="hr-leave-section-heading"><div><h2>Apply for Leave</h2><p>Select your dates and see the total before submitting</p></div></div>
         <form className="hr-leave-request-form" onSubmit={submitRequest}>
-          <F l="Leave Type">
-            <select value={f.type} onChange={setField("type")}>
-              {["Casual Leave", "Sick Leave", "Earned Leave", "Unpaid Leave"].map((type) => <option key={type}>{type}</option>)}
-            </select>
-          </F>
-          <F l="Start Date:"><input type="date" required value={f.from} onChange={setField("from")} /></F>
-          <F l="End Date:"><input type="date" min={f.from} required value={f.to} onChange={setField("to")} /></F>
-          <F l="Reason:"><textarea required rows={1} value={f.reason} onChange={setField("reason")} /></F>
-          <div className="hr-leave-request-submit"><button className="hr-btn" type="submit"><CalendarClock size={15} /> Apply Leave</button></div>
+          <F l="Leave Type"><select value={f.type} onChange={setField("type")}>{["Casual Leave", "Sick Leave", "Earned Leave", "Unpaid Leave"].map((type) => <option key={type}>{type}</option>)}</select></F>
+          <F l="From"><input type="date" required value={f.from} onChange={setField("from")} /></F>
+          <F l="To"><input type="date" min={f.from} required value={f.to} onChange={setField("to")} /></F>
+          <div className="hr-leave-duration"><CalendarClock size={15} /><span>Leave duration</span><strong>{duration} {duration === 1 ? "day" : "days"}</strong></div>
+          <F l="Reason" className="hr-leave-reason"><textarea required rows={2} value={f.reason} onChange={setField("reason")} /></F>
+          <div className="hr-leave-request-submit"><button className="hr-btn" type="submit"><Check size={15} /> Submit Request</button></div>
           {error && <p className="hr-form-error hr-leave-request-error" role="alert">{error}</p>}
         </form>
       </Card>
       <Card>
+        <div className="hr-leave-history-heading"><div><h2>My Leave Requests</h2><p>Track the status and duration of each request</p></div><button className="hr-btn hr-leave-export" type="button" onClick={exportPdf} disabled={!filtered.length}><Download size={14} /> Export PDF ({filtered.length})</button></div>
+        <div className="hr-leave-stats">{[["Requests", mine.length], ["Pending", count("Pending")], ["Approved", count("Approved")], ["Rejected", count("Rejected")]].map(([label, value]) => <div className="hr-leave-stat" key={label}><span>{label}</span><strong>{value}</strong></div>)}</div>
+        <div className="hr-leave-filters">
+          <label><span>Leave type</span><select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)}><option>All types</option>{[...new Set(mine.map((leave) => leave.type))].map((type) => <option key={type}>{type}</option>)}</select></label>
+          <label><span>Status</span><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>{["All statuses", "Pending", "Approved", "Rejected"].map((status) => <option key={status}>{status}</option>)}</select></label>
+          <label><span>Leave from</span><input type="date" value={fromFilter} onChange={(event) => setFromFilter(event.target.value)} /></label>
+          <label><span>Leave to</span><input type="date" value={toFilter} onChange={(event) => setToFilter(event.target.value)} /></label>
+          <button className="hr-ghost sm" type="button" onClick={() => { setTypeFilter("All types"); setStatusFilter("All statuses"); setFromFilter(""); setToFilter(""); }}>Reset</button>
+        </div>
         <div className="hr-tw hr-leave-request-table-wrap">
           <table className="hr-t hr-leave-request-table">
-            <thead><tr>{["S.N", "Name", "Leave Type", "Start Date", "End Date", "Reason", "Status", "Applied At", "Approved By", "Approved At", ""].map((heading, index) => <th key={`${heading}-${index}`}>{heading}</th>)}</tr></thead>
-            <tbody>{mine.map((leave, index) => (
-              <tr key={leave.id}>
-                <td>{index + 1}</td>
-                <td>{db.me?.name || "HR"}</td>
-                <td>{leave.type}</td>
-                <td>{leave.from}</td>
-                <td>{leave.to}</td>
-                <td>{leave.reason || "—"}</td>
-                <td><Badge s={leave.status} /></td>
-                <td>{formatTimestamp(leave.appliedAt)}</td>
-                <td>{leave.approvedBy || "—"}</td>
-                <td>{formatTimestamp(leave.approvedAt)}</td>
-                <td>{leave.status === "Pending" && <button className="hr-ghost sm" onClick={() => upd((data) => ({ leaves: data.leaves.filter((item) => item.id !== leave.id) }), "Leave request cancelled")}>Cancel</button>}</td>
-              </tr>
-            ))}</tbody>
+            <thead><tr>{["Type", "From", "To", "Days", "Reason", "Applied on", "Status", ""].map((heading, index) => <th key={`${heading}-${index}`}>{heading}</th>)}</tr></thead>
+            <tbody>{filtered.map((leave) => <tr key={leave.id}>
+              <td>{leave.type}</td><td>{displayDate(leave.from)}</td><td>{displayDate(leave.to)}</td><td>{days(leave.from, leave.to)}</td>
+              <td>{leave.reason || "—"}</td><td>{formatTimestamp(leave.appliedAt)}</td><td><Badge s={leave.status} /></td>
+              <td>{leave.status === "Pending" && <button className="hr-ghost sm" type="button" onClick={() => upd((data) => ({ leaves: data.leaves.filter((item) => item.id !== leave.id) }), "Leave request cancelled")}>Cancel</button>}</td>
+            </tr>)}</tbody>
           </table>
-          {!mine.length && <Empty t="You haven't applied for any leave." />}
+          {!filtered.length && <Empty t={mine.length ? "No leave requests match these filters." : "You haven't applied for any leave."} />}
         </div>
       </Card>
     </section>
@@ -3604,6 +3657,13 @@ export default function HrDashboard({ user, onLogout } = {}) {
   const [toast, setToast] = useState("");
   const [idSel, setIdSel] = useState(1);
   const [query, setQuery] = useState("");
+  const [appNotifications, setAppNotifications] = useState([]);
+  const [notificationsLoaded, setNotificationsLoaded] = useState(false);
+  const [notificationMenuOpen, setNotificationMenuOpen] = useState(false);
+  const [incomingNotification, setIncomingNotification] = useState(false);
+  const notificationMenuRef = useRef(null);
+  const notificationSnapshotRef = useRef(null);
+  const notificationRingTimerRef = useRef(null);
   const [darkMode, setDarkMode] = useState(() => {
     try {
       return localStorage.getItem("hr_dashboard_dark_mode") === "true";
@@ -3618,32 +3678,7 @@ export default function HrDashboard({ user, onLogout } = {}) {
     let active = true;
     fetchUsers().then((users) => {
       if (!active) return;
-      const backendUsers = Array.isArray(users) ? users.filter((item) =>
-        !String(item.role || "").toLowerCase().includes("admin")
-        && String(item.role || "").toLowerCase() !== "student"
-        && String(item.dept || item.department || "").toLowerCase() !== "student") : [];
-      setDb((current) => {
-        const emps = [...current.emps];
-        for (const item of backendUsers) {
-          const backendId = String(item.id || item._id || "");
-          if (!backendId) continue;
-          const index = emps.findIndex((employee) => String(employee.backendId || "") === backendId
-            || (item.email && String(employee.email || "").trim().toLowerCase() === String(item.email).trim().toLowerCase()));
-          const employee = {
-            ...(index >= 0 ? emps[index] : {}), ...item,
-            id: index >= 0 ? emps[index].id : backendId,
-            backendId,
-            name: item.name || item.username || "Employee",
-            dept: item.dept || item.department || "",
-            desig: item.position || item.role || "",
-            photo: item.imageUrl || item.photo || "",
-            status: String(item.status || "Active").toLowerCase() === "inactive" || item.exEmployee === "Yes" ? "ex" : "active",
-          };
-          if (index >= 0) emps[index] = employee;
-          else emps.push(employee);
-        }
-        return { ...current, emps };
-      });
+      setDb((current) => mergeBackendEmployees(current, users));
       setEmployeeRosterStatus("ready");
     }).catch((error) => {
       console.warn("Unable to load employee profiles from the backend.", error.message || error);
@@ -3665,22 +3700,31 @@ export default function HrDashboard({ user, onLogout } = {}) {
   useEffect(() => {
     if (!user) return undefined;
     let active = true;
-    fetchLeavesApi().then((records) => {
-      if (!active || !Array.isArray(records)) return;
-      setDb((current) => ({
-        ...current,
-        leaves: records.map((leave) => {
-          const employee = current.emps.find((item) => String(item.backendId || item.id) === String(leave.employeeId)
-            || (leave.employeeName && String(item.name).trim().toLowerCase() === String(leave.employeeName).trim().toLowerCase()));
-          return {
-            ...leave,
-            empId: employee?.id ?? leave.employeeId,
-            appliedAt: leave.appliedAt || leave.createdAt || leave.appliedOn,
-          };
-        }),
-      }));
-    }).catch((error) => console.warn("Unable to load leave requests.", error.message || error));
-    return () => { active = false; };
+    let pending = false;
+    const refreshNotifications = () => {
+      if (pending || document.visibilityState === "hidden") return;
+      pending = true;
+      Promise.all([fetchAppNotifications(), fetchLeavesApi()])
+        .then(([notifications, records]) => {
+          if (!active) return;
+          if (Array.isArray(notifications)) setAppNotifications(notifications);
+          setNotificationsLoaded(true);
+          if (Array.isArray(records)) setDb((current) => ({
+            ...current,
+            leaves: records.map((leave) => {
+              const employee = current.emps.find((item) => String(item.backendId || item.id) === String(leave.employeeId)
+                || (leave.employeeName && String(item.name).trim().toLowerCase() === String(leave.employeeName).trim().toLowerCase()));
+              return { ...leave, empId: employee?.id ?? leave.employeeId, appliedAt: leave.appliedAt || leave.createdAt || leave.appliedOn };
+            }),
+          }));
+        })
+        .catch((error) => { console.warn("Unable to refresh HR notifications.", error.message || error); if (active) setNotificationsLoaded(true); })
+        .finally(() => { pending = false; });
+    };
+    refreshNotifications();
+    const timer = window.setInterval(refreshNotifications, 60000);
+    document.addEventListener("visibilitychange", refreshNotifications);
+    return () => { active = false; window.clearInterval(timer); document.removeEventListener("visibilitychange", refreshNotifications); };
   }, [user?.id, user?._id]);
 
   useEffect(() => {
@@ -3730,6 +3774,67 @@ export default function HrDashboard({ user, onLogout } = {}) {
     setDb((d) => ({ ...d, ...fn(d), log: msg ? [{ t: new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }), m: msg }, ...d.log].slice(0, 8) : d.log }));
     if (msg) setToast(msg);
   };
+  const notificationReads = new Set(db.hrNotificationReads || []);
+  const apiLeaveMessages = appNotifications.filter((item) => item.type === "leave_created").map((item) => String(item.message || "").toLowerCase());
+  const notificationItems = [
+    ...(db.hrNotifications || []).map((item) => ({ ...item, id: `workflow:${item.id}`, rawId: item.id, source: "workflow", createdAt: item.at || item.createdAt, read: Boolean(item.read) })),
+    ...appNotifications.map((item) => ({ ...item, id: `app:${item.id}`, rawId: item.id, source: "app", createdAt: item.createdAt || item.at })),
+    ...db.leaves.filter((leave) => leave.status === "Pending" && !apiLeaveMessages.some((message) => message.includes(String(leave.employeeName || "").toLowerCase()) && message.includes(String(leave.from || ""))))
+      .map((leave) => ({
+        id: `leave:${leave.id}`, rawId: leave.id, source: "leave", type: "leave_created",
+        message: `${leave.employeeName || nm(db, leave.empId)} submitted a ${leave.type} leave request (${leave.from} to ${leave.to}).`,
+        createdAt: leave.appliedAt || leave.createdAt || leave.appliedOn,
+        read: notificationReads.has(`leave:${leave.id}`),
+      })),
+  ].sort((a, b) => (Date.parse(b.createdAt || "") || 0) - (Date.parse(a.createdAt || "") || 0));
+  const unreadNotificationCount = notificationItems.filter((item) => !item.read).length;
+  const markNotificationRead = async (item) => {
+    if (item.source === "workflow") {
+      upd((current) => ({ hrNotifications: (current.hrNotifications || []).map((row) => row.id === item.rawId ? { ...row, read: true } : row) }));
+      return;
+    }
+    if (item.source === "leave") {
+      upd((current) => ({ hrNotificationReads: [...new Set([...(current.hrNotificationReads || []), `leave:${item.rawId}`])] }));
+      return;
+    }
+    try {
+      const saved = await markAppNotificationRead(item.rawId);
+      setAppNotifications((current) => current.map((row) => row.id === item.rawId ? { ...row, ...saved, read: true } : row));
+    } catch (error) {
+      setToast(error.message || "Unable to mark notification as read.");
+    }
+  };
+  const markAllNotificationsRead = async () => {
+    const unread = notificationItems.filter((item) => !item.read);
+    upd((current) => ({
+      hrNotifications: (current.hrNotifications || []).map((item) => ({ ...item, read: true })),
+      hrNotificationReads: [...new Set([...(current.hrNotificationReads || []), ...unread.filter((item) => item.source === "leave").map((item) => `leave:${item.rawId}`)])],
+    }));
+    await Promise.all(unread.filter((item) => item.source === "app").map((item) => markNotificationRead(item)));
+  };
+  const openNotification = (item) => {
+    void markNotificationRead(item);
+    setNotificationMenuOpen(false);
+    go(item.source === "leave" ? "View All Leave Request" : "HR Notifications");
+  };
+  useEffect(() => {
+    const ids = notificationItems.map((item) => item.id);
+    if (!notificationsLoaded) return;
+    if (notificationSnapshotRef.current && ids.some((id) => !notificationSnapshotRef.current.includes(id))) {
+      setIncomingNotification(true);
+      window.clearTimeout(notificationRingTimerRef.current);
+      notificationRingTimerRef.current = window.setTimeout(() => setIncomingNotification(false), 2000);
+    }
+    notificationSnapshotRef.current = ids;
+  }, [notificationItems, notificationsLoaded]);
+  useEffect(() => () => window.clearTimeout(notificationRingTimerRef.current), []);
+  useEffect(() => {
+    const closeOutside = (event) => {
+      if (notificationMenuRef.current && !notificationMenuRef.current.contains(event.target)) setNotificationMenuOpen(false);
+    };
+    document.addEventListener("pointerdown", closeOutside);
+    return () => document.removeEventListener("pointerdown", closeOutside);
+  }, []);
   const go = (target) => { const p = target; setPage(p); setDrawer(false); const g = NAV.find((n) => n.kids?.some((k) => k[0] === p)); if (g) setOpen(g.label); };
   useEffect(() => {
     pageScrollRef.current?.scrollTo({ top: 0, behavior: "auto" });
@@ -3750,9 +3855,10 @@ export default function HrDashboard({ user, onLogout } = {}) {
     setDb,
     darkMode,
     toggleDarkMode: () => setDarkMode((current) => !current),
+    notificationItems,
+    markNotificationRead,
+    markAllNotificationsRead,
   };
-  const pend = db.leaves.filter((l) => l.status === "Pending").length + (db.hrNotifications || []).filter((item) => !item.read).length;
-
   const PAGES = {
     Dashboard: <Dash c={c} />, "Create Profile": <CreateProfile c={c} />,
     "Employee Profiles": <EmpList c={c} cards setId={setIdSel} />, "View All Employee": <AllEmployees c={c} />,
@@ -3803,7 +3909,19 @@ export default function HrDashboard({ user, onLogout } = {}) {
           <div className="hr-title"><small>{profile.company}</small><h1>{getPageTitle(page)}</h1></div>
           <div className="hr-actions">
             <span className="hr-pill hr-date"><Calendar size={16} /> {today}</span>
-            <button className="hr-pill" onClick={() => go("HR Notifications")}><Bell size={16} /> Alerts{pend > 0 && <em className="hr-dot">{pend}</em>}</button>
+            <div className="hr-notifications-wrap" ref={notificationMenuRef}>
+              <button className={`hr-pill hr-notification-bell${unreadNotificationCount ? " has-unread" : ""}${incomingNotification ? " has-incoming" : ""}`} type="button" title="Notifications" aria-label={`Notifications${unreadNotificationCount ? `, ${unreadNotificationCount} unread` : ""}`} aria-expanded={notificationMenuOpen} onClick={() => setNotificationMenuOpen((current) => !current)}>
+                <BellRing size={16} />
+                {unreadNotificationCount > 0 && <span className="hr-notification-badge">{unreadNotificationCount > 99 ? "99+" : unreadNotificationCount}</span>}
+              </button>
+              {notificationMenuOpen && <div className="hr-notifications-menu" role="dialog" aria-label="Notifications">
+                <div className="hr-notifications-menu-head"><strong>Notifications</strong><button type="button" onClick={markAllNotificationsRead} disabled={!unreadNotificationCount}>Mark all read</button></div>
+                <div className="hr-notifications-list">{notificationItems.slice(0, 6).map((item) => <button key={item.id} type="button" className={`hr-notification-item${item.read ? "" : " is-unread"}`} onClick={() => openNotification(item)}>
+                  {!item.read && <i aria-hidden="true" />}<span>{item.message}<small>{item.createdAt ? new Date(item.createdAt).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" }) : "Just now"}</small></span>
+                </button>)}{!notificationItems.length && <p>No notifications yet.</p>}</div>
+                <button className="hr-notifications-view-all" type="button" onClick={() => { setNotificationMenuOpen(false); go("HR Notifications"); }}>View all notifications</button>
+              </div>}
+            </div>
             <button className="hr-btn" onClick={() => go("Create Profile")}><UserPlus size={16} /> Add employee</button>
             <button className="hr-btn" onClick={() => go("Assign Tasks")}><Plus size={16} /> Assign task</button>
           </div>
