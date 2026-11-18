@@ -48,3 +48,17 @@ export function filterAttendanceReportRows(rows, { status = "All", dateFrom = ""
     && (!dateFrom || row.date >= dateFrom)
     && (!dateTo || row.date <= dateTo));
 }
+
+export function pendingLeaveRequestForDate(leaves = [], date = "", employeeId = "") {
+  return leaves.find((leave) => {
+    if (String(leave?.status || "").trim().toLowerCase() !== "pending") return false;
+    if (employeeId && leave?.employeeId && String(leave.employeeId) !== String(employeeId)) return false;
+    return String(leave?.from || "") <= date && String(leave?.to || "") >= date;
+  }) || null;
+}
+
+export function attendanceReportStatusLabel(row, leaves = [], employeeId = "", today = attendanceDateInIndia()) {
+  if (row?.status !== "Pending") return row?.status || "-";
+  if (pendingLeaveRequestForDate(leaves, row.date, employeeId)) return "Leave Applied";
+  return row?.date && row.date < today ? "Pending Sync" : "Apply Leave";
+}

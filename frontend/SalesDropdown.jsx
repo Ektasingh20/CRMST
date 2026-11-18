@@ -17,6 +17,7 @@ function buildOptions(children, options) {
       key: option.key ?? `${option.value}-${index}`,
       value: String(option.value ?? ""),
       searchText: option.searchText ?? optionText(option.label),
+      isFilterReset: Boolean(option.isFilterReset),
     }));
   }
 
@@ -31,6 +32,7 @@ function buildOptions(children, options) {
         label,
         searchText: optionText(label),
         disabled: child.props.disabled,
+        isFilterReset: child.props["data-filter-reset"] === "true",
       };
     });
 }
@@ -46,6 +48,7 @@ export default function SalesDropdown({
   menuClassName = "",
   searchable = false,
   placeholder,
+  hideSelectedResetOption = false,
   required = false,
   id,
   style,
@@ -61,6 +64,12 @@ export default function SalesDropdown({
   const listboxId = `${controlId}-options`;
   const allOptions = useMemo(() => buildOptions(children, options), [children, options]);
   const selected = allOptions.find((option) => option.value === String(value ?? ""));
+  const menuOptions = useMemo(
+    () => hideSelectedResetOption
+      ? allOptions.filter((option) => !(option.isFilterReset && option.value === String(value ?? "")))
+      : allOptions,
+    [allOptions, hideSelectedResetOption, value],
+  );
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
@@ -75,9 +84,9 @@ export default function SalesDropdown({
   const visibleOptions = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase();
     return normalizedQuery
-      ? allOptions.filter((option) => option.searchText.toLocaleLowerCase().includes(normalizedQuery))
-      : allOptions;
-  }, [allOptions, query]);
+      ? menuOptions.filter((option) => option.searchText.toLocaleLowerCase().includes(normalizedQuery))
+      : menuOptions;
+  }, [menuOptions, query]);
   const activeOption = visibleOptions[activeIndex];
 
   useLayoutEffect(() => {
@@ -215,8 +224,8 @@ export default function SalesDropdown({
       typeaheadRef.current += event.key.toLocaleLowerCase();
       if (typeaheadTimerRef.current) window.clearTimeout(typeaheadTimerRef.current);
       typeaheadTimerRef.current = window.setTimeout(() => { typeaheadRef.current = ""; }, 600);
-      const start = allOptions.findIndex((option) => option.value === String(value ?? ""));
-      const orderedOptions = [...allOptions.slice(start + 1), ...allOptions.slice(0, start + 1)];
+      const start = menuOptions.findIndex((option) => option.value === String(value ?? ""));
+      const orderedOptions = [...menuOptions.slice(start + 1), ...menuOptions.slice(0, start + 1)];
       const match = orderedOptions.find((option) => !option.disabled && option.searchText.toLocaleLowerCase().startsWith(typeaheadRef.current));
       if (match) {
         onChange?.({ target: { value: match.value } });

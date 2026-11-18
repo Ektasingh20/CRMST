@@ -5,19 +5,19 @@ import { useMessageTemplates } from "../../useMessageTemplates.js";
 import { resolveLeadTemplate, templateSelectionPatch } from "../../whatsAppMessage.js";
 import RemarkField from "../../RemarkField.jsx";
 import { callLeadForm, callLeadProgram, callLeadReviewStatus, isCallLead } from "../../callLeads.js";
-import { createTask as createTaskApi, fetchTasks, updateTask as updateTaskApi, fetchAttendanceMonth, fetchAttendanceCalendar, fetchTodayAttendance, checkInAttendance, checkOutAttendance, fetchLeaves, createLeave, fetchMyProfile, updateMyProfile, uploadMyProfileDocument, uploadMyProfilePhoto, downloadMyProfileDocument, fetchAppNotifications, markAppNotificationRead } from "../../backendApi.js";
+import { createTask as createTaskApi, fetchTasks, updateTask as updateTaskApi, fetchAttendanceMonth, fetchAttendanceCalendar, fetchTodayAttendance, checkInAttendance, checkOutAttendance, syncAttendanceHistory, fetchLeaves, createLeave, fetchMyProfile, updateMyProfile, uploadMyProfileDocument, uploadMyProfilePhoto, downloadMyProfileDocument, fetchAppNotifications, markAppNotificationRead } from "../../backendApi.js";
 import { compressImageFile } from "../../imageUpload.js";
 import PasswordResetLink from "../PasswordResetLink.jsx";
 import HelpdeskChat, { HelpdeskIncomingToast } from "../shared/HelpdeskChat.jsx";
 import LogoutConfirmDialog from "../shared/LogoutConfirmDialog.jsx";
-import { buildAttendanceReportRows, filterAttendanceReportRows, getAttendanceReportDateRange, getAttendanceReportMonths } from "./attendanceReport.js";
+import { attendanceReportStatusLabel, buildAttendanceReportRows, filterAttendanceReportRows, getAttendanceReportDateRange, getAttendanceReportMonths, pendingLeaveRequestForDate } from "./attendanceReport.js";
 import { isValidAadhaar, isValidBankAccount, isValidBankText, isValidEmail, isValidIfsc, isValidIndianMobile, isValidPan, isValidPersonName, isValidProfileDob, isValidRelationship } from "../../../shared/profileValidation.js";
 import SalesTableHead from "./SalesTableHead.jsx";
 import SalesDropdown from "../../SalesDropdown.jsx";
 import { TRAINING_CALL_LIST_PROGRAMS, SERVICE_CALL_LIST_SERVICES, CALL_STATUS_OPTIONS, CALL_LIST_INTEREST_STATUS_OPTIONS, normalizeCallStatus, normalizeInterestStatus, normalizeCallProgram, isCallContactLocked, matchesCallListFilters, callListRecordDate, callLeadRecordDate } from "../../callListConfig.js";
 import { isCrmPageLoading } from "./crmPageLoading.js";
 import { BellRing, CalendarDays, Check, CheckCircle2, CircleAlert, CircleX, Clock3, CreditCard, Download, Eye, FileText, Hourglass, ImagePlus, ListChecks, LoaderCircle, LockKeyhole, MessageSquareText, Phone, RefreshCw, Search, Upload, UploadCloud, UserCircle, Users, Wallet } from "lucide-react";
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -128,12 +128,20 @@ const CALL_STATUS_CHOICES = [
 function CallListStatusSelect({ contact, disabled, completionOnly = false, onChange }) {
   const status = normalizeCallStatus(contact.callStatus);
   const selected = CALL_STATUS_CHOICES.find((choice) => choice.value === status) || CALL_STATUS_CHOICES[0];
-  const availableChoices = completionOnly ? CALL_STATUS_CHOICES.filter((choice) => choice.value === "Completed") : CALL_STATUS_CHOICES;
+  const availableChoices = completionOnly
+    ? CALL_STATUS_CHOICES.filter((choice) => ["Follow Up", "Completed"].includes(choice.value))
+    : CALL_STATUS_CHOICES;
   const statusClass = (selected.value || "choose").toLowerCase().replace(/\s+/g, "-");
 
   return <SalesDropdown
     value={status}
-    options={availableChoices.map(({ value, label, Icon: StatusIcon }) => ({ value, label, icon: StatusIcon, className: value ? value.toLowerCase().replace(/\s+/g, "-") : "choose" }))}
+    options={availableChoices.map(({ value, label, Icon: StatusIcon }) => ({
+      value,
+      label,
+      icon: StatusIcon,
+      disabled: completionOnly && value !== "Completed",
+      className: value ? value.toLowerCase().replace(/\s+/g, "-") : "choose",
+    }))}
     onChange={(event) => onChange(event.target.value)}
     disabled={disabled}
     wrapperClassName={`call-list-status-control call-list-status-${statusClass}`}
@@ -762,8 +770,15 @@ function emptyContactForm() {
   };
 }
 
+function ContactFormError({ id, children }) {
+  if (!children) return null;
+  return <span id={id} className="contact-form-error" role="alert"><CircleAlert size={14} aria-hidden="true" />{children}</span>;
+}
+
 function ContactFormModal({ initial, onClose, onSave, category, templates, templatesLoading, templatesError, saving = false, readOnly = false }) {
   const leadType = category === "Training" ? "training" : "service";
+  const validationId = useId();
+  const errorId = (field) => `${validationId}-${field}-error`;
   const [form, setForm] = useState({
     ...initial,
     // A contact date is assigned by the system. Existing contacts retain their
@@ -801,12 +816,8 @@ function ContactFormModal({ initial, onClose, onSave, category, templates, templ
     if (!form.name.trim()) nextErrors.name = "Full name is required";
     else if (!/^[a-zA-Z][a-zA-Z .'-]*$/.test(form.name.trim())) nextErrors.name = "Use letters, spaces, apostrophes, or hyphens only";
     if (!/^[6-9]\d{9}$/.test(form.contact.trim())) nextErrors.contact = "Enter a valid Indian mobile number";
-    if (!resolveLeadTemplate(form, leadType, templates)
-      && !(initial.id && form.program && form.program === initial.program)) nextErrors.program = `Select a ${category === "Training" ? "training" : "service"}`;
-    if (!CALL_STATUS_OPTIONS.includes(form.callStatus)) nextErrors.callStatus = "Select a call status";
     if (!INTERACTION_TYPES.includes(form.interactionType)) nextErrors.interactionType = "Select an interaction type";
     if (!INTEREST_STATUS_OPTIONS.includes(form.interestStatus)) nextErrors.interestStatus = "Select an interest status";
-    if (!form.remark.trim()) nextErrors.remark = "Remark is required";
     if (Object.keys(nextErrors).length) {
       setErrors(nextErrors);
       return;
@@ -819,12 +830,12 @@ function ContactFormModal({ initial, onClose, onSave, category, templates, templ
       <fieldset className="crm-enquiry-fieldset" disabled={readOnly}>
       <div className="form-grid">
         <div className="field">
-          <span>Full Name *</span>
-          <input value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="e.g. Rohit Malhotra" maxLength={80} required aria-required="true" aria-invalid={Boolean(errors.name)} />
-          {errors.name && <span className="field-error">{errors.name}</span>}
+          <span>Full Name <span className="contact-required-marker" aria-hidden="true">*</span></span>
+          <input value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="e.g. Rohit Malhotra" maxLength={80} required aria-required="true" aria-invalid={Boolean(errors.name)} aria-describedby={errors.name ? errorId("name") : undefined} />
+          <ContactFormError id={errorId("name")}>{errors.name}</ContactFormError>
         </div>
         <div className="field">
-          <span>Contact Number *</span>
+          <span>Contact Number <span className="contact-required-marker" aria-hidden="true">*</span></span>
           <div className="india-phone-input">
             <span className="india-phone-prefix" aria-label="India country code plus 91">
               <span className="india-flag" aria-hidden="true" />
@@ -836,6 +847,7 @@ function ContactFormModal({ initial, onClose, onSave, category, templates, templ
               required
               aria-required="true"
               aria-invalid={Boolean(errors.contact)}
+              aria-describedby={errors.contact ? errorId("contact") : undefined}
               value={form.contact}
               onChange={(e) => set("contact", e.target.value.replace(/\D/g, "").slice(0, 10))}
               maxLength={10}
@@ -844,10 +856,10 @@ function ContactFormModal({ initial, onClose, onSave, category, templates, templ
               aria-label="Indian mobile number, starting with 6, 7, 8, or 9"
             />
           </div>
-          {errors.contact && <span className="field-error">{errors.contact}</span>}
+          <ContactFormError id={errorId("contact")}>{errors.contact}</ContactFormError>
         </div>
         <div className="field">
-          <span>Date</span>
+          <span>Date <span className="contact-auto-label">Set automatically</span></span>
           <input value={formatDisplayDate(form.date)} readOnly aria-label="Date set automatically to today" />
         </div>
         <div className="field">
@@ -855,7 +867,6 @@ function ContactFormModal({ initial, onClose, onSave, category, templates, templ
           <SalesDropdown searchable aria-label={category === "Training" ? "Training" : "Service"} value={resolveLeadTemplate(form, leadType, templates)?.id || (form.program ? `legacy:${form.program}` : "")} disabled={templatesLoading || Boolean(templatesError)} onChange={(e) => {
             const selected = templates.find((template) => template.id === e.target.value);
             setForm((current) => ({ ...current, ...templateSelectionPatch(leadType, selected) }));
-            setErrors((current) => ({ ...current, program: undefined }));
           }}>
             <option value="">{templatesLoading ? "Loading options..." : templatesError ? "Could not load options" : category === "Training" ? "Select Training" : "Select Service"}</option>
             {form.program && !resolveLeadTemplate(form, leadType, templates) && <option value={`legacy:${form.program}`}>{form.program} (previous selection)</option>}
@@ -864,7 +875,6 @@ function ContactFormModal({ initial, onClose, onSave, category, templates, templ
             ))}
           </SalesDropdown>
           {templatesError && <span className="field-error" role="alert">Could not load message templates: {templatesError}</span>}
-          {errors.program && <span className="field-error">{errors.program}</span>}
         </div>
         <div className="field">
           <span>Call Status</span>
@@ -874,31 +884,29 @@ function ContactFormModal({ initial, onClose, onSave, category, templates, templ
               <option key={p}>{p}</option>
             ))}
           </SalesDropdown>
-          {errors.callStatus && <span className="field-error">{errors.callStatus}</span>}
         </div>
         <div className="field">
-          <span>Interaction Type</span>
-          <SalesDropdown aria-label="Interaction Type" value={form.interactionType} onChange={(e) => set("interactionType", e.target.value)}>
+          <span>Interaction Type <span className="contact-required-marker" aria-hidden="true">*</span></span>
+          <SalesDropdown required aria-label="Interaction Type" value={form.interactionType} aria-invalid={Boolean(errors.interactionType)} aria-describedby={errors.interactionType ? errorId("interactionType") : undefined} onChange={(e) => set("interactionType", e.target.value)}>
             <option value="">Select Interaction</option>
             {INTERACTION_TYPES.map((p) => (
               <option key={p}>{p}</option>
             ))}
           </SalesDropdown>
-          {errors.interactionType && <span className="field-error">{errors.interactionType}</span>}
+          <ContactFormError id={errorId("interactionType")}>{errors.interactionType}</ContactFormError>
         </div>
         <div className="field">
-          <span>Interest Status</span>
-          <SalesDropdown aria-label="Interest Status" value={normalizeInterestStatus(form.interestStatus)} onChange={(e) => set("interestStatus", e.target.value)}>
+          <span>Interest Status <span className="contact-required-marker" aria-hidden="true">*</span></span>
+          <SalesDropdown required aria-label="Interest Status" value={normalizeInterestStatus(form.interestStatus)} aria-invalid={Boolean(errors.interestStatus)} aria-describedby={errors.interestStatus ? errorId("interestStatus") : undefined} onChange={(e) => set("interestStatus", e.target.value)}>
             {INTEREST_STATUS_OPTIONS.map((p) => (
               <option key={p}>{p}</option>
             ))}
           </SalesDropdown>
-          {errors.interestStatus && <span className="field-error">{errors.interestStatus}</span>}
+          <ContactFormError id={errorId("interestStatus")}>{errors.interestStatus}</ContactFormError>
         </div>
         <div className="field span-full">
           <span>Remark</span>
           <textarea value={form.remark} onChange={(e) => set("remark", e.target.value)} placeholder="Notes about this contact..." maxLength={500} />
-          {errors.remark && <span className="field-error">{errors.remark}</span>}
         </div>
       </div>
       </fieldset>
@@ -907,7 +915,7 @@ function ContactFormModal({ initial, onClose, onSave, category, templates, templ
           Cancel
         </button>
         {!readOnly && (
-          <button className="primary-button" onClick={handleSave} disabled={saving || !form.name.trim() || !form.contact.trim()}>
+          <button className="primary-button" onClick={handleSave} disabled={saving}>
             <IconCheck size={16} /> {saving ? "Saving..." : "Save Contact"}
           </button>
         )}
@@ -1096,11 +1104,11 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
   const exportPdf = () => {
     const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
     pdf.setFontSize(16); pdf.text(`${title} Report`, 14, 14);
-    pdf.setFontSize(9); pdf.setTextColor(100); pdf.text(`${filtered.length} filtered contact(s)`, 14, 20);
+    pdf.setFontSize(9); pdf.setTextColor(100); pdf.text(`${pageRows.length} visible contact(s) · Page ${page} of ${totalPages}`, 14, 20);
     autoTable(pdf, {
       startY: 25,
       head: [["S. No.", "Date", "Name", "Contact", "Call Status", "Interest", category === "Services" ? "Service" : "Training", "Remark"]],
-      body: filtered.map((c, index) => [index + 1, formatDisplayDate(contactDate(c)), c.name || "-", c.contact || "-", normalizeCallStatus(c.callStatus) || "Choose", normalizeInterestStatus(c.interestStatus), normalizeCallProgram(c.program) || "-", c.remark || "-"]),
+      body: pageRows.map((c, index) => [(page - 1) * pageSize + index + 1, formatDisplayDate(contactDate(c)), c.name || "-", c.contact || "-", normalizeCallStatus(c.callStatus) || "Choose", normalizeInterestStatus(c.interestStatus), normalizeCallProgram(c.program) || "-", c.remark || "-"]),
       styles: { fontSize: 7, cellPadding: 2, overflow: "linebreak" }, headStyles: { fillColor: [127, 78, 43] },
     });
     pdf.save(`${String(title).toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${todayISO()}.pdf`);
@@ -1111,7 +1119,7 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
       <div className="call-list-controls">
       <div className="panel-head">
         <h3>{title}</h3>
-        <div className="row-actions"><button className="primary-button call-list-export-button" onClick={exportPdf} disabled={!filtered.length}><IconDownload size={16} /> Export PDF <span className="call-list-button-count">{filtered.length}</span></button><button className="primary-button call-list-add-button" onClick={() => setModalState({ ...emptyContactForm(), program: "", callListCategory: category })}><IconPlus size={16} /> {addLabel}</button></div>
+        <div className="row-actions"><button className="primary-button call-list-export-button" onClick={exportPdf} disabled={!pageRows.length}><IconDownload size={16} /> Export PDF <span className="call-list-button-count">{pageRows.length}</span></button><button className="primary-button call-list-add-button" onClick={() => setModalState({ ...emptyContactForm(), program: "", callListCategory: category })}><IconPlus size={16} /> {addLabel}</button></div>
       </div>
 
       {templatesError && <p className="field-error" role="alert">Could not load message templates: {templatesError}</p>}
@@ -1133,22 +1141,22 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
           {searchInput && <button type="button" className="toolbar-search-clear" aria-label="Clear search" title="Clear search" onClick={() => { setSearchInput(""); setSearch(""); setPage(1); }}><IconClose size={16} /></button>}
         </div>
         <div className="toolbar-filters">
-          <SalesDropdown searchable aria-label={category === "Services" ? "Filter by service" : "Filter by training"} value={programFilter} onChange={(e) => setProgramFilter(e.target.value)}>
-            <option value="All">{category === "Services" ? "All Services" : "All Training"}</option>
+          <SalesDropdown searchable hideSelectedResetOption aria-label={category === "Services" ? "Filter by service" : "Filter by training"} value={programFilter} onChange={(e) => setProgramFilter(e.target.value)}>
+            <option value="All" data-filter-reset="true">{category === "Services" ? "All Services" : "All Training"}</option>
             <option value="">Unspecified</option>
             {[...new Set([...templates.map((template) => template.title), ...contacts.filter((contact) => (contact.callListCategory || getCallListCategory(contact.program)) === category).map((contact) => normalizeCallProgram(contact.program)).filter(Boolean)])].map((p) => (
               <option key={p}>{p}</option>
             ))}
           </SalesDropdown>
-          <SalesDropdown aria-label="Filter by call status" value={callStatusFilter} onChange={(e) => setCallStatusFilter(e.target.value)}>
-            <option value="All">All Call Status</option>
+          <SalesDropdown hideSelectedResetOption aria-label="Filter by call status" value={callStatusFilter} onChange={(e) => setCallStatusFilter(e.target.value)}>
+            <option value="All" data-filter-reset="true">All Call Status</option>
             <option value="">Choose</option>
             {CALL_STATUS_OPTIONS.map((p) => (
               <option key={p}>{p}</option>
             ))}
           </SalesDropdown>
-          <SalesDropdown aria-label="Filter by interest status" value={interestFilter} onChange={(e) => setInterestFilter(e.target.value)}>
-            <option value="All">All Interest</option>
+          <SalesDropdown hideSelectedResetOption aria-label="Filter by interest status" value={interestFilter} onChange={(e) => setInterestFilter(e.target.value)}>
+            <option value="All" data-filter-reset="true">All Interest</option>
             {CALL_LIST_INTEREST_STATUS_OPTIONS.map((p) => (
               <option key={p}>{p}</option>
             ))}
@@ -1187,7 +1195,7 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
             {pageRows.length === 0 && <EmptyRow colSpan={10} text={`No ${category.toLowerCase()} contacts match the selected filters.`} />}
             {pageRows.map((c, idx) => {
               const locked = isConvertedToLead(c);
-              const canCompleteSavedLead = Boolean(c.leadDraft)
+              const canCompleteSavedLead = locked
                 && normalizeCallStatus(c.callStatus) === "Follow Up";
               const saveStatus = saveStatuses[`${c.listType}:${c.id}`];
               const saveLabel = locked || saveStatus === "saved" ? "Saved"
@@ -1208,10 +1216,10 @@ function CallListTab({ contacts, setContacts, showToast, category, title, addLab
                 <td>{c.contact}</td>
                 <td>
                   <div className="row-actions">
-                    <button className="row-icon-btn call" title={locked ? "Saved lead contact is view-only" : c.lastCallClickedAt ? `Last call button click: ${new Date(c.lastCallClickedAt).toLocaleString()}` : "Call"} disabled={locked} onClick={() => handleCall(c)}>
+                    <button className="row-icon-btn call" title={c.lastCallClickedAt ? `Last call button click: ${new Date(c.lastCallClickedAt).toLocaleString()}` : "Call"} aria-label={`Call ${c.name || "contact"}`} onClick={() => handleCall(c)}>
                       <IconPhone size={16} />
                     </button>
-                    <button className="row-icon-btn whatsapp" title={locked ? "Saved lead contact is view-only" : "WhatsApp"} disabled={locked} onClick={() => handleWhatsapp(c)}>
+                    <button className="row-icon-btn whatsapp" title="WhatsApp" aria-label={`Open WhatsApp for ${c.name || "contact"}`} onClick={() => handleWhatsapp(c)}>
                       <IconWhatsapp size={16} />
                     </button>
                   </div>
@@ -1437,6 +1445,7 @@ function AssignedLeadsTab({ leads, callLeadRows, currentUser }) {
       <CallLeadsPanel
         rows={callLeadRows}
         largeText
+        hideSelectedResetOption
         currentUser={currentUser}
         assignedTo={currentUserId}
         showAssignee={false}
@@ -1679,7 +1688,7 @@ function LeadsTab({ rows, users, currentUser, onSave, onApprove, onDelete, onCre
     finally { setSaving(false); }
   };
   return <>
-    <CallLeadsPanel rows={rows} users={users} currentUser={currentUser} largeText compactHeader onSave={onSave} onApprove={onApprove} onDelete={onDelete} onAdd={(row) => setInitial({ record: row, form: { ...callLeadForm(row), ...row.leadDraft } })} onView={(row) => setInitial({ record: row, form: { ...callLeadForm(row), ...row.leadDraft }, readOnly: true })} onUploadLead={() => setInitial({ record: null, form: callLeadForm({ listType: "services" }) })} showAssignee={false} lockCreatedLead />
+    <CallLeadsPanel rows={rows} users={users} currentUser={currentUser} largeText compactHeader hideSelectedResetOption allowUnapprovedDraftEdits onSave={onSave} onApprove={onApprove} onDelete={onDelete} onAdd={(row) => setInitial({ record: row, form: { ...callLeadForm(row), ...row.leadDraft } })} onView={(row) => setInitial({ record: row, form: { ...callLeadForm(row), ...row.leadDraft }, readOnly: true })} onUploadLead={() => setInitial({ record: null, form: callLeadForm({ listType: "services" }) })} showAssignee={false} lockCreatedLead />
     {initial && <LeadFormModal initial={initial.form} users={users} currentUser={currentUser} saving={saving} readOnly={Boolean(initial.readOnly)} title={initial.readOnly ? "View saved lead form" : undefined} onClose={() => setInitial(null)} onSave={create} hideAssignment draftSaved={Boolean(initial.record?.leadDraft)} saveLabel={initial.record ? "Save lead form" : "Save lead"} />}
   </>;
 }
@@ -1719,6 +1728,7 @@ function ApprovedLeadsTab({ leads, sourceContacts, currentUser }) {
     showContactActions={false}
     canEditCallData={false}
     lockCreatedLead
+    hideSelectedResetOption
     onSave={async () => {}}
     title="Approved Leads"
     subtitle="Leads created by you from Call Leads"
@@ -1760,28 +1770,28 @@ function SalesReportTableTab({ contacts, setContacts, currentUser, users, onSave
   useEffect(() => { setEnquiriesPage((current) => Math.min(current, enquiriesTotalPages)); }, [enquiriesTotalPages]);
   useEffect(() => { setFilledPage((current) => Math.min(current, filledTotalPages)); }, [filledTotalPages]);
   const exportSalesEnquiriesPdf = () => {
-    if (!filtered.length) return;
+    if (!visibleEnquiries.length) return;
     const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
     pdf.setFontSize(16); pdf.text(`${scope === "All" ? "All" : scope} Sales Enquiries`, 14, 14);
-    pdf.setFontSize(9); pdf.setTextColor(100); pdf.text(`${filtered.length} filtered record(s)`, 14, 20);
+    pdf.setFontSize(9); pdf.setTextColor(100); pdf.text(`${visibleEnquiries.length} visible record(s) · Page ${enquiriesPage} of ${enquiriesTotalPages}`, 14, 20);
     autoTable(pdf, {
       startY: 25,
       head: [["S. No.", "Program", "Lead Name", "Contact", "Call Status", "Interest", "Approval", "Enquiry"]],
-      body: filtered.map((contact, index) => [index + 1, contact.program || "-", contact.name || "-", contact.contact || "-", normalizeCallStatus(contact.callStatus) || "-", normalizeInterestStatus(contact.interestStatus) || "-", salesReportApproved(contact) ? "Approved" : callLeadReviewStatus(contact) || "Not reviewed", contact.leadDraft ? "Filled" : "Not filled"]),
+      body: visibleEnquiries.map((contact, index) => [(enquiriesPage - 1) * enquiriesPageSize + index + 1, contact.program || "-", contact.name || "-", contact.contact || "-", normalizeCallStatus(contact.callStatus) || "-", normalizeInterestStatus(contact.interestStatus) || "-", salesReportApproved(contact) ? "Approved" : callLeadReviewStatus(contact) || "Not reviewed", contact.leadDraft ? "Filled" : "Not filled"]),
       styles: { fontSize: 8, cellPadding: 2.4, overflow: "linebreak" },
       headStyles: { fillColor: [128, 71, 39] },
     });
     pdf.save(`sales-enquiries-${scope.toLowerCase()}-${todayISO()}.pdf`);
   };
   const exportFilledEnquiriesPdf = () => {
-    if (!filled.length) return;
+    if (!visibleFilled.length) return;
     const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
     pdf.setFontSize(16); pdf.text(`${scope === "All" ? "All" : scope} Filled Enquiries`, 14, 14);
-    pdf.setFontSize(9); pdf.setTextColor(100); pdf.text(`${filled.length} completed form(s)`, 14, 20);
+    pdf.setFontSize(9); pdf.setTextColor(100); pdf.text(`${visibleFilled.length} visible completed form(s) · Page ${filledPage} of ${filledTotalPages}`, 14, 20);
     autoTable(pdf, {
       startY: 25,
       head: [["S. No.", "Program", "Lead Name", "Contact", "City", "Company", "Form Status"]],
-      body: filled.map((contact, index) => [index + 1, contact.leadDraft.interest || contact.program || "-", contact.leadDraft.name || contact.name || "-", contact.leadDraft.phone || contact.contact || "-", contact.leadDraft.city || "-", contact.leadDraft.company || "-", "Filled"]),
+      body: visibleFilled.map((contact, index) => [(filledPage - 1) * filledPageSize + index + 1, contact.leadDraft.interest || contact.program || "-", contact.leadDraft.name || contact.name || "-", contact.leadDraft.phone || contact.contact || "-", contact.leadDraft.city || "-", contact.leadDraft.company || "-", "Filled"]),
       styles: { fontSize: 8, cellPadding: 2.4, overflow: "linebreak" },
       headStyles: { fillColor: [128, 71, 39] },
     });
@@ -1804,18 +1814,18 @@ function SalesReportTableTab({ contacts, setContacts, currentUser, users, onSave
     : <button type="button" className="sales-report-icon" title="Fill enquiry form" aria-label={`Fill enquiry form for ${contact.name}`} onClick={() => openForm(contact, "fill")}><IconFillEnquiry size={16} /></button>;
   return <div className="sales-report-tables">
     <div className="panel sales-report-table-panel">
-      <div className="panel-head"><div><h3>Sales enquiries</h3><p className="panel-subtitle">Qualified contacts from your assigned call lists</p></div><div className="sales-report-head-actions"><span className="sales-report-count">{filtered.length} records</span><button type="button" className="primary-button sales-report-export-button" disabled={!filtered.length} onClick={exportSalesEnquiriesPdf}><IconDownload size={16} /> Export PDF <span>{filtered.length}</span></button></div></div>
+      <div className="panel-head"><div><h3>Sales enquiries</h3><p className="panel-subtitle">Qualified contacts from your assigned call lists</p></div><div className="sales-report-head-actions"><span className="sales-report-count">{filtered.length} records</span><button type="button" className="primary-button sales-report-export-button" disabled={!visibleEnquiries.length} onClick={exportSalesEnquiriesPdf}><IconDownload size={16} /> Export PDF <span>{visibleEnquiries.length}</span></button></div></div>
       <div className="sales-report-table-filters">
         <div className="sales-report-scope" role="tablist" aria-label="Report type">{["All", "Services", "Training"].map((item) => <button key={item} type="button" role="tab" aria-selected={scope === item} className={scope === item ? "active" : ""} onClick={() => setScope(item)}>{item}</button>)}</div>
         <div className="sales-report-search"><Search size={17} aria-hidden="true" /><input type="search" aria-label="Search sales enquiries" placeholder="Search name, contact or program" value={query} onChange={(event) => setQuery(event.target.value)} /></div>
-        <SalesDropdown aria-label="Filter by action" value={action} onChange={(event) => setAction(event.target.value)}><option value="All">All actions</option><option>Approved</option><option>Form filled</option><option>Form needed</option></SalesDropdown>
+        <SalesDropdown hideSelectedResetOption aria-label="Filter by action" value={action} onChange={(event) => setAction(event.target.value)}><option value="All" data-filter-reset="true">All actions</option><option>Approved</option><option>Form filled</option><option>Form needed</option></SalesDropdown>
       </div>
       <div className="sales-report-table-scroll" tabIndex={0} role="region" aria-label="Sales enquiries table. Scroll horizontally to see all columns."><table className="sales-report-table sales-report-enquiries-table"><SalesTableHead><tr><th>SR NO</th><th>PROGRAM</th><th>LEAD NAME</th><th>CONTACT</th><th>CALL STATUS</th><th>INTEREST</th><th>APPROVAL</th><th>ENQUIRY</th><th>ACTION</th></tr></SalesTableHead><tbody>
         {filtered.length ? visibleEnquiries.map((contact, index) => <tr key={`${contact.listType}-${contact.id}`}><td>{(enquiriesPage - 1) * enquiriesPageSize + index + 1}</td><td>{contact.program || "—"}</td><td className="sales-report-name">{contact.name || "—"}</td><td>{contact.contact || "—"}</td><td>{normalizeCallStatus(contact.callStatus) || "—"}</td><td>{normalizeInterestStatus(contact.interestStatus) || "—"}</td><td><span className={`sales-report-badge ${salesReportApproved(contact) ? "approved" : "pending"}`}>{salesReportApproved(contact) ? "Approved" : callLeadReviewStatus(contact) || "Not reviewed"}</span></td><td><span className={`sales-report-badge ${contact.leadDraft ? "filled" : "needed"}`}>{contact.leadDraft ? "Filled" : "Not filled"}</span></td><td>{renderActions(contact)}</td></tr>) : <tr><td colSpan={9} className="sales-report-no-results">No enquiries match these filters.</td></tr>}
       </tbody></table></div>
       <Pagination page={enquiriesPage} totalPages={enquiriesTotalPages} totalItems={filtered.length} pageSize={enquiriesPageSize} onPageSizeChange={(size) => { setEnquiriesPageSize(size); setEnquiriesPage(1); }} onChange={setEnquiriesPage} className="sales-report-pagination" />
     </div>
-    <div className="panel sales-report-table-panel"><div className="panel-head"><div><h3>Filled enquiries</h3><p className="panel-subtitle">Saved form details from your sales contacts</p></div><div className="sales-report-head-actions"><span className="sales-report-count">{filled.length} forms</span><button type="button" className="primary-button sales-report-export-button" disabled={!filled.length} onClick={exportFilledEnquiriesPdf}><IconDownload size={16} /> Export PDF <span>{filled.length}</span></button></div></div><div className="sales-report-table-scroll" tabIndex={0} role="region" aria-label="Filled enquiries table. Scroll horizontally to see all columns."><table className="sales-report-table sales-report-filled-table"><SalesTableHead><tr><th>SR NO</th><th>PROGRAM</th><th>LEAD NAME</th><th>CONTACT</th><th>CITY</th><th>COMPANY</th><th>FORM STATUS</th><th>ACTION</th></tr></SalesTableHead><tbody>
+    <div className="panel sales-report-table-panel"><div className="panel-head"><div><h3>Filled enquiries</h3><p className="panel-subtitle">Saved form details from your sales contacts</p></div><div className="sales-report-head-actions"><span className="sales-report-count">{filled.length} forms</span><button type="button" className="primary-button sales-report-export-button" disabled={!visibleFilled.length} onClick={exportFilledEnquiriesPdf}><IconDownload size={16} /> Export PDF <span>{visibleFilled.length}</span></button></div></div><div className="sales-report-table-scroll" tabIndex={0} role="region" aria-label="Filled enquiries table. Scroll horizontally to see all columns."><table className="sales-report-table sales-report-filled-table"><SalesTableHead><tr><th>SR NO</th><th>PROGRAM</th><th>LEAD NAME</th><th>CONTACT</th><th>CITY</th><th>COMPANY</th><th>FORM STATUS</th><th>ACTION</th></tr></SalesTableHead><tbody>
       {filled.length ? visibleFilled.map((contact, index) => <tr key={`${contact.listType}-${contact.id}`}><td>{(filledPage - 1) * filledPageSize + index + 1}</td><td>{contact.leadDraft.interest || contact.program || "—"}</td><td className="sales-report-name">{contact.leadDraft.name || contact.name}</td><td>{contact.leadDraft.phone || contact.contact}</td><td>{contact.leadDraft.city || "—"}</td><td>{contact.leadDraft.company || "—"}</td><td><span className="sales-report-badge filled">Filled</span></td><td>{renderActions(contact)}</td></tr>) : <tr><td colSpan={8} className="sales-report-no-results">No filled enquiry forms match these filters.</td></tr>}
     </tbody></table></div><Pagination page={filledPage} totalPages={filledTotalPages} totalItems={filled.length} pageSize={filledPageSize} onPageSizeChange={(size) => { setFilledPageSize(size); setFilledPage(1); }} onChange={setFilledPage} className="sales-report-pagination" /></div>
     {formState && <LeadFormModal key={`${formState.contact.listType}-${formState.contact.id}-${formState.mode}`} initial={{ ...callLeadForm(formState.contact), ...formState.contact.leadDraft }} currentUser={currentUser} users={users} onClose={() => setFormState(null)} onSave={saveForm} saving={saving} readOnly={formState.mode === "view"} hideAssignment draftSaved={Boolean(formState.contact.leadDraft)} saveLabel={formState.mode === "edit" ? "Save changes" : "Save enquiry"} title={`${formState.mode === "view" ? "View" : formState.mode === "edit" ? "Edit" : "Fill"} enquiry form`} />}
@@ -2078,8 +2088,8 @@ function SalesReportAnalysisTab({ contacts, showToast }) {
 
       <div className="module-toolbar">
         <div className="toolbar-filters">
-          <SalesDropdown searchable aria-label="Filter by program" value={program} onChange={(e) => setProgram(e.target.value)}>
-            <option value="All">All Programs</option>
+          <SalesDropdown searchable hideSelectedResetOption aria-label="Filter by program" value={program} onChange={(e) => setProgram(e.target.value)}>
+            <option value="All" data-filter-reset="true">All Programs</option>
             {programOptions.map((p) => (
               <option key={p}>{p}</option>
             ))}
@@ -2290,7 +2300,7 @@ function TasksTab({ tasks, setTasks, showToast, currentUser }) {
         </div>
         <div className="toolbar-filters">
           <select aria-label="Filter tasks by priority" value={priorityFilter} onChange={(e) => setPriorityFilter(e.target.value)}>
-            <option value="All">All Priorities</option>
+            <option value="All" hidden={priorityFilter === "All"}>All Priorities</option>
             {TASK_PRIORITIES.map((p) => (
               <option key={p}>{p}</option>
             ))}
@@ -2622,12 +2632,13 @@ function MarkAttendanceTab({ attendance, setAttendance, showToast, profile }) {
 
 /* =========================== ATTENDANCE REPORT TAB ========================== */
 
-function AttendanceReportTab({ attendance, leaveRequests, joiningDate, employeeId, calendar, showToast, onMonthRequested }) {
+function AttendanceReportTab({ attendance, leaveRequests, joiningDate, employeeId, calendar, showToast, onMonthRequested, onApplyLeave, onSyncAttendance }) {
   const today = todayIndiaISO();
   const [monthFilter, setMonthFilter] = useState(currentMonthKey());
   const [statusFilter, setStatusFilter] = useState("All");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  const [syncing, setSyncing] = useState(false);
 
   const monthOptions = useMemo(() => getAttendanceReportMonths(joiningDate, today), [joiningDate, today]);
   const reportDateRange = useMemo(() => getAttendanceReportDateRange(monthFilter, today), [monthFilter, today]);
@@ -2644,7 +2655,7 @@ function AttendanceReportTab({ attendance, leaveRequests, joiningDate, employeeI
     { value: "Absent", label: "Absent" },
     { value: "Leave", label: "Leave" },
     { value: "Holiday", label: "Holiday" },
-    { value: "Pending", label: "Pending" },
+    { value: "Pending", label: "Leave action" },
   ];
 
   useEffect(() => {
@@ -2667,6 +2678,7 @@ function AttendanceReportTab({ attendance, leaveRequests, joiningDate, employeeI
     calendar,
   }), [attendance, calendar, employeeId, joiningDate, leaveRequests, monthFilter, today]);
   const rows = filterAttendanceReportRows(allRows, { status: statusFilter, dateFrom, dateTo });
+  const displayStatus = (row) => attendanceReportStatusLabel(row, leaveRequests, employeeId);
   const statusIcon = {
     Present: Check,
     Absent: CircleX,
@@ -2687,7 +2699,7 @@ function AttendanceReportTab({ attendance, leaveRequests, joiningDate, employeeI
       "Punch In Time": r.checkIn,
       "Punch Out Time": r.checkOut,
       "Worked Time": formatWorkedTime(r.workedMinutes),
-      Status: r.status,
+      Status: displayStatus(r),
       Classification: r.reason,
       Payable: r.payable ? "Yes" : "No",
     })));
@@ -2698,7 +2710,7 @@ function AttendanceReportTab({ attendance, leaveRequests, joiningDate, employeeI
     exportReportPdf({
       title: "Attendance Report",
       filename: `attendance-${monthFilter}.pdf`,
-      head: ["Sr. No.", "Date", "Day", "Punch In", "Punch Out", "Worked", "Status", "Classification", "Payable"],
+      head: ["Sr. No.", "Date", "Day", "Punch In", "Punch Out", "Worked", "Status", "Classification"],
       body: rows.map((row, index) => [
         index + 1,
         formatDisplayDate(row.date),
@@ -2706,11 +2718,22 @@ function AttendanceReportTab({ attendance, leaveRequests, joiningDate, employeeI
         row.checkIn || "Not recorded",
         row.checkOut || "Not recorded",
         formatWorkedTime(row.workedMinutes),
-        row.status || "-",
+        displayStatus(row),
         row.reason || "-",
-        row.payable ? "Yes" : "No",
       ]),
     });
+  };
+  const handleSyncAttendance = async () => {
+    if (syncing) return;
+    setSyncing(true);
+    try {
+      const result = await onSyncAttendance?.(monthFilter);
+      showToast(result?.message || "Attendance synchronized.");
+    } catch (error) {
+      showToast(error.message || "Could not synchronize attendance.");
+    } finally {
+      setSyncing(false);
+    }
   };
 
   return (
@@ -2718,6 +2741,7 @@ function AttendanceReportTab({ attendance, leaveRequests, joiningDate, employeeI
       <div className="panel-head">
         <div><h3>Attendance History</h3><p className="panel-subtitle">Review your punch times and attendance history</p></div>
         <div className="report-head-actions">
+          <button type="button" className={`ghost-button attendance-sync-button${syncing ? " syncing" : ""}`} onClick={handleSyncAttendance} disabled={syncing} title="Synchronize completed attendance since your joining date">{syncing ? <LoaderCircle size={16} /> : <RefreshCw size={16} />} {syncing ? "Syncing..." : "Sync Attendance"}</button>
           <button className="ghost-button" onClick={handleExport} disabled={!rows.length}><IconDownload size={16} /> Export CSV</button>
           <button className="primary-button" onClick={handleExportPdf} disabled={!rows.length}><IconDownload size={16} /> Export PDF ({rows.length})</button>
         </div>
@@ -2727,7 +2751,7 @@ function AttendanceReportTab({ attendance, leaveRequests, joiningDate, employeeI
         <div><span>Absent</span><strong>{rows.filter((row) => row.status === "Absent").length}</strong></div>
         <div><span>Leave</span><strong>{rows.filter((row) => row.status === "Leave").length}</strong></div>
         <div><span>Holiday</span><strong>{rows.filter((row) => row.status === "Holiday").length}</strong></div>
-        <div><span>Pending</span><strong>{rows.filter((row) => row.status === "Pending").length}</strong></div>
+        <div><span>Leave Action</span><strong>{rows.filter((row) => row.status === "Pending").length}</strong></div>
       </div>
       <div className="report-toolbar">
         <label><span>Month</span><AttendanceStatusSelect value={monthFilter} onChange={setMonthFilter} options={monthOptionsForSelect} disabled={!monthOptions.length} ariaLabel="Filter attendance by month" wrapperClassName="attendance-report-filter-select" triggerClassName="attendance-report-filter-trigger" menuClassName="attendance-report-select-menu" colorByValue={false} /></label>
@@ -2764,7 +2788,11 @@ function AttendanceReportTab({ attendance, leaveRequests, joiningDate, employeeI
             {!monthOptions.length && <EmptyRow colSpan={6} text="No attendance months available for this account." />}
             {monthOptions.length > 0 && rows.length === 0 && <EmptyRow colSpan={6} text={reportDateRange.isFutureMonth ? "Attendance is not available for a future month." : "No attendance records match these filters."} />}
             {rows.map((r, index) => {
-              const StatusIcon = statusIcon[r.status] || CircleAlert;
+              const pendingLeave = r.status === "Pending" ? pendingLeaveRequestForDate(leaveRequests, r.date, employeeId) : null;
+              const rowStatus = displayStatus(r);
+              const canApplyLeave = r.status === "Pending" && !pendingLeave && r.date >= today;
+              const StatusIcon = r.status === "Pending" ? (pendingLeave ? Hourglass : canApplyLeave ? CalendarDays : RefreshCw) : statusIcon[r.status] || CircleAlert;
+              const statusClass = r.status === "Pending" ? (pendingLeave ? "leave-applied" : canApplyLeave ? "apply-leave" : "pending-sync") : String(r.status || "unknown").toLowerCase();
               return (
                 <tr key={r.id}>
                   <td className="attendance-report-serial">{index + 1}</td>
@@ -2773,10 +2801,13 @@ function AttendanceReportTab({ attendance, leaveRequests, joiningDate, employeeI
                   <td>{r.checkIn || "Not recorded"}</td>
                   <td>{r.checkOut || "Not recorded"}</td>
                   <td className="attendance-report-status-cell">
-                    <span title={`${r.reason || "attendance"} · ${r.payable ? "payable" : "non-payable"}`} className={clsx("attendance-report-status-pill", `is-${String(r.status || "unknown").toLowerCase()}`)}>
+                    {canApplyLeave ? <button type="button" title={`Apply leave for ${formatDisplayDate(r.date)}`} className={clsx("attendance-report-status-pill", `is-${statusClass}`, "attendance-report-status-action")} onClick={() => onApplyLeave?.(r.date)}>
                       <StatusIcon size={13} strokeWidth={2.5} aria-hidden="true" />
-                      {r.status}
-                    </span>
+                      {rowStatus}
+                    </button> : <span title={pendingLeave ? "Leave request submitted and awaiting approval" : rowStatus === "Pending Sync" ? "Use Sync Attendance to finalize this completed date" : `${r.reason || "attendance"} · ${r.payable ? "payable" : "non-payable"}`} className={clsx("attendance-report-status-pill", `is-${statusClass}`)}>
+                      <StatusIcon size={13} strokeWidth={2.5} aria-hidden="true" />
+                      {rowStatus}
+                    </span>}
                   </td>
                 </tr>
               );
@@ -2790,41 +2821,36 @@ function AttendanceReportTab({ attendance, leaveRequests, joiningDate, employeeI
 
 /* ============================= LEAVE REQUEST TAB ============================ */
 
-function LeaveRequestTab({ leaveRequests, setLeaveRequests, showToast }) {
-  const [form, setForm] = useState({ type: LEAVE_TYPES[0], from: todayISO(), to: todayISO(), reason: "" });
+function LeaveRequestTab({ leaveRequests, setLeaveRequests, showToast, initialDate = "", onSubmitted }) {
+  const today = todayIndiaISO();
+  const defaultDate = initialDate && initialDate >= today ? initialDate : today;
+  const [form, setForm] = useState({ type: LEAVE_TYPES[0], from: defaultDate, to: defaultDate, reason: "" });
   const [errors, setErrors] = useState({});
-  const [typeFilter, setTypeFilter] = useState("All");
-  const [statusFilter, setStatusFilter] = useState("All");
-  const [filterFrom, setFilterFrom] = useState("");
-  const [filterTo, setFilterTo] = useState("");
+  const [submitting, setSubmitting] = useState(false);
   const [page, setPage] = useState(1);
   const pageSize = 15;
   const leaveTypeOptions = LEAVE_TYPES.map((type) => ({ value: type, label: type }));
-  const leaveFilterTypeOptions = [{ value: "All", label: "All types" }, ...leaveTypeOptions];
-  const leaveFilterStatusOptions = ["All", "Pending", "Approved", "Rejected"].map((status) => ({
-    value: status,
-    label: status === "All" ? "All statuses" : status,
-  }));
   const requestedDays = leaveDays(form.from, form.to);
-  const filteredRequests = leaveRequests.filter((leave) => (typeFilter === "All" || leave.type === typeFilter)
-    && (statusFilter === "All" || leave.status === statusFilter)
-    && (!filterFrom || String(leave.to || "") >= filterFrom)
-    && (!filterTo || String(leave.from || "") <= filterTo))
+  useEffect(() => {
+    if (!initialDate) return;
+    const selectedDate = initialDate >= today ? initialDate : today;
+    setForm((current) => ({ ...current, from: selectedDate, to: selectedDate }));
+  }, [initialDate, today]);
+  const filteredRequests = [...leaveRequests]
     .sort((left, right) => String(right.appliedOn || right.createdAt || "").localeCompare(String(left.appliedOn || left.createdAt || "")));
   const totalPages = Math.max(1, Math.ceil(filteredRequests.length / pageSize));
   const currentPage = Math.min(page, totalPages);
   const pageRows = filteredRequests.slice((currentPage - 1) * pageSize, currentPage * pageSize);
-  useEffect(() => { setPage(1); }, [typeFilter, statusFilter, filterFrom, filterTo]);
   useEffect(() => { setPage((current) => Math.min(current, totalPages)); }, [totalPages]);
 
   const handleExportPdf = () => {
-    if (!filteredRequests.length) return;
+    if (!pageRows.length) return;
     exportReportPdf({
       title: "My Leave Requests",
       filename: `leave-requests-${todayISO()}.pdf`,
       landscape: true,
       head: ["Type", "From", "To", "Days", "Reason", "Applied On", "Status"],
-      body: filteredRequests.map((leave) => [leave.type || "-", formatDisplayDate(leave.from), formatDisplayDate(leave.to), String(Number(leave.days) > 0 ? leave.days : leaveDays(leave.from, leave.to) || "-"), leave.reason || "-", formatDisplayDate(leave.appliedOn), leave.status || "Pending"]),
+      body: pageRows.map((leave) => [leave.type || "-", formatDisplayDate(leave.from), formatDisplayDate(leave.to), String(Number(leave.days) > 0 ? leave.days : leaveDays(leave.from, leave.to) || "-"), leave.reason || "-", formatDisplayDate(leave.appliedOn), leave.status || "Pending"]),
     });
   };
 
@@ -2832,19 +2858,24 @@ function LeaveRequestTab({ leaveRequests, setLeaveRequests, showToast }) {
     const nextErrors = {};
     if (!form.from) nextErrors.from = "Start date is required";
     if (!form.to) nextErrors.to = "End date is required";
+    if (form.from && form.from < today) nextErrors.from = "Choose today or a future date";
     if (form.from && form.to && requestedDays === null) nextErrors.to = "End date must be on or after start date";
     if (!form.reason.trim()) nextErrors.reason = "Please add a reason";
     if (Object.keys(nextErrors).length) {
       setErrors(nextErrors);
       return;
     }
+    if (submitting) return;
+    setSubmitting(true);
     try {
       const saved = await createLeave(form);
       setLeaveRequests((prev) => [saved, ...prev.filter((leave) => leave.id !== saved.id)]);
-      setForm({ type: LEAVE_TYPES[0], from: todayISO(), to: todayISO(), reason: "" });
+      setForm({ type: LEAVE_TYPES[0], from: today, to: today, reason: "" });
+      onSubmitted?.();
       setErrors({});
       showToast("Leave request submitted");
     } catch (error) { showToast(error.message || "Could not submit leave request"); }
+    finally { setSubmitting(false); }
   };
 
   return (
@@ -2871,6 +2902,7 @@ function LeaveRequestTab({ leaveRequests, setLeaveRequests, showToast }) {
               <CallListDatePicker
                 label="From"
                 value={form.from}
+                min={today}
                 hideLabel
                 onChange={(value) => setForm((current) => ({
                   ...current,
@@ -2885,7 +2917,7 @@ function LeaveRequestTab({ leaveRequests, setLeaveRequests, showToast }) {
               <CallListDatePicker
                 label="To"
                 value={form.to}
-                min={form.from || undefined}
+                min={form.from && form.from > today ? form.from : today}
                 hideLabel
                 onChange={(value) => setForm((current) => ({ ...current, to: value }))}
               />
@@ -2902,8 +2934,8 @@ function LeaveRequestTab({ leaveRequests, setLeaveRequests, showToast }) {
             </div>
           </div>
           <div className="form-actions leave-form-actions">
-            <button className="primary-button" onClick={handleSubmit}>
-              <IconCheck size={16} /> Submit Request
+            <button className="primary-button" onClick={handleSubmit} disabled={submitting}>
+              <IconCheck size={16} /> {submitting ? "Submitting..." : "Submit Request"}
             </button>
           </div>
         </div>
@@ -2912,20 +2944,7 @@ function LeaveRequestTab({ leaveRequests, setLeaveRequests, showToast }) {
       <div className="panel leave-history-panel" style={{ marginTop: 18 }}>
         <div className="panel-head">
           <div><h3>My Leave Requests</h3><p className="panel-subtitle">Track the status and duration of each request</p></div>
-          <button className="primary-button" onClick={handleExportPdf} disabled={!filteredRequests.length}><IconDownload size={16} /> Export PDF ({filteredRequests.length})</button>
-        </div>
-        <div className="report-summary leave-summary">
-          <div><span>Requests</span><strong>{filteredRequests.length}</strong></div>
-          <div><span>Pending</span><strong>{filteredRequests.filter((leave) => leave.status === "Pending").length}</strong></div>
-          <div><span>Approved</span><strong>{filteredRequests.filter((leave) => leave.status === "Approved").length}</strong></div>
-          <div><span>Rejected</span><strong>{filteredRequests.filter((leave) => leave.status === "Rejected").length}</strong></div>
-        </div>
-        <div className="report-toolbar">
-          <label><span>Leave type</span><AttendanceStatusSelect value={typeFilter} onChange={setTypeFilter} options={leaveFilterTypeOptions} ariaLabel="Filter by leave type" wrapperClassName="leave-filter-select" triggerClassName="leave-filter-trigger" menuClassName="leave-filter-menu" colorByValue={false} /></label>
-          <label><span>Status</span><AttendanceStatusSelect value={statusFilter} onChange={setStatusFilter} options={leaveFilterStatusOptions} ariaLabel="Filter by leave status" wrapperClassName="leave-filter-select" triggerClassName="leave-filter-trigger" menuClassName="leave-filter-menu" colorByValue={false} /></label>
-          <CallListDatePicker label="Leave from" value={filterFrom} max={filterTo || undefined} onChange={(value) => { setFilterFrom(value); if (value && filterTo && filterTo < value) setFilterTo(""); }} />
-          <CallListDatePicker label="Leave to" value={filterTo} min={filterFrom || undefined} onChange={setFilterTo} />
-          <button type="button" className="ghost-button" onClick={() => { setTypeFilter("All"); setStatusFilter("All"); setFilterFrom(""); setFilterTo(""); }}>Reset</button>
+          <button className="primary-button" onClick={handleExportPdf} disabled={!pageRows.length}><IconDownload size={16} /> Export PDF ({pageRows.length})</button>
         </div>
         <div className="table-wrap">
           <table className="table">
@@ -2941,7 +2960,7 @@ function LeaveRequestTab({ leaveRequests, setLeaveRequests, showToast }) {
               </tr>
             </SalesTableHead>
             <tbody>
-              {filteredRequests.length === 0 && <EmptyRow colSpan={7} text="No leave requests match these filters." />}
+              {filteredRequests.length === 0 && <EmptyRow colSpan={7} text="No leave requests yet." />}
               {pageRows.map((l) => (
                 <tr key={l.id}>
                   <td>{l.type}</td>
@@ -3006,7 +3025,7 @@ function validateCrmSettings(form) {
   return errors;
 }
 
-function SettingsTab({ profile, setProfile, showToast, currentUser, onProfileUpdated }) {
+export function SettingsTab({ profile, setProfile, showToast, currentUser, onProfileUpdated }) {
   const [profileForm, setProfileForm] = useState(() => ({
     ...currentUser,
     ...profile,
@@ -3718,6 +3737,7 @@ export default function CrmExecutiveDashboard({
   const [attendance, setAttendance] = useState([]);
   const [attendanceCalendar, setAttendanceCalendar] = useState(null);
   const [leaveRequests, setLeaveRequests] = useState([]);
+  const [leaveRequestDate, setLeaveRequestDate] = useState("");
   const [profile, setProfile] = useState(() => ({
     name: currentUser?.name || currentUser?.username || "",
     role: currentUser?.role || "CRM Executive",
@@ -3764,6 +3784,13 @@ export default function CrmExecutiveDashboard({
     (month) => loadAttendanceMonth(month, { force: true }),
     [loadAttendanceMonth],
   );
+  const synchronizeAttendance = useCallback(async (month) => {
+    const result = await syncAttendanceHistory();
+    attendanceMonthsLoaded.current.clear();
+    setAttendance([]);
+    await loadAttendanceMonth(month || todayIndiaISO().slice(0, 7), { force: true });
+    return result;
+  }, [loadAttendanceMonth]);
 
   useEffect(() => {
     let active = true;
@@ -3828,6 +3855,23 @@ export default function CrmExecutiveDashboard({
   }, [showToast]);
 
   useEffect(() => {
+    if (!["attendancereport", "leaverequest"].includes(activeTab)) return undefined;
+    let active = true;
+    let pending = false;
+    const refresh = () => {
+      if (!active || pending) return;
+      pending = true;
+      fetchLeaves()
+        .then((records) => { if (active && Array.isArray(records)) setLeaveRequests(records); })
+        .catch((error) => { if (active) showToast(error.message || "Could not refresh leave requests"); })
+        .finally(() => { pending = false; });
+    };
+    refresh();
+    window.addEventListener("focus", refresh);
+    return () => { active = false; window.removeEventListener("focus", refresh); };
+  }, [activeTab, showToast]);
+
+  useEffect(() => {
     const qualifiedLeads = contacts.filter(isLeadContact).map(leadFromContact);
     setLeads((current) => {
       const manualLeads = qualifiedLeadsInitialized.current
@@ -3853,7 +3897,12 @@ export default function CrmExecutiveDashboard({
   }, [sourceContacts]);
 
   const handleNavigate = (tab) => {
+    if (tab !== "leaverequest") setLeaveRequestDate("");
     setActiveTab(tab);
+  };
+  const handleApplyLeave = (date) => {
+    setLeaveRequestDate(date);
+    setActiveTab("leaverequest");
   };
 
   const handleLogout = () => {
@@ -4011,10 +4060,12 @@ export default function CrmExecutiveDashboard({
                 calendar={attendanceCalendar}
                 showToast={showToast}
                 onMonthRequested={refreshAttendanceMonth}
+                onApplyLeave={handleApplyLeave}
+                onSyncAttendance={synchronizeAttendance}
               />
             )}
             {activeTab === "leaverequest" && (
-              <LeaveRequestTab leaveRequests={leaveRequests} setLeaveRequests={setLeaveRequests} showToast={showToast} />
+              <LeaveRequestTab leaveRequests={leaveRequests} setLeaveRequests={setLeaveRequests} showToast={showToast} initialDate={leaveRequestDate} onSubmitted={() => setLeaveRequestDate("")} />
             )}
             {activeTab === "hrhelpdesk" && <HelpdeskChat user={currentUser} displayName={profile.name} />}
             </>}

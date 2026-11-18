@@ -14,7 +14,7 @@ function Select({label,value,onChange,options,all}) { return <label className="b
 function Dialog({onClose,children}) {
   const ref = useRef(null);
   useEffect(()=>{const previous=document.activeElement; const dialog=ref.current; dialog.showModal(); return ()=>{dialog.close(); previous?.focus();};},[]);
-  return createPortal(<dialog className="bugs-dialog" ref={ref} onCancel={onClose} aria-labelledby="report-bug-title" onClick={e=>{if(e.target===e.currentTarget)onClose();}}>{children}</dialog>,document.body);
+  return createPortal(<dialog className="bugs-dialog it-compact-modal" ref={ref} onCancel={onClose} aria-labelledby="report-bug-title" onClick={e=>{if(e.target===e.currentTarget)onClose();}}>{children}</dialog>,document.body);
 }
 async function readAttachments(files) {
   if(files.length > 4 || files.some(f=>f.size>2*1024*1024)) throw new Error('Choose up to 4 files, each no larger than 2 MB.');

@@ -2247,16 +2247,17 @@ function AttendanceReport({ c: { db, user } }) {
     XLSX.writeFile(workbook, `my-attendance-report-${reportMonth}.xlsx`);
   };
   const exportPdf = () => {
+    const pdfRows = exportRows.map(({ Payable: _payable, ...row }) => row);
     const pdf = new jsPDF({ orientation: "landscape", unit: "pt", format: "a3" });
     pdf.setFontSize(18);
     pdf.text("Attendance Report", 36, 36);
     autoTable(pdf, {
       startY: 52,
-      head: [Object.keys(exportRows[0] || {
+      head: [Object.keys(pdfRows[0] || {
         "S.N": "", "EMP ID": "", "EMP Name": "", Department: "", Branch: "", Date: "",
-        Day: "", "Check-in Time": "", "Check-out Time": "", "Total Hours": "", Remarks: "", Status: "", Classification: "", Payable: "",
+        Day: "", "Check-in Time": "", "Check-out Time": "", "Total Hours": "", Remarks: "", Status: "", Classification: "",
       })],
-      body: exportRows.map((row) => Object.values(row)),
+      body: pdfRows.map((row) => Object.values(row)),
       styles: { fontSize: 8, cellPadding: 5 },
       headStyles: { fillColor: [141, 94, 56] },
       theme: "grid",
@@ -2431,16 +2432,17 @@ function AllAttendance({ c: { db } }) {
     XLSX.writeFile(workbook, `attendance-report-${iso()}.xlsx`);
   };
   const exportPdf = () => {
+    const pdfRows = exportRows.map(({ Payable: _payable, ...row }) => row);
     const pdf = new jsPDF({ orientation: "landscape", unit: "pt", format: "a3" });
     pdf.setFontSize(18);
     pdf.text("All Attendance Report", 36, 36);
     autoTable(pdf, {
       startY: 52,
-      head: [Object.keys(exportRows[0] || {
+      head: [Object.keys(pdfRows[0] || {
         "S.N": "", "EMP ID": "", "EMP Name": "", Department: "", Branch: "", Date: "",
-        Day: "", "Check-in Time": "", "Check-out Time": "", "Total Hours": "", Remarks: "", Status: "", Classification: "", Payable: "",
+        Day: "", "Check-in Time": "", "Check-out Time": "", "Total Hours": "", Remarks: "", Status: "", Classification: "",
       })],
-      body: exportRows.map((row) => Object.values(row)),
+      body: pdfRows.map((row) => Object.values(row)),
       styles: { fontSize: 8, cellPadding: 5 },
       headStyles: { fillColor: [141, 94, 56] },
       theme: "grid",
@@ -2982,10 +2984,11 @@ function AssignedTasks({ c: { db, upd, user } }) {
   });
   const pageCount = Math.max(1, Math.ceil(sortedRows.length / Number(show)));
   const visibleRows = sortedRows.slice((page - 1) * Number(show), page * Number(show));
-  const exportRows = filteredRows.map((task) => {
+  const makeExportRows = (source) => source.map((task) => {
     const assignee = findTaskEmployee(db.emps, task.assignedTo);
     return { "Task Name": task.title || "—", Description: task.description || "—", "Assigned To": assignee?.name || "Unassigned", Status: statusLabel(task.status) };
   });
+  const exportRows = makeExportRows(filteredRows);
   const exportCsv = () => {
     const csv = XLSX.utils.sheet_to_csv(XLSX.utils.json_to_sheet(exportRows));
     const url = URL.createObjectURL(new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8" }));
@@ -2996,13 +2999,14 @@ function AssignedTasks({ c: { db, upd, user } }) {
     URL.revokeObjectURL(url);
   };
   const exportPdf = () => {
+    const visibleExportRows = makeExportRows(visibleRows);
     const pdf = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
     pdf.setFontSize(16);
     pdf.text("Tasks Assigned to Employees", 32, 32);
     autoTable(pdf, {
       startY: 48,
       head: [["Task Name", "Description", "Assigned To", "Status"]],
-      body: Object.values(exportRows).map((row) => Object.values(row)),
+      body: visibleExportRows.map((row) => Object.values(row)),
       styles: { fontSize: 9, cellPadding: 6 },
       headStyles: { fillColor: [141, 94, 56] },
     });
@@ -3034,7 +3038,7 @@ function AssignedTasks({ c: { db, upd, user } }) {
             <div className="hr-assigned-task-actions">
               <button className="hr-ghost" type="button" onClick={reset}><RotateCcw size={14} /> Reset</button>
               <button className="hr-btn" type="button" onClick={exportCsv} disabled={!filteredRows.length}><FileSpreadsheet size={14} /> Export CSV</button>
-              <button className="hr-btn" type="button" onClick={exportPdf} disabled={!filteredRows.length}><FileText size={14} /> Export PDF</button>
+              <button className="hr-btn" type="button" onClick={exportPdf} disabled={!visibleRows.length}><FileText size={14} /> Export PDF</button>
             </div>
           </div>
           <div className="hr-tw">

@@ -448,6 +448,44 @@ export async function createAutomaticAbsences(users, workDate, now = Timestamp.n
   return results.filter((result) => result.created).length;
 }
 
+export async function createSyncedAttendanceAbsences(user, workDates, now = Timestamp.now(), db = getFirestore()) {
+  const dates = [...new Set((Array.isArray(workDates) ? workDates : []).map(clean))];
+  if (!dates.length) return 0;
+  dates.forEach((workDate) => assertCompletedAbsenceDate(workDate, now));
+  const writer = db.bulkWriter();
+  writer.onWriteError((error) => {
+    if (error.code === 6 || error.code === "already-exists") return false;
+    return error.failedAttempts < 3;
+  });
+  const writes = dates.map((workDate) => {
+    const ref = attendanceDayRef(userId(user), workDate, db);
+    const data = {
+      ...baseRecord(user, workDate, now),
+      status: "absent",
+      attendanceState: "absent",
+      checkInAt: null,
+      checkOutAt: null,
+      workedMinutes: null,
+      remark: "Attendance history synchronized from the employee joining date.",
+      autoMarked: true,
+      source: "employee_history_sync",
+      reason: "finalized_absence",
+      finalizedAt: now,
+    };
+    return writer.create(ref, data)
+      .then(() => ({ created: true }))
+      .catch((error) => {
+        if (error?.code === 6 || error?.code === "already-exists") return { created: false };
+        return { created: false, error };
+      });
+  });
+  await writer.close();
+  const results = await Promise.all(writes);
+  const failure = results.find((result) => result.error)?.error;
+  if (failure) throw failure;
+  return results.filter((result) => result.created).length;
+}
+
 function assertCompletedAbsenceDate(workDate, now) {
   const nowDate = timestampDate(now) || new Date();
   const latestCompletedDate = previousDateString(indiaDateString(nowDate));

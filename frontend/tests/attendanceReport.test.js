@@ -5,10 +5,12 @@ import {
   calculateAttendancePayroll,
 } from "../../shared/attendanceClassification.js";
 import {
+  attendanceReportStatusLabel,
   buildAttendanceReportRows,
   filterAttendanceReportRows,
   getAttendanceReportDateRange,
   getAttendanceReportMonths,
+  pendingLeaveRequestForDate,
 } from "../src/crm-executive/attendanceReport.js";
 
 test("attendance report months begin with the joining month and include the current month", () => {
@@ -94,6 +96,19 @@ test("status and date filters only narrow eligible report rows", () => {
   });
   assert.deepEqual(filtered.map((row) => row.date), ["2026-11-02"]);
   assert.equal(filterAttendanceReportRows(rows, { dateFrom: "2026-11-17" }).length, 0);
+});
+
+test("pending attendance is presented as a leave action or an existing application", () => {
+  const row = { date: "2026-11-16", status: "Pending" };
+  const leaves = [
+    { employeeId: "crm_02", from: "2026-11-16", to: "2026-11-17", status: "Pending" },
+  ];
+
+  assert.equal(attendanceReportStatusLabel(row, [], "crm_02", "2026-11-16"), "Apply Leave");
+  assert.equal(attendanceReportStatusLabel(row, [], "crm_02", "2026-11-17"), "Pending Sync");
+  assert.equal(attendanceReportStatusLabel(row, leaves, "crm_02", "2026-11-16"), "Leave Applied");
+  assert.equal(attendanceReportStatusLabel({ ...row, status: "Absent" }, leaves, "crm_02"), "Absent");
+  assert.equal(pendingLeaveRequestForDate(leaves, "2026-11-16", "another_employee"), null);
 });
 
 test("current day remains pending until noon IST while punches, leave, holidays, and future days retain priority", () => {

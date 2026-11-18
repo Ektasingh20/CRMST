@@ -120,6 +120,56 @@
   font-weight: 600;
 }
 
+.contact-required-marker {
+  color: #b2693c;
+  font-weight: 800;
+}
+
+.contact-auto-label {
+  color: var(--text-soft);
+  font-size: 0.75em;
+  font-weight: 500;
+}
+
+.crm-enquiry-fieldset .contact-form-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin-top: 7px;
+  padding: 7px 9px;
+  border: 1px solid #b2693c;
+  border-radius: 8px;
+  background: rgba(241, 214, 195, 0.48);
+  color: #3a231b;
+  font-size: 0.76rem;
+  font-weight: 650;
+  line-height: 1.4;
+}
+
+.crm-enquiry-fieldset .contact-form-error svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.crm-enquiry-fieldset .field :is(input, textarea)[aria-invalid="true"],
+.crm-enquiry-fieldset .field .sales-dropdown-trigger[aria-invalid="true"] {
+  border-color: #b2693c;
+  background: rgba(241, 214, 195, 0.3);
+  box-shadow: 0 0 0 3px rgba(178, 105, 60, 0.12);
+}
+
+.crm-enquiry-fieldset .india-phone-input:has(input[aria-invalid="true"]) {
+  border-color: #b2693c;
+  background: rgba(241, 214, 195, 0.3);
+  box-shadow: 0 0 0 3px rgba(178, 105, 60, 0.12);
+}
+
+.crm-enquiry-fieldset .india-phone-input input[aria-invalid="true"] {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
 .crm-enquiry-form .field :is(input, select, textarea)[aria-invalid="true"] {
   border-color: #c74a3a;
   background: #fff8f7;

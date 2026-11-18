@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import * as XLSX from "xlsx";
 import { MessageCircle, PhoneCall } from "lucide-react";
+import WhatsAppModal from "../../WhatsAppModal.jsx";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import "./crmPerformanceReport.css";
@@ -74,7 +75,7 @@ function getTimeBucket(value) {
   return hour < 12 ? "Morning" : hour < 17 ? "Afternoon" : "Evening";
 }
 
-export default function CrmPerformanceReport({ rows = [], users = [], onSaveCall }) {
+export default function CrmPerformanceReport({ rows = [], users = [], onSaveCall, currentUser }) {
   const [period, setPeriod] = useState("overall");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
@@ -84,6 +85,7 @@ export default function CrmPerformanceReport({ rows = [], users = [], onSaveCall
   const [detailSearch, setDetailSearch] = useState("");
   const [filterFeedback, setFilterFeedback] = useState("");
   const [saveError, setSaveError] = useState("");
+  const [whatsAppLead, setWhatsAppLead] = useState(null);
   const employees = useMemo(() => users.filter(isCrmUser), [users]);
   const filteredRows = useMemo(() => rows.filter((row) => {
     const assigned = String(row.assignedTo || "");
@@ -168,13 +170,11 @@ export default function CrmPerformanceReport({ rows = [], users = [], onSaveCall
       <div className="crm-report-table-wrap"><table className="crm-performance-table crm-detail-table"><thead><tr><th>Sr no</th><th>Date (newest first)</th><th>CRM exec</th><th>Name</th><th>Contact</th><th>Call / WhatsApp</th><th>Call status</th><th>Interest status</th><th>Service / program</th><th>Call at</th><th>Remark</th><th>Updated at</th></tr></thead><tbody>
         {detailRows.map((row, index) => {
           const contact = String(row.contact || row.number || "");
-          const normalizedPhone = contact.replace(/\D/g, "");
-          const whatsappPhone = normalizedPhone.length === 12 && normalizedPhone.startsWith("91") ? normalizedPhone : `91${normalizedPhone.slice(-10)}`;
           const assignedName = row.assignedToName || users.find((user) => userId(user) === String(row.assignedTo || ""))?.name || "Unassigned";
           const rowKey = `${row.listType || "list"}:${row.id || index}`;
           return <tr key={rowKey}>
             <td>{index + 1}</td><td>{displayDate(rowDate(row))}</td><td>{assignedName}</td><td><strong>{row.name || "—"}</strong></td><td>{contact || "—"}</td>
-            <td><div className="crm-report-contact-actions"><a href={contact ? `tel:${contact}` : undefined} aria-label={`Call ${row.name || contact}`} title="Call"><PhoneCall size={15} /></a><a href={normalizedPhone ? `https://wa.me/${whatsappPhone}` : undefined} target="_blank" rel="noreferrer" aria-label={`WhatsApp ${row.name || contact}`} title="WhatsApp"><MessageCircle size={15} /></a></div></td>
+            <td><div className="crm-report-contact-actions"><a href={contact ? `tel:${contact}` : undefined} aria-label={`Call ${row.name || contact}`} title="Call"><PhoneCall size={15} /></a><button type="button" disabled={!contact.replace(/\D/g, "")} onClick={() => setWhatsAppLead(row)} aria-label={`WhatsApp ${row.name || contact}`} title="WhatsApp"><MessageCircle size={15} /></button></div></td>
             <td><span className={`crm-report-status ${statusOf(row).replace(/\s+/g, "-")}`}>{row.callStatus || "Pending"}</span></td><td>{row.interestStatus || "Not Interested"}</td><td>{row.program || row.listType || "—"}</td>
             <td><input key={`callAt:${row.updatedAt || ""}`} className="crm-report-editable-field crm-report-call-at" type="datetime-local" aria-label={`Call time for ${row.name || contact}`} defaultValue={toDateTimeLocal(row.callAt)} onBlur={(event) => saveCustomField(row, "callAt", event.target.value)} /></td>
             <td><input key={`remark:${row.updatedAt || ""}`} className="crm-report-editable-field crm-report-remark" type="text" aria-label={`Remark for ${row.name || contact}`} defaultValue={row.remark || ""} placeholder="Add remark" onBlur={(event) => saveCustomField(row, "remark", event.target.value)} /></td>
@@ -184,5 +184,11 @@ export default function CrmPerformanceReport({ rows = [], users = [], onSaveCall
         {!detailRows.length && <tr><td colSpan="12" className="crm-report-empty">No call records found for these filters.</td></tr>}
       </tbody></table></div>
     </section>
+    {whatsAppLead && <WhatsAppModal
+      lead={whatsAppLead}
+      leadType={String(whatsAppLead.listType || "").toLowerCase() === "training" ? "training" : "service"}
+      currentUser={currentUser}
+      onClose={() => setWhatsAppLead(null)}
+    />}
   </div>;
 }

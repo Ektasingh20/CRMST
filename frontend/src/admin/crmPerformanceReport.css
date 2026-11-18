@@ -35,8 +35,9 @@
 .crm-detail-table td:nth-child(4){font-weight:700!important}
 .crm-detail-table th{font-size:.68rem}
 .crm-report-contact-actions{display:flex;gap:5px}
-.crm-report-contact-actions a{display:grid;place-items:center;width:29px;height:29px;border:1px solid #d7e8df;border-radius:8px;background:#fff;color:#36815f;text-decoration:none;cursor:pointer}
-.crm-report-contact-actions a:hover{background:#eef8f3}
+.crm-report-contact-actions a,.crm-report-contact-actions button{display:grid;place-items:center;width:29px;height:29px;padding:0;border:1px solid #d7e8df;border-radius:8px;background:#fff;color:#36815f;text-decoration:none;cursor:pointer}
+.crm-report-contact-actions a:hover,.crm-report-contact-actions button:hover:not(:disabled){background:#eef8f3}
+.crm-report-contact-actions button:disabled{opacity:.5;cursor:not-allowed}
 .crm-report-editable-field{height:32px;width:100%;min-width:120px;padding:5px 7px;border:1px solid #e6d9cd;border-radius:7px;background:#fffdfb;color:#30251e;font:inherit;font-size:.72rem}
 .crm-report-editable-field:focus{outline:2px solid #cf9f76;outline-offset:1px}
 .crm-report-call-at{min-width:190px}

@@ -7,7 +7,7 @@ import { connectDatabase } from "../config/db.js";
 import Attendance from "../models/Attendance.js";
 import { isAdmin, isHrUser } from "../utils/roles.js";
 import { notifyAdmins } from "../services/appNotifications.js";
-import { autoMarkMissingAttendance } from "../services/attendanceAutomation.js";
+import { autoMarkMissingAttendance, syncEmployeeAttendanceHistory } from "../services/attendanceAutomation.js";
 import { getAttendanceCalendar, saveAttendanceCalendar } from "../services/attendanceCalendar.js";
 import { listApprovedLeavesBetween } from "../models/Leave.js";
 import { formatIndiaClock, indiaDateString, indiaMonthString } from "../services/attendanceTime.js";
@@ -25,9 +25,15 @@ import {
 } from "../services/attendanceStore.js";
 
 const router = express.Router();
+const historySyncRequests = new Map();
 
 const userId = (user) => String(user?.id || user?._id || "");
 const ownsRecord = (record, user) => String(record.employeeId || "") === userId(user);
+const canSelfSyncAttendance = (user) => {
+  const role = String(user?.role || "").trim().toLowerCase();
+  const department = String(user?.dept || user?.department || "").trim().toLowerCase();
+  return department === "crm" || department === "it" || role === "crm executive" || role === "it";
+};
 const sendAttendanceError = (res, error, fallback) => {
   if (error?.code === 9 || error?.code === "failed-precondition") {
     console.error("Attendance Firestore index is unavailable:", error?.message || fallback);
@@ -68,6 +74,27 @@ router.get("/auto-mark", async (req, res) => {
 });
 
 router.use(authenticate);
+
+router.post("/sync-history", verifyAppCheckIfConfigured, async (req, res) => {
+  if (!canSelfSyncAttendance(req.user)) return res.status(403).json({ error: "Attendance synchronization is available to CRM and IT employees." });
+  const id = userId(req.user);
+  if (!historySyncRequests.has(id)) {
+    const request = syncEmployeeAttendanceHistory(req.user)
+      .finally(() => { if (historySyncRequests.get(id) === request) historySyncRequests.delete(id); });
+    historySyncRequests.set(id, request);
+  }
+  try {
+    const result = await historySyncRequests.get(id);
+    return res.json({
+      ...result,
+      message: result.createdAbsences
+        ? `Attendance synchronized through ${result.completedThrough}. ${result.createdAbsences} missing record${result.createdAbsences === 1 ? "" : "s"} finalized.`
+        : `Attendance is already synchronized through ${result.completedThrough}.`,
+    });
+  } catch (error) {
+    return sendAttendanceError(res, error, "Unable to synchronize attendance history.");
+  }
+});
 
 router.get("/today", async (req, res) => {
   try {

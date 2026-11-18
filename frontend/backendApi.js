@@ -718,6 +718,10 @@ export async function fetchAttendanceCalendar() {
   return request("/attendance/calendar");
 }
 
+export async function syncAttendanceHistory() {
+  return request("/attendance/sync-history", { method: "POST", body: "{}" });
+}
+
 export async function updateAttendanceCalendar(calendar) {
   return request("/attendance/calendar", {
     method: "PUT",

@@ -7,6 +7,7 @@ import {
   isActiveAttendanceEmployee,
   isAttendanceDeadlineReached,
   millisecondsUntilNextAttendanceRun,
+  syncEmployeeAttendanceHistory,
 } from "../services/attendanceAutomation.js";
 
 class FakeSnapshot {
@@ -286,4 +287,45 @@ test("historical backfill dry run includes explicitly selected former employees 
   assert.equal(result.employeePlans[0].employeeId, "crm_02");
   assert.equal(db.writeCount, 0);
   assert.equal(db.values.size, 0);
+});
+
+test("employee history sync finalizes every completed working day without waiting for a five-day batch", async () => {
+  const db = new FakeDb();
+  const user = { id: "it_03", name: "Employee", role: "Full Stack Developer", dept: "IT", status: "Active", joined: "2026-11-04" };
+  const createdDates = [];
+  let advancedThrough = "";
+  const result = await syncEmployeeAttendanceHistory(user, new Date("2026-11-11T18:45:00.000Z"), {
+    db,
+    state: { finalizedThrough: "2026-11-10" },
+    calendar: { weeklyHolidays: [0], holidays: [] },
+    listAttendance: async () => [{ employeeId: user.id, date: "2026-11-04", status: "Present" }],
+    listLeaves: async () => [{ employeeId: user.id, from: "2026-11-05", to: "2026-11-05", status: "Approved", type: "Earned Leave" }],
+    createAbsences: async (dates) => { createdDates.push(...dates); return dates.length; },
+    advanceCursor: async (date) => { advancedThrough = date; },
+  });
+
+  assert.deepEqual(createdDates, ["2026-11-06", "2026-11-07", "2026-11-09", "2026-11-10", "2026-11-11"]);
+  assert.equal(result.eligibleDays, 7);
+  assert.equal(result.existingRecords, 1);
+  assert.equal(result.approvedLeaveDays, 1);
+  assert.equal(result.createdAbsences, 5);
+  assert.equal(result.completedThrough, "2026-11-11");
+  assert.equal(advancedThrough, "2026-11-11");
+});
+
+test("employee history sync returns without attendance reads when its cursor is current", async () => {
+  const db = new FakeDb();
+  const user = { id: "crm_05", role: "CRM Executive", dept: "CRM", status: "Active", joined: "2026-11-04" };
+  let reads = 0;
+  const result = await syncEmployeeAttendanceHistory(user, new Date("2026-11-11T18:45:00.000Z"), {
+    db,
+    state: { finalizedThrough: "2026-11-11", historySyncedThrough: "2026-11-11", historySyncJoinedDate: "2026-11-04" },
+    listAttendance: async () => { reads += 1; return []; },
+    listLeaves: async () => { reads += 1; return []; },
+  });
+
+  assert.equal(result.alreadySynced, true);
+  assert.equal(result.createdAbsences, 0);
+  assert.equal(reads, 0);
+  assert.equal(db.writeCount, 0);
 });

@@ -3,6 +3,8 @@ import { listApprovedLeavesBetween } from "../models/Leave.js";
 import User from "../models/User.js";
 import {
   createAutomaticAbsences,
+  createSyncedAttendanceAbsences,
+  getEmployeeAttendanceMonth,
   isActiveEmployee,
   listAttendanceForDates,
 } from "./attendanceStore.js";
@@ -239,6 +241,115 @@ export async function finalizeCompletedAttendance(now = new Date(), options = {}
     finalizedBatches += 1;
   }
   return { completedThrough, employees: eligibleUsers.length, finalizedBatches, marked, skipped: "" };
+}
+
+function nextCalendarDate(date) {
+  return new Date(Date.parse(`${date}T00:00:00.000Z`) + DAY_MS).toISOString().slice(0, 10);
+}
+
+function monthsBetween(startDate, endDate) {
+  const months = [];
+  let cursor = new Date(`${startDate.slice(0, 7)}-01T00:00:00.000Z`);
+  const endMonth = endDate.slice(0, 7);
+  while (cursor.toISOString().slice(0, 7) <= endMonth) {
+    months.push(cursor.toISOString().slice(0, 7));
+    cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+  }
+  return months;
+}
+
+async function listEmployeeHistory(user, startDate, endDate, db) {
+  const records = [];
+  for (const month of monthsBetween(startDate, endDate)) {
+    records.push(...await getEmployeeAttendanceMonth(user, month, db));
+  }
+  return records;
+}
+
+async function advanceEmployeeHistoryCursor(ref, completedThrough, user, timestamp, db) {
+  await db.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(ref);
+    const current = normalizeAttendanceDate(snapshot.data()?.finalizedThrough);
+    transaction.set(ref, {
+      employeeId: employeeId(user),
+      joinedDate: employeeJoinedDate(user),
+      finalizedThrough: current && current > completedThrough ? current : completedThrough,
+      historySyncedThrough: completedThrough,
+      historySyncJoinedDate: employeeJoinedDate(user),
+      historySyncedAt: timestamp,
+      historySyncSource: "employee_self_service",
+      updatedAt: timestamp,
+    }, { merge: true });
+  });
+}
+
+export async function syncEmployeeAttendanceHistory(user, now = new Date(), options = {}) {
+  if (!isActiveAttendanceEmployee(user)) {
+    throw Object.assign(new Error("An active employee account with a valid joining date is required."), {
+      status: 403,
+      code: "attendance_sync_not_allowed",
+    });
+  }
+  const db = options.db || getFirestore();
+  const id = employeeId(user);
+  const joinedDate = employeeJoinedDate(user);
+  const completedThrough = previousCalendarDate(indiaDateString(now));
+  if (!completedThrough || completedThrough < joinedDate) {
+    return { employeeId: id, joinedDate, completedThrough: completedThrough || "", eligibleDays: 0, existingRecords: 0, approvedLeaveDays: 0, createdAbsences: 0, alreadySynced: true };
+  }
+
+  const cursorRef = stateRef(id, db);
+  const cursorData = Object.prototype.hasOwnProperty.call(options, "state")
+    ? options.state || {}
+    : (await cursorRef.get()).data() || {};
+  const historySyncedThrough = normalizeAttendanceDate(cursorData.historySyncedThrough);
+  const historySyncJoinedDate = normalizeAttendanceDate(cursorData.historySyncJoinedDate);
+  const trustedHistoryCursor = historySyncJoinedDate === joinedDate ? historySyncedThrough : "";
+  if (trustedHistoryCursor && trustedHistoryCursor >= completedThrough) {
+    return { employeeId: id, joinedDate, completedThrough, eligibleDays: 0, existingRecords: 0, approvedLeaveDays: 0, createdAbsences: 0, alreadySynced: true };
+  }
+
+  const startDate = trustedHistoryCursor ? nextCalendarDate(trustedHistoryCursor) : joinedDate;
+  const calendar = options.calendar || await (options.getCalendar || (() => getAttendanceCalendar(db)))();
+  const configuredCalendar = normalizeAttendanceCalendar(calendar);
+  const eligibleDates = [];
+  for (let date = startDate; date <= completedThrough; date = nextCalendarDate(date)) {
+    if (isValidAttendanceDate(date) && !attendanceHolidayForDate(date, configuredCalendar)) eligibleDates.push(date);
+  }
+
+  const [attendance, leaves] = await Promise.all([
+    options.listAttendance
+      ? options.listAttendance(eligibleDates, user)
+      : listEmployeeHistory(user, startDate, completedThrough, db),
+    options.listLeaves
+      ? options.listLeaves(startDate, completedThrough)
+      : listApprovedLeavesBetween(startDate, completedThrough, db),
+  ]);
+  const eligibleDateSet = new Set(eligibleDates);
+  const existingDates = new Set((attendance || [])
+    .filter((record) => record?.isTestData !== true && String(record?.employeeId || id) === id)
+    .map((record) => normalizeAttendanceDate(record?.date || record?.workDate))
+    .filter((date) => eligibleDateSet.has(date)));
+  const approvedLeaveDates = new Set(eligibleDates.filter((date) => hasApprovedLeave(id, date, leaves || [])));
+  const missingDates = eligibleDates.filter((date) => !existingDates.has(date) && !approvedLeaveDates.has(date));
+  const timestamp = Timestamp.fromDate(now);
+  const createdAbsences = options.createAbsences
+    ? await options.createAbsences(missingDates, user, timestamp)
+    : await createSyncedAttendanceAbsences(user, missingDates, timestamp, db);
+  if (options.advanceCursor) await options.advanceCursor(completedThrough, user, timestamp);
+  else await advanceEmployeeHistoryCursor(cursorRef, completedThrough, user, timestamp, db);
+
+  return {
+    employeeId: id,
+    joinedDate,
+    startDate,
+    completedThrough,
+    eligibleDays: eligibleDates.length,
+    existingRecords: existingDates.size,
+    approvedLeaveDays: approvedLeaveDates.size,
+    createdAbsences,
+    alreadySynced: false,
+  };
 }
 
 export const autoMarkMissingAttendance = finalizeCompletedAttendance;

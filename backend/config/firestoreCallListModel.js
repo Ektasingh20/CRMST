@@ -579,10 +579,13 @@ export async function createCallRecord(type, input, actor) {
   if (!contact) throw callListError("Enter a valid 10-digit Indian mobile number.");
   const templateField = listType === "training" ? "programId" : "serviceId";
   const templateId = clean(input?.[templateField]);
-  if (!templateId) throw callListError(`Select a ${listType === "training" ? "training" : "service"}.`);
-  const template = await whatsappMessageRef(templateId).get();
-  if (!template.exists || template.data()?.active !== true || template.data()?.type !== (listType === "training" ? "training" : "service")) {
-    throw callListError("The selected message template is unavailable.");
+  let program = "";
+  if (templateId) {
+    const template = await whatsappMessageRef(templateId).get();
+    if (!template.exists || template.data()?.active !== true || template.data()?.type !== (listType === "training" ? "training" : "service")) {
+      throw callListError("The selected message template is unavailable.");
+    }
+    program = clean(template.data().title);
   }
   let existing;
   if (contactGroupIndexAvailable) {
@@ -605,7 +608,7 @@ export async function createCallRecord(type, input, actor) {
   const ref = datedExecutiveCalls(listType, assignedTo, uploadDate).doc();
   const record = {
     callId: ref.id, listType, name, contact,
-    program: clean(template.data().title), [templateField]: templateId,
+    program, [templateField]: templateId,
     source: "Manual Call List", date: uploadDate,
     callStatus: clean(input.callStatus),
     interactionType: clean(input.interactionType) || "",
@@ -682,10 +685,23 @@ export async function updateCallRecord(type, id, patch, assignedTo = "", require
     }
     if (patch.expectedRevision !== undefined && Number(patch.expectedRevision) !== Number(data.revision || 0)) throw callListError("This contact changed elsewhere. Refresh and try again.", 409);
     if (patch.expectedUpdatedAt && data.updatedAt !== patch.expectedUpdatedAt) throw callListError("This contact changed elsewhere. Refresh and try again.", 409);
-    const changesLockedRecord = patch.callClicked === true || patch.whatsappClicked === true
-      || Object.keys(payload).some((key) => !isDeepStrictEqual(data[key], payload[key]));
+    const changedKeys = Object.keys(payload).filter((key) => !isDeepStrictEqual(data[key], payload[key])
+      || (["callClicked", "whatsappClicked"].includes(key) && patch[key] === true));
+    const changesLockedRecord = changedKeys.length > 0;
+    const callActionOnly = Boolean(requiredAssignedTo)
+      && changedKeys.length > 0
+      && changedKeys.every((key) => key === "callClicked" || key === "whatsappClicked");
+    const canEditUnapprovedDraft = Boolean(requiredAssignedTo)
+      && Boolean(data.leadDraft)
+      && !data.leadCreated
+      && data.callLeadStatus !== "Approved"
+      && payload.callLeadStatus !== "Approved"
+      && changedKeys.length > 0
+      && changedKeys.every((key) => ["callLeadStatus", "callLeadStatusSelected", "interestStatus", "remark", "program", "programId", "serviceId"].includes(key));
     if ((data.leadDraft || data.leadCreated || data.callLeadStatus === "Approved")
       && changesLockedRecord
+      && !callActionOnly
+      && !canEditUnapprovedDraft
       && !isApprovedCallCompletionUpdate(data, payload)) {
       throw callListError("This call contact is locked. After saving the lead form, only Follow Up can change to Completed.", 409);
     }

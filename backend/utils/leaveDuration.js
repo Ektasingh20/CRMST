@@ -11,3 +11,13 @@ export function leaveDaysInclusive(from, to) {
   if (start === null || end === null || end < start) return null;
   return Math.round((end - start) / 86400000) + 1;
 }
+
+export function validateLeaveApplicationDates(from, to, minimumDate) {
+  if (leaveDaysInclusive(from, to) === null) {
+    return "Choose valid dates with the end date on or after the start date.";
+  }
+  if (minimumDate && String(from) < String(minimumDate)) {
+    return `Leave can only be requested for ${minimumDate} or a future date.`;
+  }
+  return "";
+}

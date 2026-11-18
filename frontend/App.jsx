@@ -1,5 +1,6 @@
 import { IT_ROLES, defaultProjectEligibility, canReceiveProject } from "./src/itUserRoles.js";
 import CallLeadsPanel from "./CallLeadsPanel.jsx";
+import WhatsAppModal from "./WhatsAppModal.jsx";
 import AttendanceAdminPanel from "./src/admin/AttendanceAdminPanel.jsx";
 import RemarkField from "./RemarkField.jsx";
 import { callLeadForm, callLeadProgram, isCallLead } from "./callLeads.js";
@@ -141,7 +142,6 @@ import {
   createTask,
   saveTasksToBackend,
   loadLeaves,
-  saveLeavesToBackend,
   updateLeave,
   loadAttendance,
   saveAttendanceToBackend,
@@ -1237,6 +1237,7 @@ function App() {
   const [adminTaskSaving, setAdminTaskSaving] = useState(false);
   const [adminTaskForm, setAdminTaskForm] = useState({ title: "", description: "", assigneeId: "", priority: "Medium", dueDate: new Date().toISOString().slice(0, 10) });
   const [leaves, setLeaves] = useState([]);
+  const [adminLeavesLoading, setAdminLeavesLoading] = useState(false);
   const [interns, setInterns] = useState(initialInterns);
   const [logs] = useState(initialLogs);
   const [serviceRows, setServiceRows] = useState(initialServiceRows);
@@ -1592,6 +1593,24 @@ function App() {
   useEffect(() => {
     if (!["dashboard", "hr-attendance"].includes(activePage) || !isAdminUser(currentUser)) return;
     refreshDashboardMonitor();
+  }, [activePage, currentUser]);
+
+  useEffect(() => {
+    if (activePage !== "hr-leaves" || !isAdminUser(currentUser)) return undefined;
+    let active = true;
+    let pending = false;
+    const refresh = () => {
+      if (!active || pending) return;
+      pending = true;
+      setAdminLeavesLoading(true);
+      fetchLeavesForMonitor()
+        .then((records) => { if (active && Array.isArray(records)) setLeaves(records); })
+        .catch((error) => { if (active) notify(error.message || "Could not load leave requests."); })
+        .finally(() => { pending = false; if (active) setAdminLeavesLoading(false); });
+    };
+    refresh();
+    window.addEventListener("focus", refresh);
+    return () => { active = false; window.removeEventListener("focus", refresh); };
   }, [activePage, currentUser]);
 
   useEffect(() => {
@@ -2067,42 +2086,6 @@ function App() {
     };
   }, [activePage, currentUser]);
 
-  function persistHrDashboardData(nextData) {
-    try {
-      window.localStorage.setItem(HR_DASHBOARD_STORAGE_KEY, JSON.stringify(nextData));
-      setHrDashboardData(nextData);
-      setHrDashboardDataStatus("ready");
-      return true;
-    } catch (error) {
-      console.warn("Unable to save shared HR dashboard data.", error);
-      notify("Could not save the HR dashboard data in this browser.");
-      return false;
-    }
-  }
-
-  function updateHrLeaveStatus(leave, status) {
-    const data = readHrDashboardData() || hrDashboardData;
-    if (!data) {
-      notify("HR Dashboard data is not initialized in this browser.");
-      return;
-    }
-    const updatedAt = new Date().toISOString();
-    const leavesNext = (data.leaves || []).map((item) => String(item.id) === String(leave.id)
-      ? { ...item, status, approvedBy: status === "Pending" ? "" : (currentUser?.name || currentUser?.username || "Admin"), approvedAt: status === "Pending" ? "" : updatedAt }
-      : item);
-    const attendanceNext = { ...(data.att || {}) };
-    if (status === "Approved" && leave.from && leave.to) {
-      const start = new Date(`${leave.from}T00:00:00Z`);
-      const end = new Date(`${leave.to}T00:00:00Z`);
-      for (let date = start; !Number.isNaN(date.getTime()) && date <= end; date.setUTCDate(date.getUTCDate() + 1)) {
-        attendanceNext[`${date.toISOString().slice(0, 10)}|${leave.empId}`] = "Leave";
-      }
-    }
-    if (persistHrDashboardData({ ...data, leaves: leavesNext, att: attendanceNext })) {
-      notify(`Leave request ${String(status).toLowerCase()} in the HR Dashboard data.`);
-    }
-  }
-
   async function correctAutoAttendance(record) {
     if (!window.confirm(`Correct ${record.employeeName || "this employee"}'s automatic absence to Present?`)) return;
     try {
@@ -2125,8 +2108,8 @@ function App() {
     const Icon = item.icon;
     const badge = item.id === "enrollment-requests" && pendingEnrollmentRequestCount > 0
       ? pendingEnrollmentRequestCount
-      : item.id === "hr-leaves" && (hrDashboardData?.leaves || []).filter((leave) => leave.status === "Pending").length > 0
-        ? (hrDashboardData?.leaves || []).filter((leave) => leave.status === "Pending").length
+      : item.id === "hr-leaves" && leaves.filter((leave) => leave.status === "Pending").length > 0
+        ? leaves.filter((leave) => leave.status === "Pending").length
         : item.id === "it-admin-new-projects"
           ? adminPreviewProjects.filter((project) => String(project.status || "").toLowerCase() === "new").length
           : item.id === "it-admin-overdue-tasks" ? itOverdueTaskCount : 0;
@@ -2256,7 +2239,7 @@ function App() {
       due: task.due || task.dueDate || "",
     };
   });
-  const hrLeaves = Array.isArray(hrDashboardData?.leaves) ? hrDashboardData.leaves : [];
+  const hrLeaves = Array.isArray(leaves) ? leaves : [];
   const hrAttendanceRows = Object.entries(hrDashboardData?.att || {}).map(([key, status]) => {
     const [date, employeeId] = key.split("|");
     const employee = hrEmployees.find((item) => String(item.id) === String(employeeId));
@@ -5837,7 +5820,7 @@ function App() {
           )}
 
           {activePage === "crm-reports" && (
-            <CrmPerformanceReport rows={crmUploadRows} users={activeUsers} onSaveCall={saveCallContact} />
+            <CrmPerformanceReport rows={crmUploadRows} users={activeUsers} onSaveCall={saveCallContact} currentUser={currentUser} />
           )}
 
           {activePage === "co-approved" && (
@@ -5876,7 +5859,7 @@ function App() {
 
           {activePage === "hr-leaves" && (
             <Panel title="Leave requests">
-              {hrDashboardDataStatus === "missing" ? <p className="admin-employee-loading">Open the HR Dashboard once to initialize its leave request data.</p> : <>
+              {adminLeavesLoading ? <p className="admin-employee-loading">Loading leave requests from the backend...</p> : <>
               <div className="admin-leave-overview">
                 <div><span>Total requests</span><strong>{hrLeaves.length}</strong></div>
                 <div className="pending"><span>Pending review</span><strong>{hrLeaves.filter((leave) => leave.status === "Pending").length}</strong></div>
@@ -5899,13 +5882,14 @@ function App() {
                 <tbody>
                   {hrLeaves.length === 0 && <tr><td colSpan="7" className="empty-cell">No leave requests yet.</td></tr>}
                   {hrLeaves.map((leave) => {
-                    const employee = hrEmployees.find((item) => String(item.id) === String(leave.empId));
+                    const employee = hrEmployees.find((item) => String(item.id || item.backendId) === String(leave.employeeId || leave.empId));
+                    const employeeName = leave.employeeName || employee?.name || `Employee ${leave.employeeId || leave.empId || ""}`.trim();
                     return (
                     <tr key={leave.id}>
                       <td>
                         <div className="person-cell">
-                          <div className="avatar soft">{initials(employee?.name || "Employee")}</div>
-                          <strong>{employee?.name || `Employee ${leave.empId}`}</strong>
+                          <div className="avatar soft">{initials(employeeName)}</div>
+                          <strong>{employeeName}</strong>
                         </div>
                       </td>
                       <td>{leave.type}</td>
@@ -5915,7 +5899,7 @@ function App() {
                       <td>{leave.reason}</td>
                       <td>
                         {leave.status === "Pending" ? (
-                          <select className="leave-decision-select" value={leave.status} onChange={(event) => updateHrLeaveStatus(leave, event.target.value)}>
+                          <select className="leave-decision-select" value={leave.status} onChange={(event) => updateLeaveRequestStatus(leave, event.target.value)}>
                             <option value="Pending">Pending</option>
                             <option value="Approved">Approve</option>
                             <option value="Rejected">Reject</option>
@@ -7395,6 +7379,7 @@ function Panel({ title, children }) {
 
 function CrmUploadDataPage({ rows, setRows, users, currentUser, isAdmin, allRowsLoaded, callListCounts, onLoadAll, onCallLeadEdit, onSaveCall, onApproveCall, onDeleteCall }) {
   const [selectedFile, setSelectedFile] = useState(null);
+  const [whatsAppLead, setWhatsAppLead] = useState(null);
   const [saveStatuses, setSaveStatuses] = useState({});
   useEffect(() => {
     const handleStatus = (event) => setSaveStatuses((current) => ({ ...current, [`${event.detail.type}:${event.detail.id}`]: event.detail.status }));
@@ -7673,22 +7658,15 @@ function CrmUploadDataPage({ rows, setRows, users, currentUser, isAdmin, allRows
     } catch (error) { setUploadError(error.message || "Could not delete selected records."); }
   };
 
-  const exportCallListPdf = async () => {
-    let exportRows = filteredRows;
-    if (!allRowsLoaded) {
-      try {
-        const completeRows = await onLoadAll();
-        if (!Array.isArray(completeRows)) throw new Error("Unable to load all records for export.");
-        exportRows = applyFilters(completeRows);
-      } catch (error) { setUploadError(error.message || "Unable to export call list."); return; }
-    }
+  const exportCallListPdf = () => {
+    const exportRows = visibleRows;
     const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
     pdf.setFontSize(16); pdf.text(directoryTitle, 14, 14);
-    pdf.setFontSize(9); pdf.setTextColor(100); pdf.text(`${exportRows.length} filtered contact(s)`, 14, 20);
+    pdf.setFontSize(9); pdf.setTextColor(100); pdf.text(`${exportRows.length} visible contact(s) · Page ${page} of ${totalPages}`, 14, 20);
     autoTable(pdf, {
       startY: 25,
       head: [["S. No.", "Date", "Name", "Contact", "Call Status", "Interest", "Service / Program", "Remark", "Assigned To"]],
-      body: exportRows.map((row, index) => [index + 1, formatAdminDate(normalizeCallListDate(row.date) || row.createdAt), row.name || "-", row.contact || row.number || "-", normalizeCallStatus(row.callStatus) || "Choose", normalizeInterestStatus(row.interestStatus), normalizeCallProgram(row.program) || "-", row.remark || "-", row.assignedToName || users.find((user) => String(user.id || user._id) === String(row.assignedTo))?.name || "Unassigned"]),
+      body: exportRows.map((row) => [serialByRow.get(row), formatAdminDate(normalizeCallListDate(row.date) || row.createdAt), row.name || "-", row.contact || row.number || "-", normalizeCallStatus(row.callStatus) || "Choose", normalizeInterestStatus(row.interestStatus), normalizeCallProgram(row.program) || "-", row.remark || "-", row.assignedToName || users.find((user) => String(user.id || user._id) === String(row.assignedTo))?.name || "Unassigned"]),
       styles: { fontSize: 7, cellPadding: 2, overflow: "linebreak" }, headStyles: { fillColor: [127, 78, 43] },
     });
     pdf.save(`call-list-${new Date().toISOString().slice(0, 10)}.pdf`);
@@ -7760,7 +7738,7 @@ function CrmUploadDataPage({ rows, setRows, users, currentUser, isAdmin, allRows
             <p>{showListType ? "Service and training contacts" : listTypeFilter === "services" ? "Daily contacts for services" : "Daily contacts for training programs"}</p>
           </div>
           <div className="crm-directory-head-actions">
-            <button type="button" className="primary-button" onClick={exportCallListPdf} disabled={pageLoading || (!visibleRows.length && !allRowsLoaded)}><FileText size={15} /> Export PDF {allRowsLoaded ? `(${filteredRows.length})` : ""}</button>
+            <button type="button" className="primary-button" onClick={exportCallListPdf} disabled={pageLoading || !visibleRows.length}><FileText size={15} /> Export PDF ({visibleRows.length})</button>
             {selectedIds.length > 0 && <button type="button" className="crm-upload-delete-selected" onClick={deleteSelected}><Trash2 size={15} /> Delete Selected ({selectedIds.length})</button>}
           </div>
         </div>
@@ -7840,7 +7818,7 @@ function CrmUploadDataPage({ rows, setRows, users, currentUser, isAdmin, allRows
                   <td>
                     <div className="row-actions">
                       <button type="button" className={`row-icon-btn call ${row.callClicked ? "contacted" : ""}`} title={row.lastCallClickedAt ? `Last call button click: ${new Date(row.lastCallClickedAt).toLocaleString()}` : "Call"} onClick={() => { updateRow(row.id, { callClicked: true }); window.location.href = `tel:${row.contact || row.number}`; }}><PhoneCall size={16} /></button>
-                      <button type="button" className={`row-icon-btn whatsapp ${row.whatsappClicked ? "contacted" : ""}`} title="WhatsApp" onClick={() => { updateRow(row.id, { whatsappClicked: true }); window.open(`https://wa.me/91${String(row.contact || row.number || "").replace(/\D/g, "").slice(-10)}`, "_blank", "noopener,noreferrer"); }}><MessageCircle size={16} /></button>
+                      <button type="button" className={`row-icon-btn whatsapp ${row.whatsappClicked ? "contacted" : ""}`} title="WhatsApp" aria-label={`Open WhatsApp for ${row.name || "contact"}`} onClick={() => { updateRow(row.id, { whatsappClicked: true }); setWhatsAppLead(row); }}><MessageCircle size={16} /></button>
                     </div>
                   </td>
                   <td>
@@ -7888,6 +7866,12 @@ function CrmUploadDataPage({ rows, setRows, users, currentUser, isAdmin, allRows
         {allRowsLoaded ? <CallLeadsPanel canDelete={isAdmin} rows={rows} users={users} currentUser={currentUser} onSave={onSaveCall} onApprove={onApproveCall} onDelete={onDeleteCall} onAdd={onCallLeadEdit} showSourceOwner={isAdmin} lockCreatedLead />
           : <section className="panel"><div className="panel-body">{leadPanelVisible ? "Loading call leads…" : "Call leads will load when you reach this section."}</div></section>}
       </div>
+      {whatsAppLead && <WhatsAppModal
+        lead={whatsAppLead}
+        leadType={String(whatsAppLead.listType || "").toLowerCase() === "training" ? "training" : "service"}
+        currentUser={currentUser}
+        onClose={() => setWhatsAppLead(null)}
+      />}
     </div>
   );
 }
@@ -8605,6 +8589,7 @@ function Field({ label, children }) {
 
 function LeadsTable({ leads, users, onEdit, onSave, onDelete, wrapperClassName = "" }) {
   const [operationDrafts, setOperationDrafts] = useState({});
+  const [whatsAppLead, setWhatsAppLead] = useState(null);
   const leadTime = (lead) => {
     const raw = lead.createdAt || lead.createdDate || lead.assignedDate || lead.date || "";
     const parsed = Date.parse(String(raw));
@@ -8642,7 +8627,7 @@ function LeadsTable({ leads, users, onEdit, onSave, onDelete, wrapperClassName =
                   <button type="button" className="row-icon-btn call" title="Call" onClick={() => { window.location.href = `tel:${lead.phone || lead.contact || ""}`; }}>
                     <PhoneCall size={15} />
                   </button>
-                  <button type="button" className="row-icon-btn whatsapp" title="WhatsApp" onClick={() => window.open(`https://wa.me/91${lead.phone || lead.contact || ""}`, "_blank", "noopener,noreferrer")}>
+                  <button type="button" className="row-icon-btn whatsapp" title="WhatsApp" aria-label={`Open WhatsApp for ${lead.name || "lead"}`} onClick={() => setWhatsAppLead(lead)}>
                     <MessageCircle size={15} />
                   </button>
                 </div>
@@ -8666,6 +8651,11 @@ function LeadsTable({ leads, users, onEdit, onSave, onDelete, wrapperClassName =
           ))}
         </tbody>
       </table>
+      {whatsAppLead && <WhatsAppModal
+        lead={whatsAppLead}
+        leadType={String(whatsAppLead.listType || whatsAppLead.type || "").toLowerCase().includes("training") ? "training" : "service"}
+        onClose={() => setWhatsAppLead(null)}
+      />}
     </div>
   );
 }
@@ -8731,19 +8721,19 @@ function AdminAllLeadsTable({ title = "All Leads", leads, adminName = "Admin", o
     pdf.text("All Leads Report", 14, 14);
     pdf.setFontSize(9);
     pdf.setTextColor(100);
-    pdf.text(`Exported ${new Date().toLocaleString()} | ${filteredLeads.length} filtered lead(s)`, 14, 20);
+    pdf.text(`Exported ${new Date().toLocaleString()} | ${visibleLeads.length} visible lead(s) | Page ${page} of ${totalPages}`, 14, 20);
     autoTable(pdf, {
       startY: 25,
       head: [hideOwnership
         ? ["S. No.", "Date", "Name", "Phone", "City", "Lead Type", "Interest", "Remark", "Status"]
         : ["S. No.", "Date", "Name", "Phone", "City", "Lead Type", "Interest", "Entered By", "Remark", "Status"]],
-      body: filteredLeads.map((lead, index) => hideOwnership ? [
-        index + 1,
+      body: visibleLeads.map((lead, index) => hideOwnership ? [
+        (page - 1) * pageSize + index + 1,
         formatAdminDate(lead.createdAt || lead.createdDate || lead.assignedDate || lead.date),
         lead.name || "-", lead.phone || lead.contact || "-", lead.city || "-", typeLabel(lead),
         lead.interest || lead.program || "-", lead.remark || lead.notes || "-", statusValue(lead),
       ] : [
-        index + 1,
+        (page - 1) * pageSize + index + 1,
         formatAdminDate(lead.createdAt || lead.createdDate || lead.assignedDate || lead.date),
         lead.name || "-", lead.phone || lead.contact || "-", lead.city || "-", typeLabel(lead),
         lead.interest || lead.program || "-", enteredByValue(lead),
@@ -8765,7 +8755,7 @@ function AdminAllLeadsTable({ title = "All Leads", leads, adminName = "Admin", o
           <button type="button" className={filters.type === "Internship" ? "active" : ""} aria-pressed={filters.type === "Internship"} onClick={() => updateFilter("type", filters.type === "Internship" ? "All" : "Internship")}>Internship</button>
         </div>}
       </div>
-      <button type="button" className="primary-button admin-leads-export" onClick={exportFilteredPdf} disabled={!filteredLeads.length}><FileText size={16} /> Export PDF ({filteredLeads.length})</button>
+      <button type="button" className="primary-button admin-leads-export" onClick={exportFilteredPdf} disabled={!visibleLeads.length}><FileText size={16} /> Export PDF ({visibleLeads.length})</button>
     </div>
     <div className="panel-body">
       <div className="admin-all-leads-directory">

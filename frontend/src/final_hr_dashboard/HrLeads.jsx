@@ -112,7 +112,7 @@ export default function HrLeads({ staff = [] }) {
   const visible = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
   const upcoming = leads.filter((lead) => [localIsoDate(), localIsoDate(1)].includes(lead.interview_date)
     && lead.interview_status === "Scheduled").sort((a, b) => a.interview_date.localeCompare(b.interview_date));
-  const makeExportRows = () => filtered.map((lead) => ({
+  const makeExportRows = (source = filtered) => source.map((lead) => ({
     Name: lead.name || "", Mobile: lead.mobile || "", Email: lead.email || "", Program: lead.program || "",
     Status: lead.status || "", "Interview date": lead.interview_date || "", Interviewer: lead.interviewer || "",
     "Interview status": lead.interview_status || "", "Interview mode": lead.interview_mode || "",
@@ -124,7 +124,7 @@ export default function HrLeads({ staff = [] }) {
     XLSX.writeFile(workbook, `hr-leads-${localIsoDate()}.xlsx`);
   }
   function exportPdf() {
-    const rows = makeExportRows();
+    const rows = makeExportRows(visible);
     const columns = Object.keys(rows[0] || { Name: "", Mobile: "", Email: "", Program: "", Status: "", "Interview date": "", Interviewer: "", "Interview status": "", "Interview mode": "", "Follow-up date": "", "Created date": "" });
     const pdf = new jsPDF({ orientation: "landscape" });
     pdf.setFontSize(16);
@@ -154,7 +154,7 @@ export default function HrLeads({ staff = [] }) {
         <label className="hr-leads-date-filter">Interview to<input type="date" value={interviewTo} onChange={(event) => { setInterviewTo(event.target.value); setPage(1); }} /></label>
         <select aria-label="Filter by interviewer" value={interviewerId} onChange={(event) => { setInterviewerId(event.target.value); setPage(1); }}><option value="">All interviewers</option>{activeStaff.map((person) => <option key={person.backendId || person.id} value={person.backendId || person.id}>{person.name}</option>)}</select>
         <select aria-label="Filter by interview status" value={interviewStatus} onChange={(event) => { setInterviewStatus(event.target.value); setPage(1); }}><option value="">All interview statuses</option>{INTERVIEW_STATUSES.map((item) => <option key={item}>{item}</option>)}</select>
-        <div className="hr-leads-export"><button type="button" onClick={exportPdf} disabled={!filtered.length}><Download size={14} /> Export PDF</button><button type="button" onClick={exportExcel} disabled={!filtered.length}><FileSpreadsheet size={14} /> Export Excel</button></div>
+        <div className="hr-leads-export"><button type="button" onClick={exportPdf} disabled={!visible.length}><Download size={14} /> Export PDF</button><button type="button" onClick={exportExcel} disabled={!filtered.length}><FileSpreadsheet size={14} /> Export Excel</button></div>
       </div>
       {message && <p className="hr-leads-success" role="status">{message}</p>}{error && <p className="hr-leads-error" role="alert">{error}</p>}
       <div className="hr-leads-table-wrap"><table className="hr-leads-table"><thead><tr>{["Name", "Mobile", "Email", "Program", "Status", "Interview", "Interviewer", "Interview status", "Follow-up date", "Created date", "Actions"].map((heading) => <th key={heading}>{heading}</th>)}</tr></thead>

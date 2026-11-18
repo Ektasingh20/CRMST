@@ -5,10 +5,32 @@ import { canManageTeam, teamNavigation, teamTitles } from "./team/teamRegistrati
 import TeamOverview from "./team/TeamOverview.jsx";
 import AssignProjects from "./team/AssignProjects.jsx";
 import TeamProgress from "./team/TeamProgress.jsx";
-import { fetchProjects, updateProject } from "../../backendApi.js";
+import {
+  checkInAttendance,
+  checkOutAttendance,
+  fetchAttendanceCalendar,
+  fetchAttendanceMonth,
+  fetchAppNotifications,
+  fetchLeaves,
+  fetchProjects,
+  fetchTodayAttendance,
+  markAppNotificationRead,
+  syncAttendanceHistory,
+  updateProject,
+} from "../../backendApi.js";
+import TasksPage from "./TasksPage.jsx";
+import ITLeaveRequestPage from "./LeaveRequestPage.jsx";
+import NotificationsPage from "./NotificationsPage.jsx";
+import { filterITNotifications, notificationDestination, notificationId } from "./workPageModel.js";
+import "./workPages.css";
 import PasswordResetLink from "../PasswordResetLink.jsx";
-import React, { useEffect, useState, useRef } from "react";
+import CallListDatePicker from "../../CallListDatePicker.jsx";
+import SalesTableHead from "../crm-executive/SalesTableHead.jsx";
+import { SettingsTab as SharedAccountSettings } from "../crm-executive/CrmExecutiveDashboard.jsx";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useState, useRef } from "react";
 import { createPortal } from "react-dom";
+import { jsPDF } from "jspdf";
+import autoTable from "jspdf-autotable";
 import { withDemoProjectPresentation } from "./demoProjectPresentation";
 import { demoProjects } from "./demoProjects";
 import OpenBugsPage from "./OpenBugsPage";
@@ -19,6 +41,19 @@ import HelpdeskChat, { HelpdeskIncomingToast } from "../shared/HelpdeskChat.jsx"
 import ProjectStatusSection from "./ProjectStatusSection";
 import { applyProjectStatus, projectStatusSummary } from "./projectStatus";
 import { getUploadedProjectFiles, requirementSections } from "./projectFiles";
+import {
+  attendanceReportStatusLabel,
+  buildAttendanceReportRows,
+  filterAttendanceReportRows,
+  getAttendanceReportDateRange,
+  getAttendanceReportMonths,
+  pendingLeaveRequestForDate,
+} from "../crm-executive/attendanceReport.js";
+import {
+  attendanceCutoffPassed,
+  attendanceDateInIndia,
+  attendanceHolidayForDate,
+} from "../../../shared/attendanceClassification.js";
 import {
   LayoutDashboard,
   CalendarCheck,
@@ -46,6 +81,17 @@ import {
   CircleCheck,
   AlertCircle,
   FileSearch,
+  BellRing,
+  Clock3,
+  CalendarDays,
+  MessageSquareText,
+  Check,
+  CircleX,
+  Hourglass,
+  UserCircle,
+  ChevronDown,
+  RefreshCw,
+  LoaderCircle,
 } from "lucide-react";
 
 /* ============================================================
@@ -179,9 +225,16 @@ img { display: block; max-width: 100%; }
 }
 
 .brand { display: flex; align-items: center; gap: 12px; padding: 4px 8px 16px; border-bottom: 1px solid var(--line-soft); }
-.sidebar-profile { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 16px 8px 8px; }
-.sidebar-profile-avatar { width: 56px; height: 56px; border-radius: 16px; font-size: 1.1rem; display:grid; place-items:center; background: rgba(255,255,255,0.08); border:2px solid rgba(255,255,255,0.2); }
-.sidebar-profile-name { font-size: 0.88rem; font-weight: 700; color: white; text-align: center; }
+.it-brand-logo { width: 52px !important; height: 52px !important; border-radius: 15px !important; }
+.it-brand-logo span:first-child { left: 8px !important; top: 6px !important; }
+.it-brand-logo span:last-child { right: 8px !important; bottom: 5px !important; }
+.sidebar-profile { display: flex; flex-direction: column; align-items: center; gap: 12px; width: calc(100% - 24px); max-width: 288px; margin: 14px auto 0; padding: 16px 12px 18px; }
+.sidebar-profile-avatar,
+.sidebar-profile-image { width: 150px; height: 150px; flex: 0 0 150px; border: 3px solid rgba(255,255,255,0.8); border-radius: 8px; }
+.sidebar-profile-avatar { font-size: 3.5rem; display:grid; place-items:center; background: linear-gradient(135deg,#df684b,#ad3e2d); color: #fff; }
+.sidebar-profile-avatar svg { width: 54px; height: 54px; }
+.sidebar-profile-image { display: block; object-fit: cover; }
+.sidebar-profile-name { font-size: 1rem; font-weight: 700; color: white; text-align: center; overflow-wrap: anywhere; }
 .brand-copy strong { display: block; font-size: 0.98rem; color: white; }
 .brand-copy span, .user-chip span { color: rgba(255, 255, 255, 0.66); font-size: 0.82rem; }
 
@@ -229,7 +282,70 @@ img { display: block; max-width: 100%; }
 }
 .topbar-left, .topbar-right { display: flex; align-items: center; gap: 14px; }
 .topbar h1 { margin: 0; font-size: 1.28rem; color: var(--text); }
+.topbar-subtitle { margin: 2px 0 0; color: var(--text-soft); font-size: max(16px, .84rem); }
+.it-topbar-popover { position: relative; }
+.it-notification-button { position: relative; background: #fff; }
+.it-notification-button.has-unread > svg { transform-origin: 50% 15%; animation: it-notification-bell-ring 2.5s ease-in-out infinite; }
+.it-notification-button.has-incoming > svg { transform-origin: 50% 15%; animation: it-notification-bell-ring .9s ease-in-out 2; }
+@keyframes it-notification-bell-ring {
+  0%, 63%, 100% { transform: rotate(0); }
+  7%, 21% { transform: rotate(15deg); }
+  14%, 28% { transform: rotate(-13deg); }
+  35% { transform: rotate(12deg); }
+  42% { transform: rotate(-10deg); }
+  49% { transform: rotate(8deg); }
+  56% { transform: rotate(-6deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .it-notification-button.has-unread > svg,
+  .it-notification-button.has-incoming > svg { animation: none; }
+}
+.it-bell-badge { position: absolute; top: -5px; right: -5px; min-width: 18px; height: 18px; padding: 0 5px; display: grid; place-items: center; border: 2px solid #fff; border-radius: 999px; background: #d55c41; color: #fff; font-size: 9px; font-weight: 800; }
+.it-user-chip {
+  padding: 7px 11px; display: flex; align-items: center; gap: 10px;
+  border: 1px solid var(--line); border-radius: 16px; background: #fff; color: var(--text);
+  cursor: pointer; text-align: left;
+}
+.it-user-chip:hover, .it-user-chip[aria-expanded="true"] { border-color: rgba(141,94,56,.5); box-shadow: 0 7px 18px rgba(91,56,27,.1); }
+.it-user-avatar { width: 38px; height: 38px; flex: 0 0 38px; display: grid; place-items: center; overflow: hidden; border-radius: 12px; background: var(--brand-soft); color: var(--brand-deep); font-weight: 800; }
+.it-user-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.it-user-chip-copy { min-width: 0; }
+.it-user-chip-copy strong, .it-user-chip-copy span { display: block; max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.it-user-chip-copy strong { font-size: 16px; }
+.it-user-chip-copy span { margin-top: 2px; color: var(--text-soft); font-size: 16px; }
+.it-topbar-menu {
+  position: absolute; top: calc(100% + 10px); right: 0; z-index: 50; width: min(330px, calc(100vw - 32px));
+  overflow: hidden; border: 1px solid var(--line); border-radius: 16px; background: #fff;
+  box-shadow: 0 18px 42px rgba(51,38,25,.18);
+}
+.it-topbar-menu-head { padding: 15px 16px; border-bottom: 1px solid var(--line-soft); font-size: .9rem; }
+.it-topbar-menu-empty { margin: 0; padding: 24px 16px; color: var(--text-soft); text-align: center; font-size: .82rem; }
+.it-topbar-notification-list { max-height: 330px; overflow-y: auto; }
+.it-topbar-notification { width: 100%; padding: 13px 16px; border: 0; border-bottom: 1px solid var(--line-soft); background: #fff; color: var(--text); text-align: left; line-height: 1.45; cursor: pointer; }
+.it-topbar-notification.unread { background: #fff7ec; font-weight: 700; }
+.it-topbar-notification:hover { background: #faf4ed; }
+.it-profile-menu { padding: 16px; }
+.it-profile-menu-identity { display: flex; align-items: center; gap: 12px; padding-bottom: 14px; border-bottom: 1px solid var(--line-soft); }
+.it-profile-menu-avatar { width: 46px; height: 46px; flex: 0 0 46px; display: grid; place-items: center; overflow: hidden; border-radius: 13px; background: var(--brand-soft); color: var(--brand-deep); font-weight: 800; }
+.it-profile-menu-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.it-profile-menu-identity strong, .it-profile-menu-identity span { display: block; }
+.it-profile-menu-identity span { margin-top: 3px; color: var(--text-soft); font-size: .76rem; }
+.it-profile-menu-data { display: grid; gap: 10px; padding: 14px 0; font-size: .78rem; }
+.it-profile-menu-data div { display: flex; justify-content: space-between; gap: 12px; }
+.it-profile-menu-data span { color: var(--text-soft); }
+.it-profile-menu-data b { max-width: 68%; overflow-wrap: anywhere; text-align: right; }
+.it-profile-menu-link { width: 100%; min-height: 40px; border: 0; border-radius: 10px; background: var(--surface-muted); color: var(--brand-deep); font-weight: 800; cursor: pointer; }
 .content { padding: 24px; overflow-y: auto; overflow-x: hidden; flex: 1; scroll-behavior: smooth; }
+.content.it-helpdesk-content { display: flex; min-height: 0; overflow: hidden; }
+.content.it-settings-content { padding: 14px; }
+.it-settings-sales-layout { width: 100%; min-width: 0; }
+.it-helpdesk-content > .it-helpdesk-sales-layout { flex: 1; width: 100%; min-height: 0; }
+.it-helpdesk-sales-layout .eh-helpdesk { width: 100%; min-height: 0; }
+.it-helpdesk-sales-layout .eh-chat-app { height: calc(100dvh - 190px); min-height: 650px; max-height: none; }
+@media (max-width: 760px) {
+  .content.it-helpdesk-content { display: block; overflow-y: auto; }
+  .it-helpdesk-sales-layout .eh-chat-app { height: auto; min-height: 650px; }
+}
 
 .panel {
   border-radius: 22px; overflow: hidden;
@@ -279,10 +395,159 @@ img { display: block; max-width: 100%; }
 .table th { color: var(--text-soft); font-size: 0.74rem; letter-spacing: 0.12em; text-transform: uppercase; background: rgba(245, 237, 228, 0.96); }
 .table tbody tr:hover { background: rgba(245, 240, 236, 0.9); }
 .table tbody tr:last-child td { border-bottom: 0; }
-.attendance-report-table { min-width: 0; table-layout: fixed; font-size: 0.78rem; }
-.attendance-report-table th, .attendance-report-table td { padding: 11px 8px; overflow-wrap: anywhere; }
-.attendance-report-table th { font-size: 0.66rem; letter-spacing: 0.08em; }
-.attendance-report-table .badge { padding: 0 8px; font-size: 0.72rem; }
+.it-attendance-report-panel {
+  width: 100%; border: 1px solid rgba(178,147,118,.22); border-radius: 18px;
+  background: #fff; box-shadow: 0 12px 28px rgba(90,63,39,.07);
+}
+.it-attendance-report-panel .panel-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  padding: 15px 18px; background: #fff;
+}
+.it-attendance-report-panel .panel-subtitle { margin: 5px 0 0; color: var(--text-soft); font-size: 16px; }
+.it-attendance-report-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.it-attendance-report-actions button {
+  min-height: 38px; height: 38px; padding: 0 15px; border-radius: 11px; gap: 7px; font-size: 16px;
+}
+.it-attendance-sync-button {
+  border-color: #dfc5ae; background: linear-gradient(180deg,#fffaf5 0%,#fff2e7 100%);
+  color: #704229; font-weight: 750; box-shadow: 0 5px 14px rgba(112,66,41,.08);
+}
+.it-attendance-sync-button:hover:not(:disabled) { border-color: #c99a75; background: #ffead9; box-shadow: 0 8px 18px rgba(112,66,41,.14); }
+.it-attendance-sync-button.syncing svg { animation: it-attendance-sync-spin .8s linear infinite; }
+@keyframes it-attendance-sync-spin { to { transform: rotate(360deg); } }
+.it-attendance-report-summary {
+  display: grid; grid-template-columns: repeat(6,minmax(0,1fr)); gap: 10px; padding: 14px 16px;
+}
+.it-attendance-report-summary > div {
+  display: grid; gap: 4px; min-height: 80px; padding: 12px 15px;
+  border: 1px solid #ead9c9; border-radius: 9px; background: #fffdfa;
+}
+.it-attendance-report-summary span { color: #776b60; font-size: 16px; }
+.it-attendance-report-summary strong { color: var(--text); font-size: 1.3rem; }
+.it-attendance-report-toolbar {
+  display: grid; grid-template-columns: repeat(4,minmax(0,1fr)) auto; align-items: end;
+  gap: 10px; padding: 0 16px 14px;
+}
+.it-attendance-report-toolbar label { display: grid; gap: 5px; min-width: 0; color: #776b60; font-size: 16px; font-weight: 650; }
+.it-attendance-filter-select { width: 100%; min-width: 0; }
+.it-attendance-filter-trigger {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  width: 100%; min-width: 0; height: 38px; padding: 0 11px;
+  border: 1px solid #e5d6c9; border-radius: 7px; outline: 0;
+  background: #fffdfb; color: #402d20; box-shadow: 0 1px 2px rgba(62,43,28,.04);
+  font: inherit; font-size: 15px; font-weight: 600; text-align: left; cursor: pointer;
+}
+.it-attendance-filter-trigger span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.it-attendance-filter-trigger svg { flex: 0 0 auto; color: #7b6b60; }
+.it-attendance-filter-trigger:hover { border-color: #c9ab91; }
+.it-attendance-filter-trigger:focus-visible { border-color: #b8875e; box-shadow: 0 0 0 3px rgba(184,135,94,.13); }
+.it-attendance-filter-menu {
+  z-index: 2200; display: grid; gap: 1px; max-height: min(320px,calc(100vh - 16px)); overflow-y: auto;
+  padding: 3px; border: 1px solid #e5d8cb; border-radius: 9px; background: #fff;
+  box-shadow: 0 10px 24px rgba(41,31,24,.2); font-family: "Manrope",sans-serif; font-size: 14px;
+}
+.it-attendance-filter-menu button {
+  display: flex; align-items: center; width: 100%; min-height: 36px; padding: 0 10px;
+  border: 0; border-radius: 5px; background: transparent; color: #4a4038;
+  font: inherit; text-align: left; cursor: pointer;
+}
+.it-attendance-filter-menu button:hover,
+.it-attendance-filter-menu button[aria-selected="true"] { background: #f3ede4; }
+.it-attendance-filter-menu button:focus-visible { outline: 2px solid #b8875e; outline-offset: -2px; }
+.it-attendance-report-toolbar > button { min-height: 38px; height: 38px; border-radius: 7px; font-size: 16px; }
+.it-attendance-report-panel .call-list-date-picker {
+  width: 100%; min-width: 0; height: 38px; flex: initial; padding: 0 10px;
+  border: 1px solid #e5d6c9; border-radius: 7px; background: #fffdfb; color: #704229;
+  display: flex; align-items: center; gap: 9px; box-shadow: 0 1px 2px rgba(62,43,28,.04);
+  font-size: 13px; font-weight: 650;
+}
+.it-attendance-report-panel .call-list-date-picker:hover { border-color: #c9ab91; }
+.it-attendance-report-panel .call-list-date-picker:focus-within { border-color: #b8875e; box-shadow: 0 0 0 3px rgba(184,135,94,.13); }
+.it-attendance-report-panel .call-list-date-picker > span {
+  flex: 0 0 auto; padding-right: 8px; border-right: 1px solid #eee4da;
+  color: #8a796b; font-size: 11px; font-weight: 750; letter-spacing: .06em; text-transform: uppercase;
+}
+.it-attendance-report-panel .call-list-date-trigger {
+  display: flex; align-items: center; justify-content: space-between; flex: 1; min-width: 0;
+  height: 32px; padding: 0 2px; border: 0; background: transparent; color: #302923;
+  font: inherit; font-size: 13px; font-weight: 600; text-align: left; cursor: pointer;
+}
+.it-attendance-report-panel .call-list-date-trigger svg { flex: 0 0 auto; width: 15px; height: 15px; color: #8d5e38; }
+.it-attendance-report-panel .table-wrap { padding: 0 16px 10px; overflow-x: auto; }
+.it-attendance-report-panel .attendance-report-table {
+  width: 100%; min-width: 780px; table-layout: fixed; border-collapse: separate; border-spacing: 0;
+  overflow: hidden; border: 1px solid #eddfd3; border-radius: 8px 8px 0 0;
+}
+.it-attendance-report-panel .attendance-report-table th,
+.it-attendance-report-panel .attendance-report-table td { padding: 9px 12px; overflow-wrap: normal; }
+.it-attendance-report-panel .attendance-report-table th {
+  line-height: 1.35; white-space: nowrap; font-size: 14px; background: linear-gradient(180deg,#a65d2d 0%,#7b3f20 100%);
+  color: #fff; text-transform: uppercase; border: 0; letter-spacing: .02em; box-shadow: inset 0 -1px rgba(255,255,255,.1);
+}
+.it-attendance-report-panel .attendance-report-table td { height: 41px; border-bottom: 1px solid #f1e5dc; color: #2f2925; font-size: 13px; vertical-align: middle; }
+.it-attendance-report-panel .attendance-report-table th:nth-child(1) { width: 8%; text-align: center; }
+.it-attendance-report-panel .attendance-report-table th:nth-child(2) { width: 17%; }
+.it-attendance-report-panel .attendance-report-table th:nth-child(3) { width: 16%; }
+.it-attendance-report-panel .attendance-report-table th:nth-child(4),
+.it-attendance-report-panel .attendance-report-table th:nth-child(5) { width: 20%; }
+.it-attendance-report-panel .attendance-report-table th:nth-child(6) { width: 19%; text-align: center; }
+.it-attendance-report-panel .attendance-report-table tbody tr:nth-child(odd) td { background: #fff; }
+.it-attendance-report-panel .attendance-report-table tbody tr:nth-child(even) td { background: #fdf1ea; }
+.it-attendance-report-panel .attendance-report-table tbody tr:hover td { background: #f8e7de; box-shadow: none; }
+.it-attendance-report-panel .attendance-report-heading,
+.it-attendance-report-panel .sales-table-heading { display: inline-flex; align-items: center; gap: 7px; vertical-align: middle; white-space: nowrap; }
+.it-attendance-report-panel .attendance-report-heading svg,
+.it-attendance-report-panel .sales-table-heading svg { flex: 0 0 14px; }
+.it-attendance-report-panel .attendance-report-serial { color: #3f342d; text-align: center; font-weight: 600; }
+.it-attendance-report-panel .attendance-report-date { font-weight: 650; }
+.it-attendance-report-panel td.attendance-report-status-cell { padding: 6px 12px; text-align: center; }
+.it-attendance-report-status-pill {
+  display: inline-flex; align-items: center; justify-content: center; width: min(100%,116px); min-height: 25px;
+  gap: 7px; padding: 4px 12px; border: 0; border-radius: 999px; font-size: 13px; font-weight: 750;
+  line-height: 1; white-space: nowrap;
+}
+.it-attendance-report-status-pill.is-present { background: #6b3e2b; color: #fff; }
+.it-attendance-report-status-pill.is-absent { background: #ffddbd; color: #9a3f08; }
+.it-attendance-report-status-pill.is-holiday { background: #f1d7c3; color: #6b3e2b; }
+.it-attendance-report-status-pill.is-leave,
+.it-attendance-report-status-pill.is-leave-applied { background: #f2dfad; color: #72520b; }
+ .it-attendance-report-status-pill.is-pending,
+ .it-attendance-report-status-pill.is-pending-sync,
+.it-attendance-report-status-pill.is-upcoming,
+.it-attendance-report-status-pill.is-unknown { background: #eee9e4; color: #5f554d; }
+.it-attendance-report-status-pill.is-apply-leave { border: 1px solid #e9b47e; background: #fff0df; color: #9a3f08; cursor: pointer; }
+.it-attendance-report-status-pill.is-apply-leave:hover { background: #ffe3c4; box-shadow: 0 4px 12px rgba(154,63,8,.16); transform: translateY(-1px); }
+.it-attendance-report-status-pill.is-apply-leave:focus-visible { outline: 2px solid #9a3f08; outline-offset: 2px; }
+.it-attendance-report-empty { padding: 34px 20px !important; color: var(--text-faint) !important; text-align: center; }
+
+/* CallListDatePicker renders its calendar in a portal, so these shared Sales styles stay global. */
+.call-list-calendar-popover { z-index: 2200; width: 280px; padding: 10px; border: 1px solid #e5d6c9; border-radius: 12px; background: #fffdfb; color: #302923; box-shadow: 0 12px 30px rgba(62,43,28,.2); font-family: "Manrope",sans-serif; }
+.call-list-calendar-header { display: grid; grid-template-columns: 32px 1fr 32px; align-items: center; gap: 4px; margin-bottom: 8px; color: #704229; }
+.call-list-calendar-header strong { text-align: center; font-size: 13px; font-weight: 750; }
+.call-list-calendar-header button,.call-list-calendar-footer button { display: inline-flex; align-items: center; justify-content: center; min-width: 28px; height: 28px; padding: 0 7px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: #704229; font: inherit; cursor: pointer; }
+.call-list-calendar-header button:hover,.call-list-calendar-footer button:hover { border-color: #e5d6c9; background: #f3ede4; }
+.call-list-calendar-header button:disabled { color: #c8bdb4; cursor: not-allowed; }
+.call-list-calendar-grid { display: grid; grid-template-columns: repeat(7,minmax(0,1fr)); gap: 3px; }
+.call-list-calendar-weekday { display: grid; place-items: center; height: 25px; color: #8b796a; font-size: 11px; font-weight: 700; }
+.call-list-calendar-day,.call-list-calendar-empty { display: grid; place-items: center; width: 100%; height: 30px; }
+.call-list-calendar-day { border: 1px solid transparent; border-radius: 7px; background: transparent; color: #403832; font: inherit; font-size: 12px; cursor: pointer; }
+.call-list-calendar-day:hover:not(:disabled) { background: #f3ede4; }
+.call-list-calendar-day.today { border-color: #b8875e; color: #704229; font-weight: 750; }
+.call-list-calendar-day.selected { border-color: #704229; background: #804727; color: #fff; font-weight: 750; }
+.call-list-calendar-day:disabled { color: #c4b8ad; cursor: not-allowed; }
+.call-list-calendar-footer { display: flex; justify-content: space-between; margin-top: 8px; padding-top: 7px; border-top: 1px solid #eee6dc; }
+.call-list-calendar-footer button { min-width: 48px; font-size: 12px; font-weight: 700; }
+@media (max-width: 900px) {
+  .it-attendance-report-summary { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .it-attendance-report-toolbar { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .it-attendance-report-toolbar > button { width: 100%; }
+}
+@media (max-width: 620px) {
+  .it-attendance-report-panel .panel-head { align-items: flex-start; flex-direction: column; }
+  .it-attendance-report-actions { width: 100%; }
+  .it-attendance-report-actions button { flex: 1; }
+  .it-attendance-report-toolbar { grid-template-columns: 1fr; }
+}
 
 .badge { display: inline-flex; align-items: center; justify-content: center; height: 30px; padding: 0 12px; border-radius: 999px; font-size: 0.82rem; font-weight: 700; }
 .badge.success { color: var(--success); background: var(--success-soft); }
@@ -351,7 +616,55 @@ img { display: block; max-width: 100%; }
 .info-chip span { display: block; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-faint); margin-bottom: 4px; }
 .info-chip strong { font-size: 0.95rem; color: var(--text); }
 
-.mark-attendance-form { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px; align-items: end; padding: 20px 24px 28px; }
+.it-attendance-page { max-width: 1220px; margin: 18px auto; padding: 0 20px; }
+.it-attendance-panel { overflow: hidden; border-radius: 16px; border: 1px solid rgba(178,106,60,.2); background: #fff; box-shadow: 0 16px 40px rgba(58,35,26,.08); }
+.it-attendance-success { display: flex; align-items: center; gap: 9px; margin: 20px 22px 0; padding: 13px 15px; border: 1px solid #ddc1a8; border-radius: 9px; background: #f6e8dc; color: #67351f; font-size: .82rem; font-weight: 700; }
+.it-attendance-holiday, .it-attendance-auto-absent { margin: 20px 22px 0; padding: 13px 15px; border-radius: 8px; font-size: .82rem; font-weight: 700; }
+.it-attendance-holiday { border: 1px solid #ddc1a8; background: #f6e8dc; color: #67351f; }
+.it-attendance-auto-absent { border: 1px solid #f0c99d; background: #fff3e7; color: #844322; }
+.it-attendance-form { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)) minmax(160px,.9fr); align-items: end; gap: 16px; padding: 21px 22px; background: #fffdfb; }
+.it-attendance-field { display: grid; min-width: 0; gap: 7px; color: var(--text); font-size: max(15px,.82rem); font-weight: 700; }
+.it-attendance-label { display: inline-flex; align-items: center; gap: 6px; }
+.it-attendance-label svg { color: #9a5c35; }
+.it-attendance-field input, .it-attendance-field select { width: 100%; min-height: 42px; padding: 0 12px; border: 1px solid #e5d6c9; border-radius: 8px; background: #fffdfb; color: var(--text); font: inherit; outline: none; }
+.it-attendance-select-wrap { position: relative; min-width: 0; }
+.it-attendance-select-wrap > svg { position: absolute; left: 12px; top: 50%; z-index: 1; transform: translateY(-50%); color: #806b5a; pointer-events: none; }
+.it-attendance-select-wrap select { padding-left: 38px; }
+.it-attendance-field input:focus, .it-attendance-field select:focus { border-color: #bd8865; box-shadow: 0 0 0 3px rgba(141,94,56,.12); }
+.it-attendance-field input:read-only, .it-attendance-field input:disabled, .it-attendance-field select:disabled { background: #f3ede7; color: var(--text-soft); cursor: not-allowed; }
+.it-attendance-action { display: grid; min-width: 0; gap: 8px; }
+.it-attendance-clock { min-height: 18px; display: flex; align-items: center; justify-content: flex-end; gap: 7px; color: var(--text-soft); font-size: max(13px,.72rem); }
+.it-attendance-clock strong { color: var(--text); }
+.it-attendance-live-dot { width: 7px; height: 7px; border-radius: 50%; background: #b26a3c; box-shadow: 0 0 0 3px rgba(178,106,60,.12); }
+.it-attendance-worked-time { color: #6b3e2b; font-weight: 700; white-space: nowrap; }
+.it-attendance-submit { width: 100%; min-height: 42px; padding: 0 16px; border: 0; border-radius: 8px; background: linear-gradient(135deg,#9a5c35,#7d4729); color: #fff; font: inherit; font-weight: 700; cursor: pointer; transition: filter .16s ease,transform .16s ease; }
+.it-attendance-submit:hover:not(:disabled) { filter: brightness(1.05); transform: translateY(-1px); }
+.it-attendance-submit.checkout { background: linear-gradient(135deg,#b85b37,#963d2a); }
+.it-attendance-submit.completed { background: #94877d; }
+.it-attendance-submit:disabled { cursor: not-allowed; opacity: .62; transform: none; }
+.it-attendance-policy { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); margin: 0 22px 20px; overflow: hidden; border: 1px solid #ead8c9; border-radius: 12px; background: #fffaf6; }
+.it-attendance-policy-item { display: flex; align-items: center; min-width: 0; gap: 11px; padding: 14px 16px; }
+.it-attendance-policy-item + .it-attendance-policy-item { border-left: 1px solid #ead8c9; }
+.it-attendance-policy-icon { width: 32px; height: 32px; flex: 0 0 32px; align-self: center; display: grid; place-items: center; border-radius: 9px; background: #f1d7c3; color: #6b3e2b; line-height: 0; }
+.it-attendance-policy-icon svg { display: block; }
+.it-attendance-policy-item strong, .it-attendance-policy-item span { display: block; }
+.it-attendance-policy-item > .it-attendance-policy-icon { display: grid; align-self: center; place-items: center; line-height: 0; }
+.it-attendance-policy-item strong { margin-bottom: 3px; color: #3a231a; font-size: .78rem; line-height: 1.25; }
+.it-attendance-policy-item > div > span { color: #7b685c; font-size: .7rem; line-height: 1.35; }
+.it-attendance-closed { margin: 0 22px 20px; padding: 12px 14px; border-radius: 10px; background: #fff3e7; color: #844322; font-size: .8rem; font-weight: 700; }
+@media (max-width: 1050px) {
+  .it-attendance-form { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .it-attendance-policy { grid-template-columns: 1fr; }
+  .it-attendance-policy-item + .it-attendance-policy-item { border-left: 0; border-top: 1px solid #ead8c9; }
+}
+@media (max-width: 620px) {
+  .it-attendance-page { padding: 0; margin-top: 0; }
+  .it-attendance-form { grid-template-columns: 1fr; padding: 18px; }
+  .it-attendance-policy { margin: 0 18px 18px; }
+  .it-user-chip-copy { display: none; }
+  .it-user-chip { padding: 5px; }
+  .topbar-right { gap: 8px; }
+}
 .leave-request-form { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 18px; align-items: end; padding: 22px 24px; }
 
 .filters-row { display: flex; flex-wrap: wrap; gap: 14px; align-items: end; padding: 18px 20px; }
@@ -483,6 +796,19 @@ img { display: block; max-width: 100%; }
 .queue-item h4 { margin: 0 0 5px; font-size: 0.92rem; }
 .queue-item p { margin: 0; color: var(--text-soft); font-size: 0.82rem; line-height: 1.5; }
 @media (max-width: 760px) { .detail-row { grid-template-columns: 1fr; gap: 4px; } .queue-item { flex-direction: column; } }
+
+@media (min-width: 981px) {
+  .it-dashboard-shell { zoom: .8; width: 125vw; height: 125vh; }
+  .it-dashboard-shell > .sidebar,
+  .it-dashboard-shell > .workspace { height: calc(125vh - 32px); }
+  .it-dashboard-shell > .sidebar { max-height: calc(125vh - 32px); }
+  .it-dashboard-toast { zoom: .8; max-width: min(440px, calc(125vw - 60px)); }
+  .it-compact-modal { zoom: .8; }
+  .it-compact-modal.brief-file-modal { width: min(1120px, 117.5vw); max-width: 117.5vw; height: 112.5vh; max-height: 112.5vh; }
+  .it-compact-modal.clar-dialog { width: min(740px, calc(125vw - 40px)); max-height: 112.5vh; }
+  .it-compact-modal.bugs-dialog { width: min(760px, calc(125vw - 40px)); max-height: 112.5vh; }
+  .it-compact-modal.tm-drawer { width: min(570px, 125vw); max-width: 125vw; height: 125dvh; max-height: 125dvh; }
+}
 `;
 
 /* ============================================================
@@ -491,24 +817,27 @@ img { display: block; max-width: 100%; }
 
 const NAV_ITEMS = [
   { key: "dashboard", label: "Dashboard", icon: LayoutDashboard, group: "Overview" },
-  { key: "mark-attendance", label: "Mark Attendance", icon: CalendarCheck, group: "Attendance" },
-  { key: "attendance-report", label: "Attendance Report", icon: ClipboardList, group: "Attendance" },
+  { key: "tasks", label: "Tasks", icon: ListChecks, group: "Work" },
+  { key: "mark-attendance", label: "Mark Attendance", icon: CalendarCheck, group: "Work" },
+  { key: "attendance-report", label: "Attendance Report", icon: ClipboardList, group: "Work" },
+  { key: "leave-request", label: "Leave Request", icon: UserCircle2, group: "Work" },
   { key: "new-projects", label: "New Projects", icon: FolderKanban, group: "Projects" },
   { key: "active-projects", label: "Active Projects", icon: ClipboardCheck, group: "Projects" },
   { key: "completed-projects", label: "Completed Projects", icon: CircleCheck, group: "Projects" },
   ...teamNavigation,
-  { key: "my-work", label: "My Work", icon: ClipboardList, group: "Work" },
+  { key: "my-work", label: "My Work", icon: ClipboardList, group: "My Work" },
   { key: "open-bugs", label: "Open Bugs", icon: Bug, group: "Support" },
   { key: "clarification", label: "Clarification", icon: MessageSquare, group: "Support" },
   { key: "hr-helpdesk", label: "HR Helpdesk", icon: MessageSquare, group: "Support" },
+  { key: "notifications", label: "Notifications", icon: BellRing, group: "Account" },
   { key: "settings", label: "Settings", icon: SettingsIcon, group: "Account" },
-  { key: "leave-request", label: "Leave Request", icon: UserCircle2, group: "Account" },
 ];
 
-const NAV_GROUPS = ["Overview", "Attendance", "Projects", ...(canManageTeam ? ["Team"] : []), "Work", "Support", "Account"];
+const NAV_GROUPS = ["Overview", "Work", "Projects", ...(canManageTeam ? ["Team"] : []), "My Work", "Support", "Account"];
 const TITLES = {
   ...teamTitles,
   dashboard: "Dashboard",
+  tasks: "Tasks",
   "mark-attendance": "Mark Attendance",
   "attendance-report": "Attendance Report",
   "new-projects": "New Projects",
@@ -523,6 +852,7 @@ const TITLES = {
   "completed-projects": "Completed Projects",
   "project-details": "Project Details",
   "project-review": "Project Review",
+  notifications: "Notifications",
   settings: "Account Settings",
   "leave-request": "Leave Request",
 };
@@ -559,20 +889,6 @@ const WORK_ITEMS = {
   "completed-projects": { title: "Completed Projects", subtitle: "Projects delivered by the IT team.", icon: CircleCheck, items: [{ title: "Attendance Reporting Refresh", detail: "Monthly filters and export actions are available to employees.", meta: "Completed 12 Sep 2026", status: "Completed" }, { title: "Profile Documents", detail: "Employee KYC and document upload cards are now available.", meta: "Completed 05 Sep 2026", status: "Completed" }] },
 };
 
-const INITIAL_ATTENDANCE = [
-  { sn: 1, id: 60, name: "Ekta Singh", dept: "IT", branch: "Ajmer", date: "15-09-2026", day: "Tuesday", checkin: "12:20:00", checkout: "00:00:00", hours: "00:00:00", remark: "", status: "Present" },
-  { sn: 2, id: 60, name: "Ekta Singh", dept: "IT", branch: "Ajmer", date: "14-09-2026", day: "Monday", checkin: "15:03:00", checkout: "00:00:00", hours: "00:00:00", remark: "", status: "Present" },
-  { sn: 3, id: 60, name: "Ekta Singh", dept: "IT", branch: "Ajmer", date: "12-09-2026", day: "Saturday", checkin: "00:00:00", checkout: "00:00:00", hours: "00:00:00", remark: "", status: "Leave" },
-  { sn: 4, id: 60, name: "Ekta Singh", dept: "IT", branch: "Ajmer", date: "10-09-2026", day: "Thursday", checkin: "00:00:00", checkout: "00:00:00", hours: "00:00:00", remark: "", status: "Leave" },
-  { sn: 5, id: 60, name: "Ekta Singh", dept: "IT", branch: "Ajmer", date: "05-09-2026", day: "Saturday", checkin: "00:00:00", checkout: "12:29:00", hours: "12:29:00", remark: "", status: "Present" },
-  { sn: 6, id: 60, name: "Ekta Singh", dept: "IT", branch: "Ajmer", date: "04-09-2026", day: "Friday", checkin: "00:00:00", checkout: "11:02:00", hours: "11:02:00", remark: "", status: "Present" },
-  { sn: 7, id: 60, name: "Ekta Singh", dept: "IT", branch: "Ajmer", date: "03-09-2026", day: "Thursday", checkin: "00:00:00", checkout: "00:00:00", hours: "00:00:00", remark: "", status: "Present" },
-  { sn: 8, id: 60, name: "Ekta Singh", dept: "IT", branch: "Ajmer", date: "02-09-2026", day: "Wednesday", checkin: "11:10:00", checkout: "00:00:00", hours: "00:00:00", remark: "", status: "Present" },
-  { sn: 9, id: 60, name: "Ekta Singh", dept: "IT", branch: "Ajmer", date: "01-09-2026", day: "Tuesday", checkin: "00:00:00", checkout: "00:00:00", hours: "00:00:00", remark: "", status: "Leave" },
-  { sn: 10, id: 60, name: "Ekta Singh", dept: "IT", branch: "Ajmer", date: "31-08-2026", day: "Monday", checkin: "00:00:00", checkout: "00:00:00", hours: "00:00:00", remark: "rakhi", status: "Leave" },
-  { sn: 11, id: 60, name: "Ekta Singh", dept: "IT", branch: "Ajmer", date: "30-08-2026", day: "Sunday", checkin: "00:00:00", checkout: "00:00:00", hours: "00:00:00", remark: "", status: "Holiday" },
-];
-
 const INITIAL_ALL_TASKS = [
   { name: "Task Test", desc: "Client onboarding checklist", by: "Admin", to: "Testing@CRM", status: "Completed" },
   { name: "Fast", desc: "Review CRM lead form fields", by: "Admin", to: "IT", status: "Pending" },
@@ -584,16 +900,6 @@ const INITIAL_ALL_TASKS = [
   { name: "New List Updated", desc: "Speed up the release", by: "Admin", to: "Unassigned", status: "In Progress" },
 ].map((t, i) => ({ id: i + 1, ...t }));
 
-const INITIAL_LEAVES = [
-  { sn: 1, name: "Ekta Singh", type: "Casual Leave", start: "31-08-2026", end: "31-08-2026", reason: "Family function", status: "Approved", appliedAt: "25-08-2026 12:02 PM", approvedBy: "HR", approvedAt: "26-08-2026 10:40 AM" },
-  { sn: 2, name: "Ekta Singh", type: "Casual Leave", start: "29-08-2026", end: "29-08-2026", reason: "Personal work", status: "Approved", appliedAt: "25-08-2026 12:01 PM", approvedBy: "HR", approvedAt: "26-08-2026 10:39 AM" },
-  { sn: 3, name: "Ekta Singh", type: "Casual Leave", start: "26-08-2026", end: "27-08-2026", reason: "Family function", status: "Approved", appliedAt: "25-08-2026 11:59 AM", approvedBy: "HR", approvedAt: "26-08-2026 10:38 AM" },
-  { sn: 4, name: "Ekta Singh", type: "Sick Leave", start: "12-08-2026", end: "12-08-2026", reason: "High fever", status: "Approved", appliedAt: "12-08-2026 09:14 AM", approvedBy: "HR", approvedAt: "12-08-2026 04:04 PM" },
-  { sn: 5, name: "Ekta Singh", type: "Sick Leave", start: "11-08-2026", end: "11-08-2026", reason: "High fever", status: "Approved", appliedAt: "11-08-2026 02:28 PM", approvedBy: "HR", approvedAt: "11-08-2026 03:09 PM" },
-  { sn: 6, name: "Ekta Singh", type: "Sick Leave", start: "06-08-2026", end: "06-08-2026", reason: "High fever", status: "Approved", appliedAt: "06-08-2026 05:05 PM", approvedBy: "HR", approvedAt: "06-08-2026 05:08 PM" },
-  { sn: 7, name: "Ekta Singh", type: "Casual Leave", start: "13-07-2026", end: "18-07-2026", reason: "Family engagement", status: "Approved", appliedAt: "09-07-2026 03:04 PM", approvedBy: "Admin", approvedAt: "09-07-2026 03:05 PM" },
-];
-
 /* ============================================================
    HELPERS
    ============================================================ */
@@ -601,7 +907,7 @@ const INITIAL_LEAVES = [
 function Badge({ status }) {
   const map = {
     Present: "success", Completed: "success", Approved: "success",
-    Leave: "warning", Pending: "warning", "In Progress": "warning",
+    Leave: "warning", Pending: "warning", "In Progress": "warning", "Apply Leave": "warning", "Leave Applied": "warning",
     Holiday: "info", Rejected: "danger", Absent: "danger",
   };
   return <span className={`badge ${map[status] || "neutral"}`}>{status}</span>;
@@ -619,7 +925,7 @@ function Field({ label, required, children }) {
 function Toast({ message, onClose }) {
   if (!message) return null;
   return (
-    <div className="toast">
+    <div className="toast it-dashboard-toast">
       {message}
       <button onClick={onClose} className="icon-button" style={{ width: 26, height: 26, minHeight: 26, background: "transparent", borderColor: "rgba(255,255,255,0.2)", color: "white" }}>
         <X size={13} />
@@ -632,22 +938,26 @@ function Toast({ message, onClose }) {
    SIDEBAR
    ============================================================ */
 
-function Sidebar({ page, setPage, mobileOpen, setMobileOpen, onLogout }) {
+function Sidebar({ page, setPage, mobileOpen, setMobileOpen, onLogout, identity, unreadNotificationCount }) {
+  const profileName = identity?.name || EMPLOYEE.name;
+  const profileImage = identity?.imageUrl || identity?.photo || "";
   return (
     <>
       <div className={`mobile-scrim${mobileOpen ? " show" : ""}`} onClick={() => setMobileOpen(false)} />
       <aside className={`sidebar${mobileOpen ? " mobile-open" : ""}`}>
         <div className="brand">
-          <div className="logo-badge compact"><LayoutDashboard size={20} /></div>
+          <div className="logo-badge compact it-brand-logo" aria-hidden="true"><span>S</span><span>T</span></div>
           <div className="brand-copy">
-            <strong>IT Dashboard</strong>
-            <span>System Technologies</span>
+            <strong>System Technologies</strong>
+            <span>IT Department</span>
           </div>
         </div>
 
         <div className="sidebar-profile">
-          <div className="sidebar-profile-avatar"><UserCircle2 size={30} /></div>
-          <div className="sidebar-profile-name">{EMPLOYEE.name}</div>
+          {profileImage
+            ? <img className="sidebar-profile-image" src={profileImage} alt={`${profileName} profile`} />
+            : <div className="sidebar-profile-avatar"><UserCircle2 size={30} /></div>}
+          <div className="sidebar-profile-name">{profileName}</div>
         </div>
 
         <div className="sidebar-search">
@@ -672,6 +982,7 @@ function Sidebar({ page, setPage, mobileOpen, setMobileOpen, onLogout }) {
                       <Icon size={17} />
                       <span>{item.label}</span>
                     </span>
+                    {item.key === "notifications" && unreadNotificationCount > 0 && <span className="nav-pill">{unreadNotificationCount}</span>}
                   </button>
                 );
               })}
@@ -735,7 +1046,7 @@ function ProjectFileModal({ file, onClose }) {
     dialog.showModal();
     return () => { dialog.close(); previousFocus?.focus(); };
   }, []);
-  return createPortal(<dialog ref={dialogRef} className="brief-file-modal" onCancel={onClose} onClick={(event) => { if (event.target === event.currentTarget) onClose(); }} aria-labelledby="brief-preview-title">
+  return createPortal(<dialog ref={dialogRef} className="brief-file-modal it-compact-modal" onCancel={onClose} onClick={(event) => { if (event.target === event.currentTarget) onClose(); }} aria-labelledby="brief-preview-title">
     <div className="brief-modal-inner">
       <header><span className="brief-pdf-icon"><FileText size={24} /></span><div><p>{file.sample ? "SAMPLE DOCUMENT" : "PROJECT DOCUMENT"}</p><h3 id="brief-preview-title">{file.name}</h3></div><a className="ghost-button" href={file.dataUrl} download={file.name}><Download size={16} /> Download</a><button autoFocus type="button" className="icon-button" aria-label="Close document preview" onClick={onClose}><X size={22} /></button></header>
       {file.type?.startsWith("image/") ? <img className="brief-modal-image" src={file.dataUrl} alt={file.name} /> : <object data={file.dataUrl} type="application/pdf" aria-label={`Preview of ${file.name}`}><div className="brief-preview-fallback"><FileText size={40} /><p>Your browser cannot display this PDF here.</p><a className="primary-button" href={file.dataUrl} download={file.name}>Download PDF</a></div></object>}
@@ -846,51 +1157,178 @@ function ProjectTasksPage({ projects }) {
    PAGE: MARK ATTENDANCE
    ============================================================ */
 
-function MarkAttendancePage({ notify }) {
-  const [status, setStatus] = useState("Present");
-  const [remark, setRemark] = useState("Working on support tickets and course progress updates.");
-  const [checkedIn, setCheckedIn] = useState(false);
-  const [checkedOut, setCheckedOut] = useState(false);
+function MarkAttendancePage({
+  notify,
+  employee,
+  attendance = [],
+  setAttendance,
+  calendar,
+  loading = false,
+  authenticated = false,
+  onRefreshToday,
+}) {
+  const today = attendanceDateInIndia();
+  const todaysRecord = attendance.find((record) => String(record.date || record.workDate || "") === today) || null;
+  const [status, setStatus] = useState("");
+  const [remark, setRemark] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [currentTime, setCurrentTime] = useState(() => new Date());
+  const refreshedAttendanceDate = useRef("");
 
-  const handleCheckIn = () => {
-    if (!status) { notify("Please select a status before checking in."); return; }
-    setCheckedIn(true);
-    notify("Checked in successfully.");
+  useEffect(() => {
+    const timer = window.setInterval(() => setCurrentTime(new Date()), 30000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    setStatus(todaysRecord?.status || "");
+    setRemark(todaysRecord?.remark || "");
+  }, [todaysRecord?.id, todaysRecord?.remark, todaysRecord?.status]);
+
+  const attendanceCalendar = calendar || {};
+  const holiday = attendanceHolidayForDate(today, attendanceCalendar);
+  const isHoliday = Boolean(holiday);
+  const isCheckInClosed = attendanceCutoffPassed(today, currentTime, attendanceCalendar);
+  const indiaTime = currentTime.toLocaleTimeString("en-US", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" });
+  const employeeName = employee?.name || EMPLOYEE.name;
+  const checkIn = todaysRecord?.checkIn && todaysRecord.checkIn !== "-" ? todaysRecord.checkIn : "";
+  const checkOut = todaysRecord?.checkOut && todaysRecord.checkOut !== "-" ? todaysRecord.checkOut : "";
+  const isAutoAbsent = Boolean(todaysRecord?.autoMarked && !todaysRecord?.correctedAt && todaysRecord?.status === "Absent");
+  const canCheckOut = Boolean(checkIn && !checkOut && todaysRecord?.status === "Present");
+  const checkInTimestamp = Date.parse(todaysRecord?.checkInAt || "");
+  const liveWorkedMinutes = todaysRecord?.workedMinutes !== null
+    && todaysRecord?.workedMinutes !== undefined
+    && Number.isFinite(Number(todaysRecord.workedMinutes))
+    && checkOut
+    ? Number(todaysRecord.workedMinutes)
+    : Number.isFinite(checkInTimestamp) && todaysRecord?.status === "Present"
+      ? Math.max(0, Math.floor((currentTime.getTime() - checkInTimestamp) / 60_000))
+      : null;
+  const workedTime = liveWorkedMinutes === null
+    ? "Not recorded"
+    : `${Math.floor(liveWorkedMinutes / 60)}h ${String(liveWorkedMinutes % 60).padStart(2, "0")}m`;
+
+  useEffect(() => {
+    if (!authenticated || !isCheckInClosed || refreshedAttendanceDate.current === today) return;
+    refreshedAttendanceDate.current = today;
+    Promise.resolve(onRefreshToday?.())
+      .catch((error) => {
+        refreshedAttendanceDate.current = "";
+        notify(error.message || "Could not refresh attendance after the cutoff.");
+      });
+  }, [authenticated, isCheckInClosed, notify, onRefreshToday, today]);
+
+  const storeAttendanceRecord = (saved) => {
+    if (!saved) return;
+    setAttendance?.((records) => [saved, ...records.filter((record) => (
+      String(record.id || "") !== String(saved.id || "")
+      && String(record.date || record.workDate || "") !== String(saved.date || saved.workDate || "")
+    ))]);
   };
 
-  const handleCheckOut = () => {
-    if (!checkedIn) return;
-    setCheckedOut(true);
-    notify("Checked out successfully.");
+  const handleCheckIn = async () => {
+    if (!authenticated) { notify("Sign in to mark attendance."); return; }
+    if (isHoliday) { notify(`${holiday.label || "Holiday"}. Attendance cannot be marked today.`); return; }
+    if (isCheckInClosed) { notify("The check-in window closed at 12:00 PM IST."); return; }
+    if (!status) { notify("Please select a status before checking in."); return; }
+    if (todaysRecord) { notify("Attendance is already marked for today."); return; }
+    setSubmitting(true);
+    try {
+      const saved = await checkInAttendance({ status, remark });
+      storeAttendanceRecord(saved);
+      notify(saved?.status === "Absent" ? "Attendance marked Absent." : "Checked in successfully.");
+    } catch (error) {
+      notify(error.message || "Could not mark attendance.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleCheckOut = async () => {
+    if (!authenticated || !canCheckOut || submitting) return;
+    setSubmitting(true);
+    try {
+      const saved = await checkOutAttendance();
+      storeAttendanceRecord(saved);
+      notify("Checked out successfully.");
+    } catch (error) {
+      notify(error.message || "Could not check out.");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
-    <div className="panel">
-      <div className="panel-head"><h3>Mark Attendance</h3></div>
-      <div className="mark-attendance-form">
-        <Field label="Employee Name">
-          <input value={EMPLOYEE.name} disabled />
-        </Field>
-        <Field label="Select Status">
-          <select value={status} onChange={(e) => setStatus(e.target.value)}>
-            <option value="">Select Status</option>
-            <option>Present</option>
-            <option>Absent</option>
-            <option>Leave</option>
-          </select>
-        </Field>
-        <Field label="Remark">
-          <input placeholder="Remark (optional)" value={remark} onChange={(e) => setRemark(e.target.value)} />
-        </Field>
-        <Field label={checkedOut ? "Attendance Complete" : checkedIn ? "Check Out" : "Check In"}>
-          <button
-            onClick={checkedOut ? undefined : checkedIn ? handleCheckOut : handleCheckIn}
-            disabled={checkedOut}
-            className="primary-button full-width danger-button"
-          >
-            {checkedOut ? "Checked Out" : checkedIn ? "Check Out" : "Check In"}
-          </button>
-        </Field>
+    <div className="it-attendance-page">
+      <div className="it-attendance-panel">
+        {isHoliday && (
+          <div className="it-attendance-holiday" role="status">
+            {holiday.label || "Today is a holiday"}. Attendance cannot be marked today.
+          </div>
+        )}
+        {isAutoAbsent && (
+          <div className="it-attendance-auto-absent" role="status" aria-live="polite">
+            Attendance was automatically marked Absent.
+          </div>
+        )}
+        {checkIn && todaysRecord?.status === "Present" && (
+          <div className="it-attendance-success" role="status">
+            <CircleCheck size={17} />
+            <span>{checkOut ? `Attendance complete: ${checkIn} - ${checkOut} (${workedTime})` : `Checked in at ${checkIn} · Worked ${workedTime}`}</span>
+          </div>
+        )}
+        <div className="it-attendance-form">
+          <label className="it-attendance-field">
+            <span className="it-attendance-label"><UserCircle2 size={15} />Employee Name</span>
+            <input value={employeeName} readOnly />
+          </label>
+          <label className="it-attendance-field">
+            <span className="it-attendance-label"><ListChecks size={15} />Select Status</span>
+            <div className="it-attendance-select-wrap">
+              <AlertCircle size={15} aria-hidden="true" />
+              <select value={isHoliday ? "Holiday" : status} onChange={(e) => setStatus(e.target.value)} disabled={loading || submitting || isHoliday || isCheckInClosed || Boolean(todaysRecord)}>
+                <option value="">Select Status</option>
+                <option>Present</option>
+                <option>Absent</option>
+                {isHoliday && <option>Holiday</option>}
+              </select>
+            </div>
+          </label>
+          <label className="it-attendance-field">
+            <span className="it-attendance-label"><MessageSquareText size={15} />Remark</span>
+            <input maxLength={500} placeholder="Remark (optional)" value={remark} onChange={(e) => setRemark(e.target.value)} disabled={loading || submitting || isHoliday || isCheckInClosed || Boolean(todaysRecord)} />
+          </label>
+          <div className="it-attendance-action">
+            <div className="it-attendance-clock" aria-label={`Current India time ${indiaTime} IST`}>
+              <span className="it-attendance-live-dot" />
+              <span>India time</span>
+              <strong>{indiaTime} IST</strong>
+              {checkIn && <span className="it-attendance-worked-time">· {workedTime}</span>}
+            </div>
+            <button
+              type="button"
+              onClick={!todaysRecord ? handleCheckIn : canCheckOut ? handleCheckOut : undefined}
+              disabled={loading || submitting || isHoliday || (todaysRecord ? !canCheckOut || Boolean(checkOut) : isCheckInClosed || !status)}
+              className={`it-attendance-submit${canCheckOut ? " checkout" : ""}${checkOut || (todaysRecord && !canCheckOut) ? " completed" : ""}`}
+            >
+              {loading ? "Loading..." : submitting ? "Saving..." : isHoliday ? "Holiday" : isAutoAbsent ? "Marked Absent" : checkOut ? "Completed" : canCheckOut ? "Check Out" : todaysRecord ? "Marked" : isCheckInClosed ? "Check-in Closed" : "Check In"}
+            </button>
+          </div>
+        </div>
+        <div className="it-attendance-policy" role="note">
+          <div className="it-attendance-policy-item">
+            <span className="it-attendance-policy-icon"><Clock3 size={17} /></span>
+            <div><strong>Check-in window</strong><span>Monday–Saturday, before 12:00 PM IST</span></div>
+          </div>
+          <div className="it-attendance-policy-item">
+            <span className="it-attendance-policy-icon"><AlertCircle size={17} /></span>
+            <div><strong>After 12:00 PM</strong><span>Unmarked attendance becomes Absent; approved leave stays unchanged</span></div>
+          </div>
+          <div className="it-attendance-policy-item">
+            <span className="it-attendance-policy-icon"><CalendarDays size={17} /></span>
+            <div><strong>Sunday &amp; checkout</strong><span>Sunday holiday · Checkout until midnight</span></div>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -900,80 +1338,252 @@ function MarkAttendancePage({ notify }) {
    PAGE: ATTENDANCE REPORT
    ============================================================ */
 
-function AttendanceReportPage({ notify }) {
-  const [rows] = useState(INITIAL_ATTENDANCE);
-  const [day, setDay] = useState("");
-  const [month, setMonth] = useState("2026-09");
-  const [status, setStatus] = useState("");
+function AttendanceReportSelect({ value, onChange, options, ariaLabel }) {
+  const selected = options.find((option) => option.value === value) || options[0];
+  const triggerRef = useRef(null);
+  const menuRef = useRef(null);
+  const optionRefs = useRef([]);
+  const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState(null);
 
-  const filtered = rows.filter((r) => {
-    if (status && r.status !== status) return false;
-    if (day && r.day !== day) return false;
-    return true;
-  });
+  useLayoutEffect(() => {
+    if (!open) return undefined;
+    const updatePosition = () => {
+      const rect = triggerRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const width = Math.max(180, rect.width);
+      const height = Math.min(options.length * 36 + 8, 320, window.innerHeight - 8);
+      const below = window.innerHeight - rect.bottom;
+      const top = below >= height || below >= rect.top ? rect.bottom + 4 : rect.top - height - 4;
+      setPosition({
+        top: Math.max(4, Math.min(top, window.innerHeight - height - 4)),
+        left: Math.max(4, Math.min(rect.left, window.innerWidth - width - 4)),
+        width: Math.min(width, window.innerWidth - 8),
+      });
+    };
+    const closeOnOutsideClick = (event) => {
+      if (!triggerRef.current?.contains(event.target) && !menuRef.current?.contains(event.target)) setOpen(false);
+    };
+    updatePosition();
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+    document.addEventListener("pointerdown", closeOnOutsideClick);
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+      document.removeEventListener("pointerdown", closeOnOutsideClick);
+    };
+  }, [open, options.length]);
+
+  useEffect(() => {
+    if (!open) return;
+    const selectedIndex = options.findIndex((option) => option.value === value);
+    optionRefs.current[Math.max(0, selectedIndex)]?.focus();
+  }, [open, options, value]);
+
+  const close = () => { setOpen(false); requestAnimationFrame(() => triggerRef.current?.focus()); };
+  const moveFocus = (event, index) => {
+    let nextIndex = index;
+    if (event.key === "ArrowDown") nextIndex = (index + 1) % options.length;
+    else if (event.key === "ArrowUp") nextIndex = (index - 1 + options.length) % options.length;
+    else if (event.key === "Home") nextIndex = 0;
+    else if (event.key === "End") nextIndex = options.length - 1;
+    else if (event.key === "Escape") { event.preventDefault(); close(); return; }
+    else return;
+    event.preventDefault();
+    optionRefs.current[nextIndex]?.focus();
+  };
+
+  return <div className="it-attendance-filter-select">
+    <button ref={triggerRef} type="button" className="it-attendance-filter-trigger" aria-label={ariaLabel} aria-haspopup="listbox" aria-expanded={open} onClick={() => setOpen((current) => !current)}>
+      <span>{selected?.label || "Select"}</span><ChevronDown size={15} aria-hidden="true" />
+    </button>
+    {open && position && createPortal(<div ref={menuRef} className="it-attendance-filter-menu" role="listbox" aria-label={`${ariaLabel} options`} style={{ ...position, position: "fixed" }}>
+      {options.map((option, index) => <button key={option.value} ref={(element) => { optionRefs.current[index] = element; }} type="button" role="option" aria-selected={option.value === value} onKeyDown={(event) => moveFocus(event, index)} onClick={() => { onChange(option.value); close(); }}>{option.label}</button>)}
+    </div>, document.body)}
+  </div>;
+}
+
+function AttendanceReportPage({
+  notify,
+  attendance = [],
+  leaveRequests = [],
+  calendar,
+  employee,
+  loading = false,
+  onMonthRequested,
+  onApplyLeave,
+  onSyncAttendance,
+}) {
+  const today = attendanceDateInIndia();
+  const currentMonth = today.slice(0, 7);
+  const joinedDate = employee?.joined || employee?.joinedDate || employee?.joiningDate || `${currentMonth}-01`;
+  const employeeId = employee?.id || employee?._id || employee?.crmId || "";
+  const monthOptions = useMemo(() => {
+    const values = getAttendanceReportMonths(joinedDate, today);
+    return values.length ? values : [currentMonth];
+  }, [currentMonth, joinedDate, today]);
+  const [month, setMonth] = useState(currentMonth);
+  const [status, setStatus] = useState("All");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [syncing, setSyncing] = useState(false);
+  const monthSelectOptions = useMemo(() => monthOptions.map((value) => ({
+    value,
+    label: new Date(`${value}-01T00:00:00.000Z`).toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" }),
+  })), [monthOptions]);
+  const statusSelectOptions = useMemo(() => [
+    { value: "All", label: "All statuses" },
+    { value: "Present", label: "Present" },
+    { value: "Absent", label: "Absent" },
+    { value: "Leave", label: "Leave" },
+    { value: "Holiday", label: "Holiday" },
+    { value: "Pending", label: "Leave action" },
+  ], []);
+
+  useEffect(() => {
+    if (!monthOptions.includes(month)) setMonth(monthOptions[0]);
+  }, [month, monthOptions]);
+
+  useEffect(() => {
+    let active = true;
+    Promise.resolve(onMonthRequested?.(month)).catch((error) => {
+      if (active) notify(error.message || "Could not load monthly attendance.");
+    });
+    return () => { active = false; };
+  }, [month, notify, onMonthRequested]);
+
+  const rows = useMemo(() => buildAttendanceReportRows({
+    attendance,
+    leaves: leaveRequests,
+    month,
+    joinedDate,
+    today,
+    calendar: calendar || {},
+    employeeId,
+  }), [attendance, calendar, employeeId, joinedDate, leaveRequests, month, today]);
+  const filtered = useMemo(() => filterAttendanceReportRows(rows, { status, dateFrom, dateTo }), [dateFrom, dateTo, rows, status]);
+  const reportRange = getAttendanceReportDateRange(month, today);
+  const formatDate = (date) => new Date(`${date}T00:00:00.000Z`).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" });
+  const formatDay = (date) => new Date(`${date}T00:00:00.000Z`).toLocaleDateString("en-US", { weekday: "long", timeZone: "UTC" });
+  const formatWorkedTime = (minutes) => {
+    if (minutes === null || minutes === undefined || !Number.isFinite(Number(minutes))) return "Not recorded";
+    const value = Math.max(0, Math.floor(Number(minutes)));
+    return `${Math.floor(value / 60)}h ${String(value % 60).padStart(2, "0")}m`;
+  };
+  const displayStatus = (row) => attendanceReportStatusLabel(row, leaveRequests, employeeId);
+  const statusIcons = { Present: Check, Absent: CircleX, Leave: Hourglass, Holiday: CalendarDays, Pending: Clock3 };
+
+  const exportCsv = () => {
+    if (!filtered.length) { notify("No records for the selected month."); return; }
+    const values = filtered.map((row, index) => [index + 1, formatDate(row.date), formatDay(row.date), row.checkIn || "Not recorded", row.checkOut || "Not recorded", formatWorkedTime(row.workedMinutes), displayStatus(row), row.reason || "-"]);
+    const csv = [["Sr. No.", "Date", "Day", "Punch In Time", "Punch Out Time", "Worked Time", "Status", "Classification"], ...values]
+      .map((line) => line.map((value) => `"${String(value ?? "").replaceAll('"', '""')}"`).join(","))
+      .join("\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `attendance-${month}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    notify("Attendance report exported.");
+  };
+
+  const exportPdf = () => {
+    if (!filtered.length) { notify("No records for the selected month."); return; }
+    const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+    pdf.setFontSize(16);
+    pdf.text("Attendance Report", 14, 17);
+    pdf.setFontSize(9);
+    pdf.setTextColor(110);
+    pdf.text(`${filtered.length} record${filtered.length === 1 ? "" : "s"} - Generated ${formatDate(today)}`, 14, 24);
+    autoTable(pdf, {
+      startY: 30,
+      head: [["Sr. No.", "Date", "Day", "Punch In", "Punch Out", "Worked", "Status", "Classification"]],
+      body: filtered.map((row, index) => [index + 1, formatDate(row.date), formatDay(row.date), row.checkIn || "Not recorded", row.checkOut || "Not recorded", formatWorkedTime(row.workedMinutes), displayStatus(row), row.reason || "-"]),
+      styles: { fontSize: 8, cellPadding: 3 },
+      headStyles: { fillColor: [127, 78, 43] },
+    });
+    pdf.save(`attendance-${month}.pdf`);
+  };
+  const handleSyncAttendance = async () => {
+    if (syncing) return;
+    setSyncing(true);
+    try {
+      const result = await onSyncAttendance?.(month);
+      notify(result?.message || "Attendance synchronized.");
+    } catch (error) {
+      notify(error.message || "Could not synchronize attendance.");
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   return (
-    <div style={{ display: "grid", gap: 16 }}>
-      <div className="panel">
-        <div className="panel-head">
-          <h3><ClipboardList size={16} style={{ verticalAlign: "-3px", marginRight: 6 }} />Attendance Report</h3>
-        </div>
-        <div className="filters-row">
-          <Field label="Day">
-            <select value={day} onChange={(e) => setDay(e.target.value)}>
-              <option value="">Select Day</option>
-              {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"].map((d) => <option key={d}>{d}</option>)}
-            </select>
-          </Field>
-          <Field label="Month">
-            <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} />
-          </Field>
-          <Field label="Status">
-            <select value={status} onChange={(e) => setStatus(e.target.value)}>
-              <option value="">Select Status</option>
-              <option>Present</option>
-              <option>Leave</option>
-              <option>Holiday</option>
-            </select>
-          </Field>
-          <button className="primary-button">Apply</button>
-          <button className="ghost-button" onClick={() => { setDay(""); setStatus(""); }}>Reset</button>
-          <div style={{ flex: 1 }} />
-          <button className="primary-button crm-upload-button" onClick={() => notify("Exported attendance to Excel.")}>
-            <Download size={15} /> Export to Excel
-          </button>
-          <button className="primary-button danger-button" onClick={() => notify("Exported attendance to PDF.")}>
-            <FileText size={15} /> Export to PDF
-          </button>
+    <div className="panel it-attendance-report-panel">
+      <div className="panel-head">
+        <div><h3>Attendance History</h3><p className="panel-subtitle">Review your punch times and attendance history</p></div>
+        <div className="it-attendance-report-actions">
+          <button type="button" className={`ghost-button it-attendance-sync-button${syncing ? " syncing" : ""}`} onClick={handleSyncAttendance} disabled={syncing} title="Synchronize completed attendance since your joining date">{syncing ? <LoaderCircle size={16} /> : <RefreshCw size={16} />} {syncing ? "Syncing..." : "Sync Attendance"}</button>
+          <button type="button" className="ghost-button" onClick={exportCsv} disabled={!filtered.length}><Download size={16} /> Export CSV</button>
+          <button type="button" className="primary-button" onClick={exportPdf} disabled={!filtered.length}><Download size={16} /> Export PDF ({filtered.length})</button>
         </div>
       </div>
+      <div className="it-attendance-report-summary">
+        <div><span>Present</span><strong>{filtered.filter((row) => row.status === "Present").length}</strong></div>
+        <div><span>Absent</span><strong>{filtered.filter((row) => row.status === "Absent").length}</strong></div>
+        <div><span>Leave</span><strong>{filtered.filter((row) => row.status === "Leave").length}</strong></div>
+        <div><span>Holiday</span><strong>{filtered.filter((row) => row.status === "Holiday").length}</strong></div>
+        <div><span>Leave Action</span><strong>{filtered.filter((row) => row.status === "Pending").length}</strong></div>
+      </div>
+      <div className="it-attendance-report-toolbar">
+        <label><span>Month</span><AttendanceReportSelect value={month} onChange={setMonth} options={monthSelectOptions} ariaLabel="Filter attendance by month" /></label>
+        <label><span>Status</span><AttendanceReportSelect value={status} onChange={setStatus} options={statusSelectOptions} ariaLabel="Filter attendance by status" /></label>
+        <CallListDatePicker label="From" value={dateFrom} min={reportRange.start || undefined} max={dateTo && dateTo < (reportRange.end || today) ? dateTo : reportRange.end || today} onChange={(value) => { setDateFrom(value); if (value && dateTo && value > dateTo) setDateTo(""); }} />
+        <CallListDatePicker label="To" value={dateTo} min={dateFrom && dateFrom > reportRange.start ? dateFrom : reportRange.start || undefined} max={reportRange.end || today} onChange={setDateTo} />
+        <button type="button" className="ghost-button" onClick={() => { setMonth(monthOptions[0] || currentMonth); setStatus("All"); setDateFrom(""); setDateTo(""); }}>Reset</button>
+      </div>
 
-      <div className="panel">
-        <div className="table-wrap">
+      <div className="table-wrap">
           <table className="table attendance-report-table">
-            <thead>
+            <SalesTableHead>
               <tr>
-                {["S.N", "Emp ID", "Emp Name", "Department", "Branch", "Date", "Day", "Check-in", "Check-out", "Total Hours", "Remarks", "Status"].map((h) => <th key={h}>{h}</th>)}
+                <th>Sr. No.</th>
+                <th><span className="attendance-report-heading"><CalendarDays size={14} aria-hidden="true" />Date</span></th>
+                <th><span className="attendance-report-heading"><CalendarDays size={14} aria-hidden="true" />Day</span></th>
+                <th><span className="attendance-report-heading"><Clock3 size={14} aria-hidden="true" />Punch In Time</span></th>
+                <th><span className="attendance-report-heading"><Clock3 size={14} aria-hidden="true" />Punch Out Time</span></th>
+                <th><span className="attendance-report-heading"><UserCircle size={14} aria-hidden="true" />Status</span></th>
               </tr>
-            </thead>
+            </SalesTableHead>
             <tbody>
-              {filtered.map((r) => (
-                <tr key={r.sn}>
-                  <td>{r.sn}</td><td>{r.id}</td>
-                  <td style={{ fontWeight: 700 }}>{r.name}</td>
-                  <td>{r.dept}</td><td>{r.branch}</td><td>{r.date}</td><td>{r.day}</td>
-                  <td>{r.checkin}</td><td>{r.checkout}</td><td>{r.hours}</td>
-                  <td style={{ color: "var(--text-soft)" }}>{r.remark}</td>
-                  <td><Badge status={r.status} /></td>
-                </tr>
-              ))}
-              {filtered.length === 0 && (
-                <tr><td colSpan={12} className="panel-empty">No records match this filter.</td></tr>
-              )}
+              {filtered.map((row, index) => {
+                const pendingLeave = row.status === "Pending" ? pendingLeaveRequestForDate(leaveRequests, row.date, employeeId) : null;
+                const rowStatus = displayStatus(row);
+                const canApplyLeave = row.status === "Pending" && !pendingLeave && row.date >= today;
+                const StatusIcon = row.status === "Pending" ? (pendingLeave ? Hourglass : canApplyLeave ? CalendarDays : RefreshCw) : statusIcons[row.status] || AlertCircle;
+                const statusClass = row.status === "Pending" ? (pendingLeave ? "leave-applied" : canApplyLeave ? "apply-leave" : "pending-sync") : String(row.status || "unknown").toLowerCase();
+                const commonStatusProps = { title: pendingLeave ? "Leave request submitted and awaiting approval" : rowStatus === "Pending Sync" ? "Use Sync Attendance to finalize this completed date" : `${row.reason || "Attendance"} - ${row.payable ? "payable" : "non-payable"}`, className: `it-attendance-report-status-pill is-${statusClass}` };
+                return <tr key={row.id || row.date}>
+                  <td className="attendance-report-serial">{index + 1}</td>
+                  <td className="attendance-report-date">{formatDate(row.date)}</td>
+                  <td>{formatDay(row.date)}</td>
+                  <td>{row.checkIn || "Not recorded"}</td>
+                  <td>{row.checkOut || "Not recorded"}</td>
+                  <td className="attendance-report-status-cell">
+                    {canApplyLeave
+                      ? <button type="button" {...commonStatusProps} onClick={() => onApplyLeave?.(row.date)}><StatusIcon size={13} strokeWidth={2.5} aria-hidden="true" />{rowStatus}</button>
+                      : <span {...commonStatusProps}><StatusIcon size={13} strokeWidth={2.5} aria-hidden="true" />{rowStatus}</span>}
+                  </td>
+                </tr>;
+              })}
+              {loading && !filtered.length && <tr><td colSpan={6} className="it-attendance-report-empty">Loading attendance...</td></tr>}
+              {!loading && filtered.length === 0 && <tr><td colSpan={6} className="it-attendance-report-empty">{reportRange.isFutureMonth ? "Attendance is not available for a future month." : "No attendance records match these filters."}</td></tr>}
             </tbody>
           </table>
         </div>
-      </div>
     </div>
   );
 }
@@ -1260,71 +1870,6 @@ function AllTaskPage({ notify }) {
 }
 
 /* ============================================================
-   PAGE: LEAVE REQUEST
-   ============================================================ */
-
-function LeaveRequestPage({ notify }) {
-  const [leaves, setLeaves] = useState(INITIAL_LEAVES);
-  const [form, setForm] = useState({ type: "Sick Leave", start: "", end: "", reason: "" });
-
-  const applyLeave = () => {
-    if (!form.start || !form.end || !form.reason.trim()) { notify("Fill in the leave dates and reason."); return; }
-    const fmt = (iso) => { const [y, m, d] = iso.split("-"); return `${d}-${m}-${y}`; };
-    setLeaves((l) => [
-      { sn: l.length + 1, name: EMPLOYEE.name, type: form.type, start: fmt(form.start), end: fmt(form.end), reason: form.reason, status: "Pending", appliedAt: "Just now", approvedBy: "—", approvedAt: "—" },
-      ...l,
-    ]);
-    setForm({ type: "Sick Leave", start: "", end: "", reason: "" });
-    notify("Leave request submitted.");
-  };
-
-  return (
-    <div style={{ display: "grid", gap: 16 }}>
-      <div className="panel">
-        <div className="panel-head"><h3 style={{ textAlign: "center", width: "100%" }}>Leave Request</h3></div>
-        <div className="leave-request-form">
-          <Field label="Leave Type">
-            <select value={form.type} onChange={(e) => setForm((f) => ({ ...f, type: e.target.value }))}>
-              <option>Sick Leave</option><option>Casual Leave</option><option>Earned Leave</option>
-            </select>
-          </Field>
-          <Field label="Start Date"><input type="date" value={form.start} onChange={(e) => setForm((f) => ({ ...f, start: e.target.value }))} /></Field>
-          <Field label="End Date"><input type="date" value={form.end} onChange={(e) => setForm((f) => ({ ...f, end: e.target.value }))} /></Field>
-          <Field label="Reason"><input value={form.reason} onChange={(e) => setForm((f) => ({ ...f, reason: e.target.value }))} /></Field>
-        </div>
-        <div style={{ padding: "0 24px 24px" }}>
-          <button className="primary-button crm-upload-button" onClick={applyLeave}>Apply Leave</button>
-        </div>
-      </div>
-
-      <div className="panel">
-        <div className="table-wrap">
-          <table className="table">
-            <thead>
-              <tr>{["S.N", "Name", "Leave Type", "Start Date", "End Date", "Reason", "Status", "Applied At", "Approved By", "Approved At"].map((h) => <th key={h}>{h}</th>)}</tr>
-            </thead>
-            <tbody>
-              {leaves.map((l, i) => (
-                <tr key={i}>
-                  <td>{l.sn}</td>
-                  <td style={{ fontWeight: 700 }}>{l.name}</td>
-                  <td>{l.type}</td><td>{l.start}</td><td>{l.end}</td>
-                  <td style={{ color: "var(--text-soft)" }}>{l.reason}</td>
-                  <td><Badge status={l.status} /></td>
-                  <td style={{ color: "var(--text-faint)" }}>{l.appliedAt}</td>
-                  <td style={{ color: "var(--text-faint)" }}>{l.approvedBy}</td>
-                  <td style={{ color: "var(--text-faint)" }}>{l.approvedAt}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/* ============================================================
    APP
    ============================================================ */
 
@@ -1336,8 +1881,59 @@ function ITWorkspace({ user, projects, onProjectsChange, onLogout }) {
   const [page, setPage] = useState("dashboard");
   const [mobileOpen, setMobileOpen] = useState(false);
   const [toast, setToast] = useState("");
+  const [topMenu, setTopMenu] = useState("");
   const [localProjects, setLocalProjects] = useState(user ? [] : projects === undefined ? getStoredProjects() : projects);
   const [selectedProjectId, setSelectedProjectId] = useState(null);
+  const [attendanceRecords, setAttendanceRecords] = useState([]);
+  const [attendanceCalendar, setAttendanceCalendar] = useState(null);
+  const [attendanceLeaves, setAttendanceLeaves] = useState([]);
+  const [attendanceLoading, setAttendanceLoading] = useState(Boolean(user));
+  const [appNotifications, setAppNotifications] = useState([]);
+  const [incomingNotifications, setIncomingNotifications] = useState(false);
+  const [leaveRequestDate, setLeaveRequestDate] = useState("");
+  const [accountProfile, setAccountProfile] = useState(() => ({
+    ...(user || {}),
+    avatarUrl: user?.imageUrl || user?.photo || "",
+  }));
+  const topbarMenusRef = useRef(null);
+  const toastTimerRef = useRef(null);
+  const knownNotificationIdsRef = useRef(null);
+  const incomingNotificationTimerRef = useRef(null);
+  const attendanceMonthsLoaded = useRef(new Set());
+  const attendanceMonthRequests = useRef(new Map());
+  const attendanceCalendarLoaded = useRef(false);
+  const attendanceTodayRefreshed = useRef(new Set());
+  const profileIdentity = {
+    ...EMPLOYEE,
+    ...(user || {}),
+    ...accountProfile,
+    name: accountProfile?.name || user?.name || EMPLOYEE.name,
+    imageUrl: accountProfile?.imageUrl || accountProfile?.avatarUrl || user?.imageUrl || user?.photo || "",
+  };
+  const employeeRole = accountProfile?.position || accountProfile?.designation || accountProfile?.role || user?.position || user?.designation || user?.role || EMPLOYEE.designation;
+
+  useEffect(() => {
+    setAccountProfile((current) => ({
+      ...current,
+      ...(user || {}),
+      avatarUrl: user?.imageUrl || user?.photo || current.avatarUrl || "",
+    }));
+  }, [user]);
+
+  useEffect(() => {
+    const closeTopMenu = (event) => {
+      if (!topbarMenusRef.current?.contains(event.target)) setTopMenu("");
+    };
+    document.addEventListener("pointerdown", closeTopMenu);
+    return () => document.removeEventListener("pointerdown", closeTopMenu);
+  }, []);
+
+  useEffect(() => setTopMenu(""), [page]);
+
+  useEffect(() => () => {
+    window.clearTimeout(toastTimerRef.current);
+    window.clearTimeout(incomingNotificationTimerRef.current);
+  }, []);
 
   useEffect(() => {
     if (projects !== undefined) setLocalProjects(Array.isArray(projects) ? projects : []);
@@ -1404,12 +2000,183 @@ function ITWorkspace({ user, projects, onProjectsChange, onLogout }) {
     });
   };
 
-  const notify = (msg) => {
+  const notify = useCallback((msg) => {
     setToast(msg);
-    window.clearTimeout(notify._t);
-    notify._t = window.setTimeout(() => setToast(""), 5000);
-  };
+    window.clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = window.setTimeout(() => setToast(""), 5000);
+  }, []);
 
+  const loadAttendanceMonth = useCallback(async (month, { force = false } = {}) => {
+    const monthKey = String(month || "");
+    if (!user || !/^\d{4}-\d{2}$/.test(monthKey)) return;
+    const needsRecords = force || !attendanceMonthsLoaded.current.has(monthKey);
+    const needsCalendar = !attendanceCalendarLoaded.current;
+    if (!needsRecords && !needsCalendar) return;
+    if (!force && attendanceMonthRequests.current.has(monthKey)) {
+      return attendanceMonthRequests.current.get(monthKey);
+    }
+
+    const request = Promise.all([
+      needsRecords ? fetchAttendanceMonth(monthKey) : Promise.resolve(null),
+      needsCalendar ? fetchAttendanceCalendar() : Promise.resolve(null),
+    ]).then(([records, calendar]) => {
+      if (records !== null) {
+        if (!Array.isArray(records)) throw new Error("Attendance returned an invalid response.");
+        attendanceMonthsLoaded.current.add(monthKey);
+        setAttendanceRecords((current) => {
+          const outsideMonth = current.filter((record) => String(record.date || record.workDate || "").slice(0, 7) !== monthKey);
+          return [...records, ...outsideMonth];
+        });
+      }
+      if (calendar !== null) {
+        if (!calendar || !Array.isArray(calendar.weeklyHolidays) || !Array.isArray(calendar.holidays)) {
+          throw new Error("Attendance calendar returned an invalid response.");
+        }
+        attendanceCalendarLoaded.current = true;
+        setAttendanceCalendar(calendar);
+      }
+    }).finally(() => {
+      if (attendanceMonthRequests.current.get(monthKey) === request) attendanceMonthRequests.current.delete(monthKey);
+    });
+
+    attendanceMonthRequests.current.set(monthKey, request);
+    return request;
+  }, [user]);
+
+  const synchronizeAttendance = useCallback(async (month) => {
+    const result = await syncAttendanceHistory();
+    attendanceMonthsLoaded.current.clear();
+    attendanceMonthRequests.current.clear();
+    attendanceTodayRefreshed.current.clear();
+    setAttendanceRecords([]);
+    await loadAttendanceMonth(month || attendanceDateInIndia().slice(0, 7), { force: true });
+    return result;
+  }, [loadAttendanceMonth]);
+
+  const refreshTodayAttendance = useCallback(async () => {
+    if (!user) return null;
+    const today = attendanceDateInIndia();
+    if (attendanceTodayRefreshed.current.has(today)) return null;
+    attendanceTodayRefreshed.current.add(today);
+    try {
+      const record = await fetchTodayAttendance();
+      if (record) {
+        setAttendanceRecords((current) => [record, ...current.filter((item) => (
+          String(item.id || "") !== String(record.id || "")
+          && String(item.date || item.workDate || "") !== String(record.date || record.workDate || "")
+        ))]);
+      }
+      return record;
+    } catch (error) {
+      attendanceTodayRefreshed.current.delete(today);
+      throw error;
+    }
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) {
+      setAttendanceLoading(false);
+      return undefined;
+    }
+    let active = true;
+    setAttendanceLoading(true);
+    loadAttendanceMonth(attendanceDateInIndia().slice(0, 7))
+      .catch((error) => { if (active) notify(error.message || "Could not load attendance."); })
+      .finally(() => { if (active) setAttendanceLoading(false); });
+    return () => { active = false; };
+  }, [loadAttendanceMonth, notify, user]);
+
+  useEffect(() => {
+    if (!user) return undefined;
+    let active = true;
+    fetchLeaves()
+      .then((records) => { if (active && Array.isArray(records)) setAttendanceLeaves(records); })
+      .catch((error) => { if (active) notify(error.message || "Could not load leave requests."); });
+    return () => { active = false; };
+  }, [notify, user]);
+
+  useEffect(() => {
+    if (!user || !["attendance-report", "leave-request"].includes(page)) return undefined;
+    let active = true;
+    let pending = false;
+    const refresh = () => {
+      if (!active || pending) return;
+      pending = true;
+      fetchLeaves()
+        .then((records) => { if (active && Array.isArray(records)) setAttendanceLeaves(records); })
+        .catch((error) => { if (active) notify(error.message || "Could not refresh leave requests."); })
+        .finally(() => { pending = false; });
+    };
+    refresh();
+    window.addEventListener("focus", refresh);
+    return () => { active = false; window.removeEventListener("focus", refresh); };
+  }, [notify, page, user]);
+
+  useEffect(() => {
+    if (!user) return undefined;
+    let active = true;
+    let pending = false;
+    const refresh = () => {
+      if (pending || document.visibilityState === "hidden") return;
+      pending = true;
+      fetchAppNotifications()
+        .then((records) => {
+          if (!active || !Array.isArray(records)) return;
+          const relevantRecords = filterITNotifications(records);
+          const previousIds = knownNotificationIdsRef.current;
+          const nextIds = new Set(relevantRecords.map(notificationId));
+          const hasNewUnread = previousIds !== null && relevantRecords.some((item) => (
+            !item.read && !previousIds.has(notificationId(item))
+          ));
+          knownNotificationIdsRef.current = nextIds;
+          setAppNotifications(relevantRecords);
+          if (hasNewUnread) {
+            setIncomingNotifications(true);
+            window.clearTimeout(incomingNotificationTimerRef.current);
+            incomingNotificationTimerRef.current = window.setTimeout(() => setIncomingNotifications(false), 1800);
+          }
+        })
+        .catch((error) => { if (active) notify(error.message || "Could not load notifications."); })
+        .finally(() => { pending = false; });
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 60000);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [notify, user]);
+
+  const markNotificationRead = useCallback(async (id) => {
+    try {
+      const saved = await markAppNotificationRead(id);
+      setAppNotifications((records) => records.map((record) => notificationId(record) === String(id) ? { ...record, ...saved, read: true } : record));
+      return true;
+    } catch (error) {
+      notify(error.message || "Could not update notification.");
+      return false;
+    }
+  }, [notify]);
+
+  const markAllNotificationsRead = useCallback(async () => {
+    const unread = appNotifications.filter((item) => !item.read && notificationId(item));
+    if (!unread.length) return;
+    const results = await Promise.allSettled(unread.map((item) => markAppNotificationRead(notificationId(item))));
+    const succeededIds = new Set(unread.filter((_, index) => results[index].status === "fulfilled").map(notificationId));
+    setAppNotifications((records) => records.map((record) => succeededIds.has(notificationId(record)) ? { ...record, read: true } : record));
+    const failure = results.find((result) => result.status === "rejected");
+    if (failure) notify(failure.reason?.message || "Some notifications could not be marked as read.");
+  }, [appNotifications, notify]);
+
+  const openNotification = useCallback(async (item) => {
+    if (!item.read) await markNotificationRead(notificationId(item));
+    setTopMenu("");
+    setPage(notificationDestination(item));
+  }, [markNotificationRead]);
+
+  const unreadNotificationCount = appNotifications.filter((item) => !item.read).length;
   const selectedProject = employeeProjects.find((project) => String(project.id) === String(selectedProjectId));
   const openProject = (project, destination) => {
     setSelectedProjectId(project.id);
@@ -1439,8 +2206,9 @@ function ITWorkspace({ user, projects, onProjectsChange, onLogout }) {
       case "team-assign": return canManageTeam ? <AssignProjects /> : null;
       case "team-progress": return canManageTeam ? <TeamProgress /> : null;
       case "dashboard": return <DashboardPage projects={employeeProjects} person={user?.name || EMPLOYEE.name} identity={user || EMPLOYEE} onNavigate={setPage} onProject={(project) => openProject(project, "project-details")} />;
-      case "mark-attendance": return <MarkAttendancePage notify={notify} />;
-      case "attendance-report": return <AttendanceReportPage notify={notify} />;
+      case "tasks": return <TasksPage user={user} notify={notify} />;
+      case "mark-attendance": return <MarkAttendancePage notify={notify} employee={profileIdentity} attendance={attendanceRecords} setAttendance={setAttendanceRecords} calendar={attendanceCalendar} loading={attendanceLoading} authenticated={Boolean(user)} onRefreshToday={refreshTodayAttendance} />;
+      case "attendance-report": return <AttendanceReportPage notify={notify} employee={profileIdentity} attendance={attendanceRecords} leaveRequests={attendanceLeaves} calendar={attendanceCalendar} loading={attendanceLoading} onMonthRequested={loadAttendanceMonth} onApplyLeave={(date) => { setLeaveRequestDate(date); setPage("leave-request"); }} onSyncAttendance={synchronizeAttendance} />;
       case "new-projects": return <ProjectsPage title="New Projects" subtitle="Review proposed projects before they enter your active workspace." projects={employeeProjects.filter((project) => project.status === "New")} onView={(project) => openProject(project, "project-details")} onReview={(project) => openProject(project, "project-review")} />;
       case "active-projects": return <ProjectsPage showTeam title="Active Projects" subtitle="Projects accepted and ready for execution." projects={employeeProjects.filter((project) => project.status === "Active")} onView={(project) => openProject(project, "project-details")} onReview={(project) => openProject(project, "project-review")} />;
       case "project-details": return <ProjectDetailsPage project={selectedProject} onStatusUpdate={updateProjectStatus} onAccept={acceptProject} onReject={rejectProject} onBack={() => setPage(selectedProject?.status === "Completed" ? "completed-projects" : selectedProject?.status === "Active" ? "active-projects" : "new-projects")} onReview={(project) => openProject(project, "project-review")} />;
@@ -1451,10 +2219,17 @@ function ITWorkspace({ user, projects, onProjectsChange, onLogout }) {
       case "my-work": return <MyWorkPage projects={employeeProjects} person={user?.name || EMPLOYEE.name} onNavigate={setPage} onProject={(project) => openProject(project, "project-details")} />;
       case "open-bugs": return <OpenBugsPage key={user?.name || EMPLOYEE.name} projects={employeeProjects} person={user?.name || EMPLOYEE.name} />;
       case "clarification": return <ClarificationPage key={user?.name || EMPLOYEE.name} person={user?.name || EMPLOYEE.name} projects={employeeProjects.filter((project) => project.status !== "Rejected")} />;
-      case "hr-helpdesk": return <HelpdeskChat user={user} displayName={user?.name || EMPLOYEE.name} />;
+      case "hr-helpdesk": return <div className="crm-root it-helpdesk-sales-layout"><HelpdeskChat user={user} displayName={user?.name || EMPLOYEE.name} /></div>;
       case "completed-projects": return <ProjectsPage title="Completed Projects" subtitle="Projects marked completed by the project team." projects={employeeProjects.filter((project) => project.status === "Completed")} onView={(project) => openProject(project, "project-details")} onReview={() => {}} />;
-      case "settings": return <SettingsPage notify={notify} user={user} />;
-      case "leave-request": return <LeaveRequestPage notify={notify} />;
+      case "settings": return <div className="crm-root it-settings-sales-layout"><SharedAccountSettings
+        profile={accountProfile}
+        setProfile={setAccountProfile}
+        showToast={notify}
+        currentUser={{ ...(user || {}), ...accountProfile }}
+        onProfileUpdated={(saved) => setAccountProfile((current) => ({ ...current, ...saved }))}
+      /></div>;
+      case "leave-request": return <ITLeaveRequestPage notify={notify} leaves={attendanceLeaves} setLeaves={setAttendanceLeaves} authenticated={Boolean(user)} initialDate={leaveRequestDate} onSubmitted={() => setLeaveRequestDate("")} today={attendanceDateInIndia()} />;
+      case "notifications": return <NotificationsPage notifications={appNotifications} unreadCount={unreadNotificationCount} onOpen={openNotification} onMarkAllRead={markAllNotificationsRead} />;
       default: return null;
     }
   };
@@ -1462,19 +2237,67 @@ function ITWorkspace({ user, projects, onProjectsChange, onLogout }) {
   return (
     <>
       <style>{THEME_CSS}</style>
-      <div className="shell">
-        <Sidebar page={page} setPage={setPage} mobileOpen={mobileOpen} setMobileOpen={setMobileOpen} onLogout={onLogout} />
+      <div className="shell it-dashboard-shell">
+        <Sidebar page={page} setPage={setPage} mobileOpen={mobileOpen} setMobileOpen={setMobileOpen} onLogout={onLogout} identity={profileIdentity} unreadNotificationCount={unreadNotificationCount} />
         <div className="workspace">
           <div className="topbar">
             <div className="topbar-left">
               <button className="icon-button mobile-only" onClick={() => setMobileOpen(true)}><Menu size={18} /></button>
-              <h1>{TITLES[page]}</h1>
+              <div>
+                <h1>{TITLES[page]}</h1>
+                <p className="topbar-subtitle">{page === "mark-attendance" ? "Log today’s attendance" : page === "attendance-report" ? "Monthly attendance history" : page === "tasks" ? "Create, assign and track work" : page === "notifications" ? "Updates about your work" : page === "hr-helpdesk" ? "Chat directly with the HR team" : page === "settings" ? "Profile, preferences and security" : `${profileIdentity.branch || EMPLOYEE.branch} · ${profileIdentity.department || profileIdentity.dept || EMPLOYEE.department}`}</p>
+              </div>
             </div>
-            <div className="topbar-right">
-              <span className="eyebrow" style={{ margin: 0 }}>{EMPLOYEE.branch} · {EMPLOYEE.department}</span>
+            <div className="topbar-right" ref={topbarMenusRef}>
+              <div className="it-topbar-popover">
+                <button type="button" className={`icon-button it-notification-button${appNotifications.some((item) => !item.read) ? " has-unread" : ""}${incomingNotifications ? " has-incoming" : ""}`} title="Notifications" aria-label="Notifications" aria-expanded={topMenu === "notifications"} onClick={() => setTopMenu((current) => current === "notifications" ? "" : "notifications")}>
+                  <BellRing size={18} />
+                  {unreadNotificationCount > 0 && <span className="it-bell-badge">{unreadNotificationCount}</span>}
+                </button>
+                {topMenu === "notifications" && (
+                  <div className="it-topbar-menu" role="dialog" aria-label="Notifications">
+                    <div className="it-topbar-menu-head"><strong>Notifications</strong><button type="button" onClick={markAllNotificationsRead} disabled={!unreadNotificationCount}>Mark all read</button></div>
+                    <div className="it-topbar-notification-list">
+                      {appNotifications.slice(0, 6).map((item) => (
+                        <button key={notificationId(item)} type="button" className={`it-topbar-notification${item.read ? "" : " unread"}`} onClick={() => openNotification(item)}>
+                          {item.message}
+                        </button>
+                      ))}
+                      {!appNotifications.length && <p className="it-topbar-menu-empty">No notifications yet.</p>}
+                    </div>
+                    <button type="button" className="it-topbar-menu-link" onClick={() => { setTopMenu(""); setPage("notifications"); }}>View all notifications</button>
+                  </div>
+                )}
+              </div>
+              <div className="it-topbar-popover">
+                <button type="button" className="it-user-chip" aria-expanded={topMenu === "profile"} onClick={() => setTopMenu((current) => current === "profile" ? "" : "profile")}>
+                  <span className="it-user-avatar">
+                    {profileIdentity.imageUrl ? <img src={profileIdentity.imageUrl} alt="" /> : profileIdentity.name.charAt(0).toUpperCase()}
+                  </span>
+                  <span className="it-user-chip-copy">
+                    <strong>{profileIdentity.name}</strong>
+                    <span>{employeeRole}</span>
+                  </span>
+                </button>
+                {topMenu === "profile" && (
+                  <div className="it-topbar-menu it-profile-menu" role="dialog" aria-label="Profile details">
+                    <div className="it-profile-menu-identity">
+                      <span className="it-profile-menu-avatar">
+                        {profileIdentity.imageUrl ? <img src={profileIdentity.imageUrl} alt="" /> : profileIdentity.name.charAt(0).toUpperCase()}
+                      </span>
+                      <div><strong>{profileIdentity.name}</strong><span>{employeeRole}</span></div>
+                    </div>
+                    <div className="it-profile-menu-data">
+                      <div><span>Email</span><b>{profileIdentity.email || "Not provided"}</b></div>
+                      <div><span>Branch</span><b>{profileIdentity.branch || EMPLOYEE.branch}</b></div>
+                    </div>
+                    <button type="button" className="it-profile-menu-link" onClick={() => { setTopMenu(""); setPage("settings"); }}>View settings</button>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
-          <div className="content">
+          <div className={`content${page === "hr-helpdesk" ? " it-helpdesk-content" : page === "settings" ? " it-settings-content" : ""}`}>
             {!user && projects === undefined && <p className="eyebrow" style={{ marginBottom: 16 }}>Demo workspace · Sample data only</p>}
             {renderPage()}
           </div>

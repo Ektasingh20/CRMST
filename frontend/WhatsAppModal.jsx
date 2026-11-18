@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { fetchPaymentLink, fetchWhatsAppConfig } from "./backendApi.js";
-import { buildMessage, isLocalPaymentUrl, resolveLeadTemplate, resolvePaymentUrl, sendWhatsApp } from "./whatsAppMessage.js";
+import { buildMessage, isLocalPaymentUrl, normalizeWhatsAppPhone, resolveLeadTemplate, resolvePaymentUrl, sendWhatsApp } from "./whatsAppMessage.js";
 import { useMessageTemplates } from "./useMessageTemplates.js";
 import "./whatsAppModal.css";
 
@@ -19,6 +19,7 @@ function MessageTextarea({ value, ...props }) {
 }
 
 export default function WhatsAppModal({ lead, leadType, currentUser, onClose, onSelectTemplate, onSent }) {
+  const phoneErrorId = useId();
   const { templates, loading, error: templatesError } = useMessageTemplates(leadType);
   const [kind, setKind] = useState("intro");
   const [templateId, setTemplateId] = useState("");
@@ -31,6 +32,8 @@ export default function WhatsAppModal({ lead, leadType, currentUser, onClose, on
   const [detailsMessage, setDetailsMessage] = useState("");
   const [paymentMessage, setPaymentMessage] = useState("");
   const [introMessage, setIntroMessage] = useState("");
+  const [recipientPhone, setRecipientPhone] = useState(String(lead.contact || lead.phone || ""));
+  const [phoneError, setPhoneError] = useState("");
   const [error, setError] = useState("");
   const [sending, setSending] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -61,6 +64,11 @@ export default function WhatsAppModal({ lead, leadType, currentUser, onClose, on
       setIntroMessage(buildMessage(messageConfig.greetingMessage, { name: lead.name || "there" }));
     }
   }, [messageConfig?.greetingMessage, lead.name]);
+
+  useEffect(() => {
+    setRecipientPhone(String(lead.contact || lead.phone || ""));
+    setPhoneError("");
+  }, [lead.contact, lead.phone, lead.id, lead.name]);
 
   useEffect(() => {
     setTemplateId((current) => current && templates.some((item) => item.id === current)
@@ -136,6 +144,9 @@ export default function WhatsAppModal({ lead, leadType, currentUser, onClose, on
   };
 
   const send = async () => {
+    setPhoneError("");
+    try { normalizeWhatsAppPhone(recipientPhone); }
+    catch (failure) { setPhoneError(failure.message || "Enter a valid phone number before sending."); return; }
     if (kind !== "intro" && !template) { setError(`Select a ${leadType === "training" ? "training" : "service"} template first.`); return; }
     if (kind === "payment" && !selectedPaymentLink) { setError(paymentError || "No payment link set for this program"); return; }
     if (kind === "payment" && localPaymentUrl) { setError("This payment link uses localhost and will not open on the customer's device. Use a public CRM URL or public payment link."); return; }
@@ -143,7 +154,7 @@ export default function WhatsAppModal({ lead, leadType, currentUser, onClose, on
     setError("");
     setSending(true);
     try {
-      await sendWhatsApp({ phone: lead.contact || lead.phone, message: activeMessage });
+      await sendWhatsApp({ phone: recipientPhone, message: activeMessage });
       await onSent?.();
       setCopied(false);
     } catch (failure) { setError(failure.message || "Could not open WhatsApp."); }
@@ -182,11 +193,13 @@ export default function WhatsAppModal({ lead, leadType, currentUser, onClose, on
         {paymentError && <p className="whatsapp-modal-error" role="alert">{paymentError}</p>}
         {kind === "payment" && selectedPaymentLink?.demo && <p className="whatsapp-modal-note">Demo amount: {paymentAmount}. No money can be collected. <a href={demoQrPreviewUrl} target="_blank" rel="noopener noreferrer">Open local QR preview</a></p>}
         {kind === "payment" && localPaymentUrl && <p className="whatsapp-modal-error" role="alert">This demo link points to localhost, so the customer cannot open it. You can preview the QR page here, but set a public CRM URL or public payment link before sharing.</p>}
+        <label className="whatsapp-modal-field"><span>Mobile number (editable)</span><input type="tel" inputMode="tel" autoComplete="tel" aria-label="WhatsApp recipient mobile number" aria-invalid={Boolean(phoneError)} aria-describedby={phoneError ? phoneErrorId : undefined} value={recipientPhone} onChange={(event) => { setRecipientPhone(event.target.value); setPhoneError(""); setError(""); }} placeholder="Enter mobile number" /></label>
+        {phoneError && <p id={phoneErrorId} className="whatsapp-modal-error" role="alert">{phoneError}</p>}
         {kind === "intro" && <label className="whatsapp-modal-field"><span>Greeting message (editable)</span><MessageTextarea rows={4} value={introMessage} onChange={(event) => { setIntroMessage(event.target.value); setCopied(false); }} /></label>}
         {kind === "course" && <label className="whatsapp-modal-field"><span>{leadType === "training" ? "Training" : "Service"} details (editable)</span><MessageTextarea rows={4} value={detailsMessage} onChange={(event) => { setDetailsMessage(event.target.value); setCopied(false); }} placeholder="Choose a template to preview the details" /></label>}
         {kind === "payment" && <label className="whatsapp-modal-field"><span>Payment message (editable)</span><MessageTextarea rows={4} value={paymentMessage} onChange={(event) => { setPaymentMessage(event.target.value); setCopied(false); }} placeholder="Choose a template to preview the payment message" /></label>}
         <p className="whatsapp-modal-note">If WhatsApp shows broken emoji, use Copy message and paste it into the chat.</p>
-        <p className="whatsapp-modal-note">Sending as {currentUser?.name || currentUser?.username || "your account"} to {lead.contact || lead.phone || "no phone number"}.</p>
+        <p className="whatsapp-modal-note">Sending as {currentUser?.name || currentUser?.username || "your account"} to {recipientPhone || "no phone number"}.</p>
         {error && <p className="whatsapp-modal-error" role="alert">{error}</p>}
       </div>
       <div className="modal-actions whatsapp-modal-actions">

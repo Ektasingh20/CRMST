@@ -1675,8 +1675,8 @@
 }
 
 .call-list-save-button.is-saved {
-  border-color: #3c7d5b;
-  background: linear-gradient(135deg, #4f9a70, #357653);
+  border-color: #7a4123;
+  background: linear-gradient(135deg, #a45d34, #7f4324);
   box-shadow: none;
 }
 
@@ -1692,7 +1692,7 @@
 
 .call-list-save-action small {
   min-height: 1em;
-  color: #357653;
+  color: #75513a;
   font-size: 0.58rem;
   font-weight: 650;
   line-height: 1.15;
@@ -2347,6 +2347,40 @@
 .report-head-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .report-head-actions button,
 .leave-history-panel .panel-head button { display: inline-flex; align-items: center; gap: 7px; min-height: 38px; }
+.attendance-sync-button {
+  border-color: #dfc5ae;
+  background: linear-gradient(180deg, #fffaf5 0%, #fff2e7 100%);
+  color: #704229;
+  font-weight: 750;
+  box-shadow: 0 5px 14px rgba(112, 66, 41, .08);
+}
+.attendance-sync-button:hover:not(:disabled) {
+  border-color: #c99a75;
+  background: #ffead9;
+  box-shadow: 0 8px 18px rgba(112, 66, 41, .14);
+}
+.attendance-sync-button.syncing svg { animation: crm-page-spin .8s linear infinite; }
+.crm-root .attendance-report-panel .report-head-actions .attendance-sync-button {
+  height: 38px;
+  min-height: 38px;
+  padding: 0 15px;
+  gap: 7px;
+  border: 1px solid #dfc5ae;
+  border-radius: 11px;
+  background: linear-gradient(180deg, #fffaf5 0%, #fff2e7 100%);
+  color: #704229;
+  font-size: 16px;
+  font-weight: 750;
+  line-height: 1;
+  box-shadow: 0 5px 14px rgba(112, 66, 41, .08);
+}
+.crm-root .attendance-report-panel .report-head-actions .attendance-sync-button svg { color: #8a4b2b; }
+.crm-root .attendance-report-panel .report-head-actions .attendance-sync-button:hover:not(:disabled) {
+  border-color: #c99a75;
+  background: #ffead9;
+  color: #704229;
+  box-shadow: 0 8px 18px rgba(112, 66, 41, .14);
+}
 .report-summary {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -2578,9 +2612,33 @@
   color: #72520b;
 }
 .attendance-report-status-pill.is-pending,
+.attendance-report-status-pill.is-pending-sync,
 .attendance-report-status-pill.is-upcoming {
   background: #eee9e4;
   color: #5f554d;
+}
+.attendance-report-status-pill.is-apply-leave {
+  background: #fff0df;
+  color: #9a3f08;
+}
+.attendance-report-status-pill.is-leave-applied {
+  background: #f2dfad;
+  color: #72520b;
+}
+.attendance-report-status-action {
+  border: 1px solid #e9b47e;
+  font-family: inherit;
+  cursor: pointer;
+  transition: transform 140ms ease, box-shadow 140ms ease, background 140ms ease;
+}
+.attendance-report-status-action:hover {
+  background: #ffe3c4;
+  box-shadow: 0 4px 12px rgba(154, 63, 8, 0.16);
+  transform: translateY(-1px);
+}
+.attendance-report-status-action:focus-visible {
+  outline: 2px solid #9a3f08;
+  outline-offset: 2px;
 }
 .attendance-report-status-pill.is-unknown {
   background: #eee9e4;
