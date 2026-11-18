@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { BriefcaseBusiness, FileText, Upload, Download, BellRing, ArrowRight, Check, X } from "lucide-react";
 import HelpdeskChat from "../shared/HelpdeskChat.jsx";
+import { updateUser } from "../../backendApi.js";
 import "./hrWorkflowModules.css";
 
 const now = () => new Date().toISOString();
@@ -96,10 +97,22 @@ function Resignations({ c }) {
         clearance: EXIT_CHECKLIST.map((label) => ({ label, done: false })),
         history: [{ status: "Notice Period", at, actor: c.db.me.name, remark: `Resignation recorded from ${source}.` }],
       };
+      let profileSyncError = "";
+      if (employee.backendId) {
+        try {
+          await updateUser(employee.backendId, { noticePeriod: item.noticePeriod, resignationDate: item.requestedDate });
+        } catch (error) {
+          profileSyncError = error.message || "The employee profile could not be synced to the shared directory.";
+        }
+      }
       c.upd((db) => ({
         hrResignations: [item, ...(db.hrResignations || [])],
         hrNotifications: [{ id: makeId("NTF"), message: `Resignation details recorded for ${employee.name}.`, at, read: false }, ...(db.hrNotifications || [])],
+        emps: db.emps.map((person) => String(person.id) === String(employee.id) || (employee.backendId && String(person.backendId) === String(employee.backendId))
+          ? { ...person, noticePeriod: item.noticePeriod, resignationDate: item.requestedDate, resignationRecord: item }
+          : person),
       }), "Resignation details recorded");
+      if (profileSyncError) setFileError(`Resignation saved and shown in the profile, but shared profile sync failed: ${profileSyncError}`);
       setEmployeeId(""); setReceivedDate(today()); setLastWorkingDay(""); setSource("Email");
       setReason(""); setNoticePeriod(""); setHandoverNotes(""); setFiles({});
       form.reset();
@@ -180,6 +193,18 @@ export default function HrWorkflowModules({ page, c }) {
   if(page==="Employee Documents") return <Documents c={c}/>;
   if(page==="Resignation & Exit") return <Resignations c={c}/>;
   if(page==="Employee Helpdesk") return <HelpdeskChat user={c.user} displayName={c.db.me.name}/>;
-  if(page==="HR Notifications") return <div className="hr-new-module hr-workflow"><Header icon={BellRing} title="HR Notifications" subtitle="Workflow updates and requests that need attention."/><Panel title="Recent notifications">{(c.db.hrNotifications||[]).length ? <div className="hr-workflow-list">{c.db.hrNotifications.map((item)=><article className="hr-workflow-notification" key={item.id}><span><b>{item.message}</b><small>{fmt(item.at)}</small></span>{!item.read&&<button className="hr-module-text-button" onClick={()=>c.upd((db)=>({hrNotifications:(db.hrNotifications||[]).map((n)=>n.id===item.id?{...n,read:true}:n)}),"Notification marked as read")}>Mark read</button>}</article>)}</div>:<p className="hr-module-empty">You’re all caught up.</p>}</Panel></div>;
+  if (page === "HR Notifications") {
+    const items = c.notificationItems || [];
+    return <div className="hr-new-module hr-workflow hr-notifications-page">
+      <Header icon={BellRing} title="HR Notifications" subtitle="Leave requests and HR workflow updates that need attention." />
+      <Panel title={`Notifications · ${items.length}`}>
+        <div className="hr-notifications-page-toolbar"><span>{items.filter((item) => !item.read).length} unread</span><button className="hr-module-text-button" type="button" disabled={!items.some((item) => !item.read)} onClick={c.markAllNotificationsRead}>Mark all read</button></div>
+        {items.length ? <div className="hr-workflow-list hr-notifications-page-list">{items.map((item) => <article className={`hr-notification-page-item${item.read ? "" : " is-unread"}`} key={item.id}>
+          <button className="hr-notification-page-content" type="button" onClick={() => c.markNotificationRead(item)}><span className="hr-notification-page-dot" aria-hidden="true" /><span><b>{item.message}</b><small>{item.createdAt ? fmt(item.createdAt) : "Just now"}</small></span></button>
+          {!item.read && <button className="hr-module-text-button" type="button" onClick={() => c.markNotificationRead(item)}>Mark read</button>}
+        </article>)}</div> : <p className="hr-module-empty">You’re all caught up. New leave and HR workflow notifications will appear here.</p>}
+      </Panel>
+    </div>;
+  }
   return null;
 }

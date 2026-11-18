@@ -293,6 +293,14 @@ export async function downloadPriorExperienceDocument(id, key) {
   return downloadAuthenticatedFile(`/users/${encodeURIComponent(id)}/prior-experience-documents/${encodeURIComponent(key)}`, "Unable to download document.");
 }
 
+export async function fetchEmployeeProfileDocuments(id) {
+  return request(`/users/${encodeURIComponent(id)}/profile-documents`);
+}
+
+export async function downloadEmployeeProfileDocument(id, key) {
+  return downloadAuthenticatedFile(`/users/${encodeURIComponent(id)}/profile-documents/${encodeURIComponent(key)}`, "Unable to download employee document.");
+}
+
 export async function downloadMyProfileDocument(key) {
   return downloadAuthenticatedFile(`/users/me/documents/${encodeURIComponent(key)}`, "Unable to download account document.");
 }
