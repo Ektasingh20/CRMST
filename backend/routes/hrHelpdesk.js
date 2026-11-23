@@ -6,6 +6,7 @@ import { isAdmin, isHrUser } from "../utils/roles.js";
 import User from "../models/User.js";
 import { isITDepartment } from "../../frontend/src/itUserRoles.js";
 import { ReadCache } from "../itDashboard/src/cache.js";
+import { notifyUser } from "../services/appNotifications.js";
 import {
   helpdeskEmployeeRef,
   helpdeskThreadGroup,
@@ -26,6 +27,19 @@ const department = (user) => String(user?.dept || user?.department || "").trim()
 const isCrmUser = (user) => /crm executive|crm_executive/i.test(String(user?.role || "")) || department(user).toLowerCase() === "crm";
 const canUseHelpdesk = (user) => isAdmin(user) || isHrUser(user) || isITDepartment(user) || isCrmUser(user);
 const isHelpdeskStaff = (user) => isAdmin(user) || isHrUser(user);
+
+async function notifyEmployeeOfHelpdeskMessage(employeeId, conversationId, subject) {
+  try {
+    await notifyUser(employeeId, {
+      type: "hr_helpdesk_message",
+      source: "hr_helpdesk",
+      conversationId,
+      message: `HR sent you a message in “${subject}”.`,
+    });
+  } catch (error) {
+    console.warn("Unable to notify employee about an HR helpdesk message.", error.message || error);
+  }
+}
 
 function requireHelpdeskUser(req, res) {
   if (!canUseHelpdesk(req.user)) {
@@ -163,6 +177,7 @@ router.post("/conversations", async (req, res) => {
       transaction.create(conversationRef, conversation);
       transaction.create(messageRef, message);
     });
+    if (isHelpdeskStaff(req.user)) await notifyEmployeeOfHelpdeskMessage(employeeId, id, subject);
     conversationCache.clear();
     return res.status(201).json({ id, ...conversation, messages: [message] });
   } catch (error) {
@@ -210,6 +225,9 @@ router.post("/conversations/:id/messages", async (req, res) => {
         lastSenderName: senderName,
       });
     });
+    if (isHelpdeskStaff(req.user)) {
+      await notifyEmployeeOfHelpdeskMessage(access.conversation.employeeId, access.conversation.id, access.conversation.subject);
+    }
     conversationCache.clear();
     messageCache.clear();
     return res.status(201).json({ id: messageRef.id, ...message });

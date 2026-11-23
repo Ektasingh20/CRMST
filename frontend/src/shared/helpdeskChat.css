@@ -388,6 +388,51 @@
   }
 }
 
+/* IT Helpdesk palette; scoped so other dashboards keep their own chat theme. */
+.crm-root.it-helpdesk-sales-layout .eh-helpdesk {
+  --eh-ink: #3A231A;
+  --eh-muted: #6B3E2B;
+  --eh-line: rgba(107, 62, 43, .16);
+  --eh-brand: #B26A3C;
+  --eh-soft: #F1D7C3;
+}
+.crm-root.it-helpdesk-sales-layout .eh-chat-app,
+.crm-root.it-helpdesk-sales-layout .eh-inbox,
+.crm-root.it-helpdesk-sales-layout .eh-thread-header,
+.crm-root.it-helpdesk-sales-layout .eh-message-composer {border-color:rgba(107,62,43,.16)}
+.crm-root.it-helpdesk-sales-layout .eh-inbox-heading button,
+.crm-root.it-helpdesk-sales-layout .eh-no-selection button,
+.crm-root.it-helpdesk-sales-layout .eh-compose-new form>button {border-color:#B26A3C;background:#B26A3C;color:#fff}
+.crm-root.it-helpdesk-sales-layout .eh-inbox-heading button:hover,
+.crm-root.it-helpdesk-sales-layout .eh-no-selection button:hover,
+.crm-root.it-helpdesk-sales-layout .eh-compose-new form>button:hover:not(:disabled) {background:#6B3E2B}
+.crm-root.it-helpdesk-sales-layout .eh-inbox-heading button:focus-visible,
+.crm-root.it-helpdesk-sales-layout .eh-no-selection button:focus-visible,
+.crm-root.it-helpdesk-sales-layout .eh-conversation:focus-visible,
+.crm-root.it-helpdesk-sales-layout .eh-message-composer>button:focus-visible,
+.crm-root.it-helpdesk-sales-layout .eh-compose-new form>button:focus-visible {outline-color:#B26A3C}
+.crm-root.it-helpdesk-sales-layout .eh-search:focus-within {border-color:#B26A3C;box-shadow:0 0 0 3px rgba(178,106,60,.13)}
+.crm-root.it-helpdesk-sales-layout .eh-conversation:hover {background:rgba(241,215,195,.35)}
+.crm-root.it-helpdesk-sales-layout .eh-conversation.is-active {background:rgba(241,215,195,.58);box-shadow:inset 2px 0 #B26A3C}
+.crm-root.it-helpdesk-sales-layout .eh-avatar {border-color:rgba(107,62,43,.18);background:#F1D7C3;color:#6B3E2B}
+.crm-root.it-helpdesk-sales-layout .eh-online-dot {background:#B26A3C}
+.crm-root.it-helpdesk-sales-layout .eh-thread-delete {border-color:rgba(107,62,43,.18);color:#6B3E2B}
+.crm-root.it-helpdesk-sales-layout .eh-thread-delete:hover:not(:disabled) {border-color:#B26A3C;background:#F1D7C3;color:#3A231A}
+.crm-root.it-helpdesk-sales-layout .eh-bubble {border-color:rgba(107,62,43,.16)}
+.crm-root.it-helpdesk-sales-layout .eh-message-row.is-mine .eh-bubble {border-color:rgba(178,106,60,.28);background:#F1D7C3}
+.crm-root.it-helpdesk-sales-layout .eh-message-composer {background:#fff}
+.crm-root.it-helpdesk-sales-layout .eh-message-composer textarea,
+.crm-root.it-helpdesk-sales-layout .eh-compose-new input,
+.crm-root.it-helpdesk-sales-layout .eh-compose-new textarea,
+.crm-root.it-helpdesk-sales-layout .eh-compose-new form select {border-color:rgba(107,62,43,.2);background:#fff;color:#3A231A}
+.crm-root.it-helpdesk-sales-layout .eh-message-composer textarea:focus,
+.crm-root.it-helpdesk-sales-layout .eh-compose-new input:focus,
+.crm-root.it-helpdesk-sales-layout .eh-compose-new textarea:focus,
+.crm-root.it-helpdesk-sales-layout .eh-compose-new select:focus {border-color:#B26A3C;box-shadow:0 0 0 3px rgba(178,106,60,.13)}
+.crm-root.it-helpdesk-sales-layout .eh-message-composer>button {background:#6B3E2B;color:#fff}
+.crm-root.it-helpdesk-sales-layout .eh-message-composer>button:hover:not(:disabled) {background:#B26A3C}
+.crm-root.it-helpdesk-sales-layout .eh-message-composer>button:disabled {border-color:rgba(107,62,43,.16);background:rgba(241,215,195,.5);color:#6B3E2B}
+
 .crm-root .eh-message-composer > small {
   margin: -2px 0 0 2px;
   color: #776b60;

@@ -11,6 +11,7 @@ import {
   fetchAttendanceCalendar,
   fetchAttendanceMonth,
   fetchAppNotifications,
+  fetchITProjects,
   fetchLeaves,
   fetchProjects,
   fetchTodayAttendance,
@@ -38,6 +39,7 @@ import DailyOverview from "./DailyOverview.jsx";
 import MyWorkPage from "./MyWorkPage.jsx";
 import ClarificationPage from "./ClarificationPage";
 import HelpdeskChat, { HelpdeskIncomingToast } from "../shared/HelpdeskChat.jsx";
+import LogoutConfirmDialog from "../shared/LogoutConfirmDialog.jsx";
 import ProjectStatusSection from "./ProjectStatusSection";
 import { applyProjectStatus, projectStatusSummary } from "./projectStatus";
 import { getUploadedProjectFiles, requirementSections } from "./projectFiles";
@@ -101,7 +103,7 @@ import {
    a couple of extra statuses, document-upload cards, etc).
    ============================================================ */
 
-const THEME_CSS = `
+export const THEME_CSS = `
 @import url("https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap");
 
 :root {
@@ -1068,18 +1070,25 @@ function UploadedProjectFiles({ project }) {
   return <section className="project-library" aria-label="Project documents"><div className="project-section-heading"><div><p className="eyebrow">SHARED FILES</p><h3>Project documents <span className="project-count">{files.length}</span></h3></div></div><div className="brief-shared-files">{files.map((file) => <ProjectFileButton key={file.id} file={file} />)}</div></section>;
 }
 
-function ProjectDetailsPage({ project: sourceProject, onBack, onReview, onAccept, onReject, onStatusUpdate }) {
+export function ProjectDetailsPage({ project: sourceProject, onBack, onReview, onAccept, onReject, onStatusUpdate, readOnly = false }) {
   const project = sourceProject ? withDemoProjectPresentation(sourceProject) : null;
   if (!project) return <p className="panel-empty">Project not found.</p>;
-  const statusSection = <><ProjectStatusSection key={sourceProject.id} project={sourceProject} onUpdate={onStatusUpdate} /><AssignedTeamCard project={sourceProject} /></>;
-  if (project.demoReview) return <ProjectReviewPage project={sourceProject} onBack={onBack} onReview={onReview} onAccept={onAccept} onReject={onReject} statusSection={statusSection} />;
+  const teamRoles = Array.isArray(sourceProject.team) ? sourceProject.team.reduce((counts, member) => {
+    const role = member.role || member.teamRole || "Team member";
+    counts[role] = (counts[role] || 0) + 1;
+    return counts;
+  }, {}) : {};
+  const statusSection = readOnly
+    ? <><ProjectStatusSection key={sourceProject.id} project={sourceProject} readOnly />{Object.keys(teamRoles).length > 0 && <section className="panel pt-card"><header><div><p className="eyebrow">PROJECT TEAM</p><h3>Assigned Team <span className="project-count">{sourceProject.team.length}</span></h3></div></header><ul>{Object.entries(teamRoles).map(([role, count]) => <li key={role}><span><strong>{role}</strong><small>{count} assigned</small></span></li>)}</ul></section>}</>
+    : <><ProjectStatusSection key={sourceProject.id} project={sourceProject} onUpdate={onStatusUpdate} /><AssignedTeamCard project={sourceProject} /></>;
+  if (project.demoReview && !readOnly) return <ProjectReviewPage project={sourceProject} onBack={onBack} onReview={onReview} onAccept={onAccept} onReject={onReject} statusSection={statusSection} />;
   const files = getUploadedProjectFiles(project);
   const metadata = [['Client / company', project.client], ['Service', project.service], ['Assigned to', project.assignedEmployeeName || project.assignedTo], ['Priority', project.priority], ['Start date', project.startDate], ['Expected delivery', project.expectedDelivery || project.due]];
   return (
     <div className="project-workspace">
       <section className="panel project-overview">
         <div className="project-overview-top"><span className="project-overview-icon"><FolderKanban size={26} /></span><div className="project-overview-title"><p className="eyebrow">PROJECT WORKSPACE / {project.projectId || project.id}</p><h2>{project.name || project.projectName}</h2><p>Project brief, requirements and shared documents</p></div><button className="ghost-button" onClick={onBack}>Back to projects</button></div>
-        <div className="project-overview-bottom"><div className="project-overview-badges"><Badge status={project.status} /><span><FileText size={15} /> {files.length} attachments</span></div>{project.status === "New" && <button className="primary-button" onClick={() => onReview(project)}><FileSearch size={16} /> Review project</button>}</div>
+        <div className="project-overview-bottom"><div className="project-overview-badges"><Badge status={project.status} /><span><FileText size={15} /> {files.length} attachments</span></div>{project.status === "New" && !readOnly && <button className="primary-button" onClick={() => onReview(project)}><FileSearch size={16} /> Review project</button>}</div>
       </section>
       {statusSection}
       <section className="project-facts">{metadata.map(([label, value]) => <div key={label}><span>{label}</span><strong>{value || "Not provided"}</strong></div>)}</section>
@@ -1157,7 +1166,7 @@ function ProjectTasksPage({ projects }) {
    PAGE: MARK ATTENDANCE
    ============================================================ */
 
-function MarkAttendancePage({
+export function MarkAttendancePage({
   notify,
   employee,
   attendance = [],
@@ -1404,7 +1413,7 @@ function AttendanceReportSelect({ value, onChange, options, ariaLabel }) {
   </div>;
 }
 
-function AttendanceReportPage({
+export function AttendanceReportPage({
   notify,
   attendance = [],
   leaveRequests = [],
@@ -1881,6 +1890,7 @@ function ITWorkspace({ user, projects, onProjectsChange, onLogout }) {
   const [page, setPage] = useState("dashboard");
   const [mobileOpen, setMobileOpen] = useState(false);
   const [toast, setToast] = useState("");
+  const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
   const [topMenu, setTopMenu] = useState("");
   const [localProjects, setLocalProjects] = useState(user ? [] : projects === undefined ? getStoredProjects() : projects);
   const [selectedProjectId, setSelectedProjectId] = useState(null);
@@ -1956,12 +1966,21 @@ function ITWorkspace({ user, projects, onProjectsChange, onLogout }) {
     const refresh = async () => {
       if (pending || document.visibilityState === 'hidden') return;
       pending = true;
-      try { const rows = await fetchProjects(); if (active) setLocalProjects(rows); }
+      try {
+        const [rows, teamProjects] = await Promise.all([fetchProjects(), fetchITProjects().catch(() => [])]);
+        if (active) {
+          const teamById = new Map(teamProjects.map(project => [String(project.id), project]));
+          setLocalProjects(rows.map(project => {
+            const teamProject = teamById.get(String(project.id));
+            return teamProject ? { ...project, team: teamProject.team || [], priority: teamProject.priority || project.priority, startDate: teamProject.startDate || project.startDate, dueDate: teamProject.dueDate || project.dueDate, notes: teamProject.notes ?? project.notes } : project;
+          }));
+        }
+      }
       catch (error) { if (active) setToast(error.message); }
       finally { pending = false; }
     };
     refresh();
-    const timer = window.setInterval(refresh, 15000);
+    const timer = window.setInterval(refresh, 60000);
     window.addEventListener('focus', refresh);
     document.addEventListener('visibilitychange', refresh);
     return () => { active = false; window.clearInterval(timer); window.removeEventListener('focus', refresh); document.removeEventListener('visibilitychange', refresh); };
@@ -2122,7 +2141,7 @@ function ITWorkspace({ user, projects, onProjectsChange, onLogout }) {
       fetchAppNotifications()
         .then((records) => {
           if (!active || !Array.isArray(records)) return;
-          const relevantRecords = filterITNotifications(records);
+          const relevantRecords = filterITNotifications(records, user);
           const previousIds = knownNotificationIdsRef.current;
           const nextIds = new Set(relevantRecords.map(notificationId));
           const hasNewUnread = previousIds !== null && relevantRecords.some((item) => (
@@ -2238,7 +2257,7 @@ function ITWorkspace({ user, projects, onProjectsChange, onLogout }) {
     <>
       <style>{THEME_CSS}</style>
       <div className="shell it-dashboard-shell">
-        <Sidebar page={page} setPage={setPage} mobileOpen={mobileOpen} setMobileOpen={setMobileOpen} onLogout={onLogout} identity={profileIdentity} unreadNotificationCount={unreadNotificationCount} />
+        <Sidebar page={page} setPage={setPage} mobileOpen={mobileOpen} setMobileOpen={setMobileOpen} onLogout={() => setLogoutConfirmOpen(true)} identity={profileIdentity} unreadNotificationCount={unreadNotificationCount} />
         <div className="workspace">
           <div className="topbar">
             <div className="topbar-left">
@@ -2305,6 +2324,7 @@ function ITWorkspace({ user, projects, onProjectsChange, onLogout }) {
       </div>
       <Toast message={toast} onClose={() => setToast("")} />
       <HelpdeskIncomingToast user={user} onOpen={() => setPage("hr-helpdesk")} />
+      <LogoutConfirmDialog open={logoutConfirmOpen} onCancel={() => setLogoutConfirmOpen(false)} onConfirm={() => { setLogoutConfirmOpen(false); onLogout?.(); }} />
     </>
   );
 }

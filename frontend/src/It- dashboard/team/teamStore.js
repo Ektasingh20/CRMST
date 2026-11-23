@@ -11,8 +11,24 @@ export function useTeamState() {
   const shared = useContext(TeamDataContext);
   return withWorkloads(shared || { ...base, saveAssignment });
 }
-export function saveAssignment(projectId, values) {
-  state = assignTeam(state, projectId, values);
+export function saveAssignment(projectId, values, sourceProject) {
+  let current = state;
+  if (!current.projects.some(project => String(project.id) === String(projectId)) && sourceProject) {
+    const name = sourceProject.name || sourceProject.projectName || 'Untitled project';
+    const imported = {
+      ...sourceProject,
+      id: projectId,
+      name,
+      priority: sourceProject.priority || values.priority || 'Medium',
+      startDate: sourceProject.startDate || values.startDate || '',
+      dueDate: sourceProject.dueDate || sourceProject.expectedDelivery || sourceProject.due || values.dueDate || '',
+      status: sourceProject.status || 'Active',
+      notes: sourceProject.notes || '',
+      team: Array.isArray(sourceProject.team) ? sourceProject.team : [],
+    };
+    current = { ...current, projects: [...current.projects, imported] };
+  }
+  state = assignTeam(current, projectId, values);
   listeners.forEach(listener => listener());
 }
 

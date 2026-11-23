@@ -1,12 +1,12 @@
 import { requireThat } from './errors.js';
-import { manager } from './auth.js';
+import { authorize, manager } from './auth.js';
 import { publicRecord } from './validation.js';
 import { workload } from './domain.js';
 export function createReads(store,cache,maxRecords=5000) {
   async function bounded(path,filters=[]) {
     const fields={
-      itd_projects:['name','client','priority','status','executionStatus','progress','startDate','dueDate','team','memberIds','completionDate','updatedAt'],
-      itd_tasks:['projectId','memberId','title','status','dueDate','completedAt'],
+      itd_projects:['name','projectName','projectId','client','service','assignedEmployeeName','assignedTo','assignedEmployeeId','priority','status','executionStatus','progress','startDate','expectedDelivery','dueDate','due','team','memberIds','completionDate','completionRemarks','statusRemarks','createdAt','updatedAt','description','specialInstructions','requiredFeatures','technologyRequirements','pagesModules','designRequirements','clientBudget','referenceWebsites','documents','scopeFiles'],
+      itd_tasks:['projectId','memberId','title','description','priority','status','dueDate','completedAt','createdAt','updatedAt'],
       itd_bugs:['title','projectId','priority','status','assignedTo','reportedBy','date'],
       itd_clarifications:['subject','projectId','priority','status','askedBy','assignedTo','at'],
       itd_members:['userId','userPath','name','teamRole','appRole','onLeave','disabled'],
@@ -60,9 +60,31 @@ export function createReads(store,cache,maxRecords=5000) {
     const items=rows.slice(0,limit).map(publicRecord);
     return {items,total,nextCursor:rows.length>limit?items.at(-1).id:null};
   }
+  async function assignedTasks(member,{limit=25,cursor='',projectId,status}={}) {
+    let rows=await cache.get(`assigned-tasks:${member.id}`,()=>bounded('itd_tasks',[['memberId','==',member.id]]));
+    if(projectId)rows=rows.filter(row=>row.projectId===projectId);
+    if(status)rows=rows.filter(row=>row.status===status);
+    rows.sort((a,b)=>a.id.localeCompare(b.id));
+    const total=rows.length;
+    if(cursor)rows=rows.filter(row=>row.id>cursor);
+    const items=rows.slice(0,limit).map(publicRecord);
+    return {items,total,nextCursor:rows.length>limit?items.at(-1).id:null};
+  }
+  async function projectDetails(member,id) {
+    const project=await store.get(`itd_projects/${id}`);
+    authorize(member,project);
+    return cache.get(`project-details:${id}`,async()=>{
+      if(!project.sourcePath) return publicRecord(project);
+      const source=await store.source.get(project.sourcePath);
+      if(!source) return publicRecord(project);
+      const fields=['service','assignedEmployeeName','assignedTo','assignedEmployeeId','expectedDelivery','due','clientBudget','referenceWebsites','documents','scopeFiles'];
+      const fresh=Object.fromEntries(fields.filter(key=>source[key]!==undefined&&source[key]!==null).map(key=>[key,source[key]]));
+      return publicRecord({...project,...fresh});
+    });
+  }
   async function teamOverview(member) {
     const [data,members]=await Promise.all([scope(member,['bugs']),cache.get('members',()=>bounded('itd_members'))]);
     return {members:members.map(m=>({...publicRecord(m),...workload(m.id,data.projects,data.bugs)})),projects:data.projects.length};
   }
-  return {scope,dashboard,list,teamOverview,members:()=>cache.get('members',async()=> (await bounded('itd_members')).map(publicRecord))};
+  return {scope,dashboard,list,assignedTasks,projectDetails,teamOverview,members:()=>cache.get('members',async()=> (await bounded('itd_members')).map(publicRecord))};
 }

@@ -38,17 +38,19 @@ export function inclusiveLeaveDuration(from, to) {
   return Math.floor((end - start) / 86400000) + 1;
 }
 
-export function filterITNotifications(notifications) {
+export function filterITNotifications(notifications, user) {
+  const userIds = new Set([user?.id, user?._id].filter(Boolean).map(String));
   return (notifications || []).filter((item) => {
-    const source = `${item.type || ""} ${item.category || ""} ${item.source || ""}`;
-    const message = String(item.message || item.title || "");
-    return !/(call[\s_-]*list|calling[\s_-]*list|call[\s_-]*lead|lead[\s_-]*assignment|sales[\s_-]*call)/i.test(source)
-      && !/^\s*\d+\s+new\s+(?:training|services?)\s+contacts?\s+were assigned\b/i.test(message);
+    const type = String(item.type || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
+    const recipientMatches = userIds.size === 0 || userIds.has(String(item.recipientId || ""));
+    return recipientMatches && ["task_assigned", "hr_helpdesk_message", "project_assigned"].includes(type);
   });
 }
 
 export function notificationDestination(notification) {
   const description = `${notification.type || ""} ${notification.category || ""} ${notification.message || notification.title || ""}`.toLowerCase();
+  if (description.includes("helpdesk")) return "hr-helpdesk";
+  if (description.includes("project")) return "new-projects";
   if (description.includes("leave")) return "leave-request";
   if (description.includes("task")) return "tasks";
   if (description.includes("attendance")) return "attendance-report";

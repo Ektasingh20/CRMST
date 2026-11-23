@@ -5,7 +5,7 @@ export default function NotificationsPage({ notifications, unreadCount, onOpen, 
   return (
     <section className="it-work-card it-notifications-page">
       <div className="it-notifications-heading">
-        <div><h2>Notifications</h2><p>Assignments, leave updates, and work activity</p></div>
+        <div><h2>Notifications</h2><p>HR helpdesk messages, assigned projects, and tasks</p></div>
         <div className="it-notifications-actions">
           <span className="it-notifications-unread">{unreadCount} unread</span>
           <button type="button" className="it-work-secondary-button" onClick={onMarkAllRead} disabled={!unreadCount}><CheckCheck size={15} /> Mark all read</button>

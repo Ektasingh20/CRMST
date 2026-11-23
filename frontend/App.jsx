@@ -2,6 +2,7 @@ import { IT_ROLES, defaultProjectEligibility, canReceiveProject } from "./src/it
 import CallLeadsPanel from "./CallLeadsPanel.jsx";
 import WhatsAppModal from "./WhatsAppModal.jsx";
 import AttendanceAdminPanel from "./src/admin/AttendanceAdminPanel.jsx";
+import LogoutConfirmDialog from "./src/shared/LogoutConfirmDialog.jsx";
 import RemarkField from "./RemarkField.jsx";
 import { callLeadForm, callLeadProgram, isCallLead } from "./callLeads.js";
 import {
@@ -187,6 +188,7 @@ import PasswordResetLink from "./src/PasswordResetLink.jsx";
 import StudentDashboard from "./src/student-dashboard/StudentDashboard";
 import CrmExecutiveDashboard from "./src/crm-executive/CrmExecutiveDashboard";
 import ITDashboard from "./src/It- dashboard/ITDashboard";
+import JuniorITDashboard from "./src/It- dashboard/JuniorITDashboard.jsx";
 import HrDashboard from "./src/final_hr_dashboard/HrDashboard";
 import CreateProjectForm from "./src/admin/CreateProjectForm";
 import ITAdminModule from "./src/admin/ITAdminModule";
@@ -1102,6 +1104,12 @@ function isItUser(user) {
     || String(user?.dept || user?.department || "").trim().toLowerCase() === "it";
 }
 
+function isJuniorITUser(user) {
+  const department = String(user?.dept || user?.department || "").trim().toLowerCase();
+  const roles = [user?.itWorkspaceRole, user?.role, user?.position, user?.appRole].map(value => String(value || "").trim().toLowerCase());
+  return department === "it" && (roles.includes("it team") || roles.some(role => ["junior developer", "intern"].includes(role)));
+}
+
 function ItDashboard({ user, users = [], tasks = [], leaves = [], employees = [], onLogout }) {
   const [activeSection, setActiveSection] = useState("overview");
   const displayTasks = Array.isArray(tasks) ? tasks : [];
@@ -1182,6 +1190,7 @@ function App() {
   const contentRef = useRef(null);
   const deferredQuery = useDeferredValue(globalQuery);
   const [toast, setToast] = useState("");
+  const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
   const [serviceQuery, setServiceQuery] = useState("");
   const [trainingQuery, setTrainingQuery] = useState("");
   const [taskReviewQuery, setTaskReviewQuery] = useState("");
@@ -1340,6 +1349,7 @@ function App() {
     password: "",
     role: "CRM Executive",
     dept: "CRM",
+    itWorkspaceRole: "IT Team",
     position: "",
     salary: "20000",
     joined: "",
@@ -3914,7 +3924,8 @@ function App() {
       position,
       salary,
       role,
-      canAssignProjects: dept === "IT" && (IT_ROLES.includes(role) ? defaultProjectEligibility(role) : createUserForm.canAssignProjects === true),
+      itWorkspaceRole: dept === "IT" ? createUserForm.itWorkspaceRole : "",
+      canAssignProjects: dept === "IT" && (createUserForm.itWorkspaceRole === "IT Head" || (!createUserForm.itWorkspaceRole && (IT_ROLES.includes(role) ? defaultProjectEligibility(role) : createUserForm.canAssignProjects === true))),
       joined,
       state,
       branch,
@@ -3951,6 +3962,7 @@ function App() {
         password: "",
         role: "",
         dept: "",
+        itWorkspaceRole: "IT Team",
         position: "",
         salary: "20000",
         joined: "",
@@ -4188,6 +4200,7 @@ function App() {
       username: user.username || "",
       password: "",
       role: user.role || departmentRoleMap[user.dept] || "CRM Executive",
+      itWorkspaceRole: user.itWorkspaceRole || (["it team", "junior developer", "intern"].includes(String(user.role || "").trim().toLowerCase()) ? "IT Team" : "IT Head"),
       customItRole: !IT_ROLES.includes(user.role),
       canAssignProjects: canReceiveProject(user),
       dept: user.dept || user.department || "CRM",
@@ -4553,7 +4566,17 @@ function App() {
   if (appView === "it-dashboard" || (currentUser && isItUser(currentUser))) {
     return (
       <ErrorBoundary>
-        <ITDashboard user={currentUser} onLogout={logout} />
+        {isJuniorITUser(currentUser)
+          ? <JuniorITDashboard
+              user={currentUser}
+              onLogout={logout}
+              onProfileUpdated={(updatedProfile) => setCurrentUser((current) => {
+                const updated = { ...current, ...updatedProfile };
+                safeStorageSet(SESSION_STORAGE_KEY, JSON.stringify(updated));
+                return updated;
+              })}
+            />
+          : <ITDashboard user={currentUser} onLogout={logout} />}
         {toast ? <div className="toast">{toast}</div> : null}
       </ErrorBoundary>
     );
@@ -4716,7 +4739,7 @@ function App() {
               <Bell size={16} />
               Alerts
             </button>
-            <button className="ghost-button" onClick={logout}>
+            <button className="ghost-button" onClick={() => setLogoutConfirmOpen(true)}>
               <DoorOpen size={16} />
               Logout
             </button>
@@ -5340,8 +5363,9 @@ function App() {
                         ...current,
                         dept,
                         role: dept === "IT" ? "Full Stack Developer" : departmentRoleMap[dept] || dept,
+                        itWorkspaceRole: dept === "IT" ? "IT Team" : "",
                         customItRole: false,
-                        canAssignProjects: dept === "IT",
+                        canAssignProjects: false,
                         position: dept === "Student" ? "Student" : (current.position === "Student" ? "" : current.position),
                       }));
                     }}
@@ -5353,7 +5377,14 @@ function App() {
                   </select>
                 </Field>
                 {createUserForm.dept === "IT" && <>
-                  <Field label="IT Role *">
+                  <label className="field" style={{ gridColumn: "1" }}>
+                    <span>IT Access *</span>
+                    <select value={createUserForm.itWorkspaceRole || "IT Team"} onChange={event => setCreateUserForm(current => ({ ...current, itWorkspaceRole: event.target.value, canAssignProjects: event.target.value === "IT Head" }))}>
+                      <option value="IT Head">IT Head</option>
+                      <option value="IT Team">IT Team</option>
+                    </select>
+                  </label>
+                  <Field label="IT Job Role *">
                     <select value={createUserForm.customItRole ? "__custom__" : createUserForm.role} onChange={(event) => {
                       const custom = event.target.value === "__custom__";
                       const role = custom ? "" : event.target.value;
@@ -5367,10 +5398,10 @@ function App() {
                     <input required maxLength={80} placeholder="Enter job role" value={createUserForm.role} onChange={event => setCreateUserForm(current => ({ ...current, role: event.target.value }))}/>
                   </Field>}
                   <label style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <input type="checkbox" style={{ width: "auto" }} checked={IT_ROLES.includes(createUserForm.role) ? defaultProjectEligibility(createUserForm.role) : createUserForm.canAssignProjects === true} disabled={IT_ROLES.includes(createUserForm.role)} onChange={event => setCreateUserForm(current => ({ ...current, canAssignProjects: event.target.checked }))}/>
+                    <input type="checkbox" style={{ width: "auto" }} checked={createUserForm.itWorkspaceRole === "IT Head" || (!createUserForm.itWorkspaceRole && createUserForm.canAssignProjects === true)} disabled={Boolean(createUserForm.itWorkspaceRole)} onChange={event => setCreateUserForm(current => ({ ...current, canAssignProjects: event.target.checked }))}/>
                     <span>Allow direct project assignment</span>
                   </label>
-                  <p className="span-full">Full Stack Developer and Software Developer can receive projects. Junior Developer and Intern can join project teams. For a new role, tick the checkbox to allow direct assignment.</p>
+                  <p className="span-full">IT Head can receive direct project assignments. IT Team, Junior Developer, and Intern are assigned through project teams. Full Stack Developer and Software Developer can receive projects. For a new role, tick the checkbox to allow direct assignment.</p>
                 </>}
                 <Field label="Position *">
                   <input
@@ -7282,6 +7313,7 @@ function App() {
       ) : null}
 
       {toast ? <div className="toast">{toast}</div> : null}
+      <LogoutConfirmDialog open={logoutConfirmOpen} onCancel={() => setLogoutConfirmOpen(false)} onConfirm={() => { setLogoutConfirmOpen(false); logout(); }} />
     </div>
   );
 }

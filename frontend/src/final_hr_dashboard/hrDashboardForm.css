@@ -48,6 +48,7 @@
 .hr-toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--dark);color:#fff;padding:12px 20px;border-radius:14px;font-size:14px;z-index:60;box-shadow:0 10px 30px rgba(0,0,0,.3)}
 
 .hr-profile-form{grid-template-columns:repeat(2,minmax(0,1fr))}
+.hr-profile-form .hr-profile-it-access{grid-column:1}
 .hr-profile-form .hr-f textarea{width:100%;min-height:96px;resize:vertical;font:inherit;font-size:14px;color:var(--ink);padding:10px 12px;border:1px solid #e3d8d0;border-radius:12px;background:#fff}
 .hr-profile-triple{grid-column:1/-1;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
 .hr-photo-control{display:grid;gap:10px}

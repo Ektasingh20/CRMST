@@ -14,9 +14,10 @@ import { createUser, fetchHrDashboard, fetchLeaves as fetchLeavesApi, fetchTasks
 import { uploadImage } from "../../backendClient.js";
 import PasswordResetLink from "../PasswordResetLink.jsx";
 import { HelpdeskIncomingToast } from "../shared/HelpdeskChat.jsx";
+import LogoutConfirmDialog from "../shared/LogoutConfirmDialog.jsx";
 import {
   LayoutGrid, Users, CalendarCheck, ListChecks, Upload, Settings, LogOut, ChevronRight, ChevronDown,
-  Search, Calendar, UserPlus, Plus, CalendarClock, Check, UserX, CreditCard, FileText, Wallet,
+  Search, UserPlus, Plus, CalendarClock, Check, UserX, CreditCard, FileText, Wallet,
   ClipboardList, UserCog, ClipboardCheck, Briefcase, Menu, X, BellRing, UserCheck, Printer, Eye, EyeOff, Pencil, Trash2, UserCircle, Download,
   Filter, RotateCcw, FileSpreadsheet, Phone, Mail, MousePointer2, LockKeyhole, CalendarDays, MessageCircle,
 } from "lucide-react";
@@ -1006,6 +1007,7 @@ function CreateProfile({ c: { db, upd, go } }) {
     maritalStatus: "",
     education: "",
     dept: "",
+    itWorkspaceRole: "IT Team",
     desig: "",
     joined: "",
     photo: "",
@@ -1157,6 +1159,7 @@ function CreateProfile({ c: { db, upd, go } }) {
         username: profile.username,
         password: profile.password,
         dept: profile.dept,
+        itWorkspaceRole: profile.dept === "IT" ? profile.itWorkspaceRole || "IT Team" : "",
         position: profile.desig,
         role,
         joined: profile.joined,
@@ -1207,7 +1210,8 @@ function CreateProfile({ c: { db, upd, go } }) {
         <F l="Emergency Contact *"><input required type="tel" inputMode="numeric" pattern="[0-9]{10}" maxLength={10} title="Enter a 10-digit phone number." placeholder="Enter 10-digit emergency number" value={form.emergencyContact} onChange={updateField("emergencyContact")} aria-invalid={!!errors.emergencyContact} aria-describedby={errors.emergencyContact ? "hr-profile-emergencyContact-error" : undefined} />{fieldError("emergencyContact")}</F>
         <F l="Marital Status"><select value={form.maritalStatus} onChange={set("maritalStatus")}><option value="">Select status (Optional)</option><option>Single</option><option>Married</option><option>Divorced</option><option>Widowed</option></select></F>
         <F l="Education"><input placeholder="e.g. B.Tech, MBA, MCA (Optional)" value={form.education} onChange={set("education")} /></F>
-        <F l="Department *"><select required value={form.dept} onChange={updateField("dept")} aria-invalid={!!errors.dept} aria-describedby={errors.dept ? "hr-profile-dept-error" : undefined}><option value="">Select department</option>{DEPTS.map((department) => <option key={department}>{department}</option>)}</select>{fieldError("dept")}</F>
+        <F l="Department *"><select required value={form.dept} onChange={(event) => { const value = event.target.value; updateField("dept")(event); setForm((current) => ({ ...current, itWorkspaceRole: value === "IT" ? current.itWorkspaceRole || "IT Team" : "" })); }} aria-invalid={!!errors.dept} aria-describedby={errors.dept ? "hr-profile-dept-error" : undefined}><option value="">Select department</option>{DEPTS.map((department) => <option key={department}>{department}</option>)}</select>{fieldError("dept")}</F>
+        {form.dept === "IT" && <F l="IT Access *" className="hr-profile-it-access"><select required value={form.itWorkspaceRole || "IT Team"} onChange={set("itWorkspaceRole")}><option value="IT Head">IT Head</option><option value="IT Team">IT Team</option></select></F>}
         <F l="Position *"><input required placeholder="e.g. Manager, Executive" value={form.desig} onChange={updateField("desig")} aria-invalid={!!errors.desig} aria-describedby={errors.desig ? "hr-profile-desig-error" : undefined} />{fieldError("desig")}</F>
         <F l="Date of Joining *"><input required type="date" value={form.joined} onChange={updateField("joined")} aria-invalid={!!errors.joined} aria-describedby={errors.joined ? "hr-profile-joined-error" : undefined} />{fieldError("joined")}</F>
         <F l="Ex-Employee"><select value={form.exEmployee} onChange={set("exEmployee")}><option value="No">No</option><option value="Yes">Yes</option></select></F>
@@ -3654,6 +3658,7 @@ export default function HrDashboard({ user, onLogout } = {}) {
   const [open, setOpen] = useState("");
   const [drawer, setDrawer] = useState(false);
   const [out, setOut] = useState(false);
+  const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
   const [toast, setToast] = useState("");
   const [idSel, setIdSel] = useState(1);
   const [query, setQuery] = useState("");
@@ -3843,6 +3848,7 @@ export default function HrDashboard({ user, onLogout } = {}) {
     ...db.me,
     name: db.me.settingsSaved ? db.me.name : user.name || user.username || db.me.name || "HR",
     role: user.position || user.role || "HR",
+    photo: db.me.photo || user.imageUrl || user.photo || user.avatar || "",
     branch: user.branch || db.me.branch,
     crm: String(user.crmId || user.id || user._id || db.me.crm),
   } : db.me;
@@ -3881,13 +3887,11 @@ export default function HrDashboard({ user, onLogout } = {}) {
 
   const q = query.trim().toLowerCase();
   const nav = q ? NAV.filter((n) => n.label.toLowerCase().includes(q) || n.kids?.some((k) => k[0].toLowerCase().includes(q))) : NAV;
-  const today = new Date().toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", year: "numeric" });
-
   return (
     <div className={`hr-shell${darkMode ? " hr-dark-mode" : ""}`}>
       <aside className={`hr-side ${drawer ? "is-open" : ""}`}>
         <div className="hr-brand"><div className="hr-logo">S/T</div><div><strong>{profile.company.toUpperCase()}</strong><span>{profile.branch} HR Panel</span></div></div>
-        <div className="hr-profile"><div className="hr-avatar">{profile.photo ? <img src={profile.photo} alt="" /> : profile.name.slice(0, 2).toUpperCase()}</div><strong>{profile.name}</strong><span>{profile.role}</span></div>
+        <div className="hr-profile"><div className="hr-avatar">{profile.photo ? <img src={profile.photo} alt={`${profile.name} profile`} /> : profile.name.slice(0, 2).toUpperCase()}</div><strong>{profile.name}</strong><span>{profile.role}</span></div>
         <label className="hr-search"><Search size={16} /><input placeholder="Search modules..." value={query} onChange={(e) => setQuery(e.target.value)} /></label>
         <nav>{nav.map((it) => {
           const I = it.icon; const ex = it.kids && (open === it.label || !!q);
@@ -3900,15 +3904,14 @@ export default function HrDashboard({ user, onLogout } = {}) {
               <button key={l} className={`hr-subitem ${page === l ? "is-active" : ""}`} onClick={() => go(l)}><KI size={15} /> {l}</button>))}</div>}
           </div>);
         })}</nav>
-        <button className="hr-nav hr-logout" onClick={() => onLogout ? onLogout() : setOut(true)}><LogOut size={18} /><span>Logout</span></button>
+        <button className="hr-nav hr-logout" onClick={() => setLogoutConfirmOpen(true)}><LogOut size={18} /><span>Logout</span></button>
       </aside>
 
       <main className="hr-main">
         <header className="hr-top">
           <button className="hr-pill hr-burger" onClick={() => setDrawer(!drawer)} aria-label="Toggle menu">{drawer ? <X size={18} /> : <Menu size={18} />}</button>
-          <div className="hr-title"><small>{profile.company}</small><h1>{getPageTitle(page)}</h1></div>
+          <div className="hr-title"><h1>{getPageTitle(page)}</h1><small>{profile.branch} · HR</small></div>
           <div className="hr-actions">
-            <span className="hr-pill hr-date"><Calendar size={16} /> {today}</span>
             <div className="hr-notifications-wrap" ref={notificationMenuRef}>
               <button className={`hr-pill hr-notification-bell${unreadNotificationCount ? " has-unread" : ""}${incomingNotification ? " has-incoming" : ""}`} type="button" title="Notifications" aria-label={`Notifications${unreadNotificationCount ? `, ${unreadNotificationCount} unread` : ""}`} aria-expanded={notificationMenuOpen} onClick={() => setNotificationMenuOpen((current) => !current)}>
                 <BellRing size={16} />
@@ -3922,8 +3925,10 @@ export default function HrDashboard({ user, onLogout } = {}) {
                 <button className="hr-notifications-view-all" type="button" onClick={() => { setNotificationMenuOpen(false); go("HR Notifications"); }}>View all notifications</button>
               </div>}
             </div>
-            <button className="hr-btn" onClick={() => go("Create Profile")}><UserPlus size={16} /> Add employee</button>
-            <button className="hr-btn" onClick={() => go("Assign Tasks")}><Plus size={16} /> Assign task</button>
+            <div className="hr-user-chip">
+              <div className="hr-user-avatar">{profile.photo ? <img src={profile.photo} alt="" /> : profile.name.slice(0, 1).toUpperCase()}</div>
+              <span><strong>{profile.name}</strong><small>{profile.role}</small></span>
+            </div>
           </div>
         </header>
         <div className="hr-scroll" ref={pageScrollRef}>
@@ -3932,6 +3937,7 @@ export default function HrDashboard({ user, onLogout } = {}) {
       </main>
       {toast && <div className="hr-toast" role="status">{toast}</div>}
       <HelpdeskIncomingToast user={user} onOpen={() => go("Employee Helpdesk")} />
+      <LogoutConfirmDialog open={logoutConfirmOpen} onCancel={() => setLogoutConfirmOpen(false)} onConfirm={() => { setLogoutConfirmOpen(false); if (onLogout) onLogout(); else setOut(true); }} />
     </div>
   );
 }
