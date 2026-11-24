@@ -7,13 +7,16 @@ import HrLeads from "./HrLeads";
 import MarkAttendance from "./HrMarkAttendance.jsx";
 import { formatAttendanceTime as formatTime, formatAttendanceDuration } from "./attendanceFormatting.js";
 import { fetchAdminAttendanceMonth } from "../../backendApi.js";
-import { buildAttendanceMonthRows, attendanceDateInIndia, calculateAttendancePayroll } from "../../../shared/attendanceClassification.js";
+import { buildAttendanceMonthRows, attendanceDateInIndia, calculateAttendancePayroll, calculateSalaryReportPay } from "../../../shared/attendanceClassification.js";
+import { isValidAadhaar, isValidBankAccount, isValidBankText, isValidEmail as isValidProfileEmail, isValidIfsc, isValidIndianMobile, isValidPan, isValidPersonName, isValidProfileDob } from "../../../shared/profileValidation.js";
 import { usePageLoading, getPageTitle } from "./hrPageLoading";
 import { compressImageFile } from "../../imageUpload.js";
 import { createUser, fetchHrDashboard, fetchLeaves as fetchLeavesApi, fetchTasks as fetchTasksApi, createTask as createTaskApi, updateTask as updateTaskApi, deleteTask as deleteTaskApi, fetchUsers, updateUser, updateMyProfile, deleteUser, uploadPriorExperienceDocument, downloadPriorExperienceDocument, fetchEmployeeProfileDocuments, downloadEmployeeProfileDocument, fetchAppNotifications, markAppNotificationRead } from "../../backendApi.js";
 import { uploadImage } from "../../backendClient.js";
 import PasswordResetLink from "../PasswordResetLink.jsx";
 import { HelpdeskIncomingToast } from "../shared/HelpdeskChat.jsx";
+import SalesDropdown from "../../SalesDropdown.jsx";
+import CallListDatePicker from "../../CallListDatePicker.jsx";
 import {
   LayoutGrid, Users, CalendarCheck, ListChecks, Upload, Settings, LogOut, ChevronRight, ChevronDown,
   Search, Calendar, UserPlus, Plus, CalendarClock, Check, UserX, CreditCard, FileText, Wallet,
@@ -24,6 +27,7 @@ import * as XLSX from "xlsx";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 import QRCode from "qrcode";
+import "./hrProfessional.css";
 
 /* ================= helpers & dashboard data ================= */
 const P = (s) => { const [a, b, c] = s.split("-"); return new Date(+a, b - 1, +c); };
@@ -121,27 +125,22 @@ const salaryAttendanceSummary = (db, employee, reportMonth, lookup) => {
   let present = 0;
   let absent = 0;
   let leaveDays = 0;
+  let holidayDays = 0;
   if (attendanceStart <= attendanceEnd) {
     attendanceRange(attendanceStart, attendanceEnd).forEach((date) => {
       const savedStatus = recordedAttendanceStatus(db, lookup, employee, date);
-      const isSunday = P(date).getDay() === 0;
-      // Unrecorded Sundays are weekly holidays; explicit saved attendance still counts.
-      if (isSunday && !savedStatus) return;
       const status = String(savedStatus || "Absent").toLowerCase();
-      if (status === "present") present += 1;
+      if (P(date).getDay() === 0 || status === "holiday") holidayDays += 1;
+      else if (status === "present") present += 1;
       else if (status === "leave") leaveDays += 1;
       else absent += 1;
     });
   }
-  const holidayDays = employedDays > 0
-    ? attendanceRange(employedStart, employedEnd).filter((date) => P(date).getDay() === 0).length
-    : 0;
-  const configuredUnpaidLeave = Math.max(0, Number(employee.unpaidLeaveDays) || 0);
-  const unpaidLeaveDays = Math.min(leaveDays, configuredUnpaidLeave);
-  const paidLeaveDays = Math.max(0, leaveDays - unpaidLeaveDays);
+  const paidLeaveDays = Math.min(1, absent + leaveDays);
+  const unpaidLeaveDays = Math.max(0, absent + leaveDays - paidLeaveDays);
   const nonEmployedDays = daysInMonth - employedDays;
-  const deductedDays = nonEmployedDays + absent + unpaidLeaveDays;
-  return { daysInMonth, employedDays, present, absent, leaveDays, paidLeaveDays, unpaidLeaveDays, holidayDays, deductedDays, payableDays: Math.max(0, daysInMonth - deductedDays), throughDate: periodEnd };
+  const deductedDays = nonEmployedDays + unpaidLeaveDays;
+  return { daysInMonth, employedDays, present, absent, leaveDays, paidLeaveDays, unpaidLeaveDays, holidayDays, deductedDays, payableDays: present + holidayDays + paidLeaveDays, throughDate: periodEnd };
 };
 const nm = (d, id) => d.emps.find((e) => String(e.id) === String(id) || String(e.backendId || "") === String(id))?.name || "Unknown";
 const resignationRecordFor = (db, employee) => (db.hrResignations || [])
@@ -329,6 +328,17 @@ function Dash({ c: { db, upd, go } }) {
 const blank = { name: "", email: "", phone: "", dept: "CRM", desig: "", salary: 20000, joined: TODAY };
 const PROFILE_DEPARTMENTS = DEPTS;
 const PROFILE_DEPARTMENT_ROLES = { CRM: "CRM Executive", HR: "HR", Operation: "Operation", Student: "Student" };
+const INDIAN_STATES = [
+  "Andhra Pradesh", "Arunachal Pradesh", "Assam", "Bihar", "Chhattisgarh", "Goa", "Gujarat", "Haryana",
+  "Himachal Pradesh", "Jharkhand", "Karnataka", "Kerala", "Madhya Pradesh", "Maharashtra", "Manipur",
+  "Meghalaya", "Mizoram", "Nagaland", "Odisha", "Punjab", "Rajasthan", "Sikkim", "Tamil Nadu", "Telangana",
+  "Tripura", "Uttar Pradesh", "Uttarakhand", "West Bengal",
+];
+const INDIAN_UNION_TERRITORIES = [
+  "Andaman and Nicobar Islands", "Chandigarh", "Dadra and Nagar Haveli and Daman and Diu", "Delhi",
+  "Jammu and Kashmir", "Ladakh", "Lakshadweep", "Puducherry",
+];
+const INDIAN_REGIONS = new Set([...INDIAN_STATES, ...INDIAN_UNION_TERRITORIES]);
 const PROFILE_DOCUMENTS = [
   ["aadhaarDocument", "Aadhaar Card"],
   ["panDocument", "PAN Card"],
@@ -383,9 +393,9 @@ const PROFILE_SECTIONS = [
       ["joined", "Date of Joining", "date", true],
       ["resignationDate", "Resignation Date", "date"],
       ["exEmployee", "Ex-Employee", "select", false, ["No", "Yes"]],
-      ["state", "State", "text"],
-      ["branch", "Branch", "text"],
-      ["branchCode", "Branch Code", "text"],
+      ["state", "State / Union Territory", "select", true, ["", ...INDIAN_STATES, ...INDIAN_UNION_TERRITORIES]],
+      ["branch", "Branch", "text", true],
+      ["branchCode", "Branch Code", "text", true],
     ],
   },
   {
@@ -428,7 +438,7 @@ const PROFILE_SECTIONS = [
     title: "6. Address & Profile Photo",
     icon: UserCircle,
     fields: [
-      ["address", "Full Address", "textarea"],
+      ["address", "Full Address", "textarea", true],
       ["photo", "Profile Photo", "photo"],
     ],
   },
@@ -446,6 +456,63 @@ const PROFILE_DEFAULTS = {
 const PROFILE_NUMBER_FIELDS = [
   "salary", "leaveDaysThisMonth", "unpaidLeaveDays",
 ];
+const PROFILE_REQUIRED_FIELDS = {
+  name: "Enter the employee's full name.",
+  email: "Enter the work email address.",
+  phone: "Enter the employee's contact number.",
+  dept: "Select a department.",
+  desig: "Enter the employee's designation.",
+  joined: "Select the date of joining.",
+  state: "Select a state or union territory.",
+  branch: "Enter the branch name.",
+  branchCode: "Enter the branch code.",
+  address: "Enter the employee's complete address.",
+};
+const PROFILE_SELECT_VALUES = {
+  gender: ["", "Female", "Male", "Non-binary", "Prefer not to say"],
+  maritalStatus: ["", "Single", "Married", "Divorced", "Widowed"],
+  employmentType: ["", "Full-time", "Part-time", "Contract", "Intern"],
+  employeeStatus: ["Active", "On Leave", "Probation", "Inactive"],
+  exEmployee: ["No", "Yes"],
+  priorExperience: ["No", "Yes"],
+};
+const employeeProfileFieldError = (key, value, values) => {
+  const text = String(value ?? "");
+  const trimmed = text.trim();
+  if (PROFILE_REQUIRED_FIELDS[key] && !trimmed) return PROFILE_REQUIRED_FIELDS[key];
+  if (key === "name" && trimmed && (trimmed.length < 2 || trimmed.length > 120 || !isValidPersonName(trimmed))) return "Enter a valid full name using letters and standard name punctuation.";
+  if (["email", "personalEmail"].includes(key) && trimmed && (trimmed.length > 254 || !isValidProfileEmail(trimmed))) return `Enter a valid ${key === "email" ? "work" : "personal"} email address.`;
+  if (["phone", "emergencyContact"].includes(key) && trimmed && !isValidIndianMobile(trimmed)) return "Enter a 10-digit Indian mobile number starting with 6, 7, 8, or 9.";
+  if (key === "emergencyContact" && trimmed && trimmed === String(values.phone || "").trim()) return "Emergency contact must be different from the employee's contact number.";
+  if (PROFILE_SELECT_VALUES[key] && !PROFILE_SELECT_VALUES[key].includes(trimmed)) return "Select a valid option.";
+  if (key === "dept" && trimmed && !PROFILE_DEPARTMENTS.includes(trimmed)) return "Select a valid department.";
+  if (key === "state" && trimmed && !INDIAN_REGIONS.has(trimmed)) return "Select a valid Indian state or union territory.";
+  if (key === "dob" && trimmed && !isValidProfileDob(trimmed, TODAY)) return "Date of birth must be a valid date between 1900 and today.";
+  if (key === "joined" && trimmed && (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed) || trimmed < "1900-01-01" || trimmed > TODAY)) return "Date of joining must be a valid date up to today.";
+  if (key === "resignationDate" && trimmed && (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed) || trimmed > TODAY || (values.joined && trimmed < values.joined))) return "Resignation date must be between the joining date and today.";
+  if (key === "resignationDate" && values.exEmployee === "Yes" && !trimmed) return "Select the employee's last working day.";
+  if (key === "desig" && trimmed && (trimmed.length < 2 || trimmed.length > 80 || /[<>\u0000-\u001f]/.test(trimmed))) return "Enter a valid designation between 2 and 80 characters.";
+  if (["manager", "workLocation", "probationPeriod", "noticePeriod"].includes(key) && trimmed.length > 120) return "Use 120 characters or fewer.";
+  if (key === "education" && trimmed && (trimmed.length > 160 || !isValidBankText(trimmed))) return "Education may contain letters, numbers, and standard punctuation only.";
+  if (key === "branch" && trimmed && (trimmed.length < 2 || trimmed.length > 60 || !/^[\p{L}\p{M}0-9.' -]+$/u.test(trimmed))) return "Enter a valid branch name between 2 and 60 characters.";
+  if (key === "branchCode" && trimmed && !/^[A-Z0-9][A-Z0-9-]{2,19}$/.test(trimmed)) return "Branch code must contain 3–20 uppercase letters, numbers, or hyphens.";
+  if (key === "address" && trimmed && (trimmed.length < 10 || trimmed.length > 500 || /[\u0000-\u001f]/.test(trimmed))) return "Enter a complete address between 10 and 500 characters.";
+  if (key === "panNumber" && trimmed && !isValidPan(trimmed)) return "PAN must use the format ABCDE1234F.";
+  if (key === "aadhaarNumber" && trimmed && !isValidAadhaar(trimmed)) return "Enter a valid 12-digit Aadhaar number.";
+  if (key === "ifscCode" && trimmed && !isValidIfsc(trimmed)) return "IFSC code must use the format ABCD0123456.";
+  if (key === "accountNumber" && trimmed && !isValidBankAccount(trimmed)) return "Account number must contain 6 to 18 digits.";
+  if (["bankName", "bankBranch"].includes(key) && trimmed && !isValidBankText(trimmed)) return "Enter valid bank details using standard punctuation.";
+  if (key === "accountHolder" && trimmed && !isValidPersonName(trimmed)) return "Enter the account holder's legal name.";
+  if (["bankName", "accountNumber", "ifscCode", "bankBranch", "accountHolder"].includes(key)) {
+    const bankKeys = ["bankName", "accountNumber", "ifscCode", "bankBranch", "accountHolder"];
+    if (bankKeys.some((field) => String(values[field] || "").trim()) && bankKeys.some((field) => !String(values[field] || "").trim())) return "Complete all bank account fields or leave all of them blank.";
+  }
+  if (["salary", "leaveDaysThisMonth", "unpaidLeaveDays"].includes(key) && trimmed && (!Number.isFinite(Number(trimmed)) || Number(trimmed) < 0)) return "Enter a number equal to or greater than zero.";
+  if (values.priorExperience === "Yes" && ["priorEmployer", "priorDesignation", "priorEmploymentFrom", "priorEmploymentTo"].includes(key) && !trimmed) return "This field is required when prior experience is Yes.";
+  if (["priorEmploymentFrom", "priorEmploymentTo"].includes(key) && trimmed && (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed) || trimmed > TODAY)) return "Select a valid date up to today.";
+  if (key === "priorEmploymentTo" && trimmed && values.priorEmploymentFrom && trimmed < values.priorEmploymentFrom) return "Employment end date cannot be before the start date.";
+  return "";
+};
 const employeeProfile = (employee) => ({ ...PROFILE_DEFAULTS, ...employee, documents: employee.documents || {} });
 const profileTotals = (employee) => {
   const amount = (key) => Math.max(0, Number(employee[key]) || 0);
@@ -491,23 +558,28 @@ function usePayrollAttendanceMonth(month) {
       if (!Array.isArray(result?.records) || !Array.isArray(result?.leaves) || !result?.calendar) {
         throw new Error("The attendance payroll response is incomplete.");
       }
-      const recordsByEmployee = new Map();
-      result.records.forEach((record) => {
-        const id = String(record.employeeId || "");
-        if (!id) return;
-        const rows = recordsByEmployee.get(id) || [];
-        rows.push(record);
-        recordsByEmployee.set(id, rows);
+      const groupByEmployee = (items) => {
+        const grouped = new Map();
+        items.forEach((item) => {
+          const id = String(item.employeeId || "");
+          if (!id) return;
+          const rows = grouped.get(id) || [];
+          rows.push(item);
+          grouped.set(id, rows);
+        });
+        return grouped;
+      };
+      const yearRecords = Array.isArray(result.yearRecords) ? result.yearRecords : result.records;
+      const yearLeaves = Array.isArray(result.yearLeaves) ? result.yearLeaves : result.leaves;
+      if (active) setData({
+        ...result,
+        yearRecords,
+        yearLeaves,
+        recordsByEmployee: groupByEmployee(result.records),
+        leavesByEmployee: groupByEmployee(result.leaves),
+        yearRecordsByEmployee: groupByEmployee(yearRecords),
+        yearLeavesByEmployee: groupByEmployee(yearLeaves),
       });
-      const leavesByEmployee = new Map();
-      result.leaves.forEach((leave) => {
-        const id = String(leave.employeeId || "");
-        if (!id) return;
-        const rows = leavesByEmployee.get(id) || [];
-        rows.push(leave);
-        leavesByEmployee.set(id, rows);
-      });
-      if (active) setData({ ...result, recordsByEmployee, leavesByEmployee });
     }).catch((loadError) => {
       if (active) {
         setData(null);
@@ -532,7 +604,26 @@ function employeeAttendanceRows(employee, month, data, { excludeTestData = true 
     today: attendanceDateInIndia(),
     calendar: data.calendar,
     employeeId: id,
+    recordedHolidaysOnly: true,
   });
+}
+function employeeAttendanceYearRows(employee, month, data, { excludeTestData = true } = {}) {
+  if (!data || !/^\d{4}-\d{2}$/.test(String(month || ""))) return [];
+  const id = String(employee.backendId || employee.id || "");
+  const records = data.yearRecordsByEmployee?.get(id) || data.recordsByEmployee.get(id) || [];
+  const leaves = data.yearLeavesByEmployee?.get(id) || data.leavesByEmployee.get(id) || [];
+  const [year, monthNumber] = month.split("-").map(Number);
+  return Array.from({ length: monthNumber }, (_, index) => `${year}-${String(index + 1).padStart(2, "0")}`)
+    .flatMap((value) => buildAttendanceMonthRows({
+      attendance: excludeTestData ? records.filter((record) => record.isTestData !== true) : records,
+      leaves,
+      month: value,
+      joinedDate: employee.joined,
+      today: attendanceDateInIndia(),
+      calendar: data.calendar,
+      employeeId: id,
+      recordedHolidaysOnly: true,
+    }));
 }
 function legacyPayrollPreview(employee, month, attendanceState = {}) {
   const amount = (value) => Math.max(0, Number(value) || 0);
@@ -552,7 +643,7 @@ const readUploadedFile = (file) => new Promise((resolve, reject) => {
   reader.readAsDataURL(file);
 });
 
-function ProfileSection({ section, employee, editing, onChange, onFile, fileErrors = {}, photoStatus = "" }) {
+function ProfileSection({ section, employee, editing, onChange, onFile, fileErrors = {}, photoStatus = "", errors = {}, onBlur }) {
   const totals = profileTotals(employee);
   const calculatedText = (key, value) => {
     if (key === "oneDayBasicSalary") return String(value);
@@ -566,19 +657,39 @@ function ProfileSection({ section, employee, editing, onChange, onFile, fileErro
       <h3><section.icon size={16} /> {section.title}</h3>
       <div className="hr-employee-fields">
         {section.fields.map(([key, label, kind, required, options]) => {
-          const value = totals[key] ?? employee[key] ?? "";
-          const isRequired = editing && !!required;
+          const value = key === "id"
+            ? employee.backendId || employee.id || ""
+            : totals[key] ?? employee[key] ?? "";
+          const isRequired = editing && (!!required || (key === "resignationDate" && employee.exEmployee === "Yes"));
+          const errorId = `hr-edit-${key}-error`;
+          const normalize = (nextValue) => {
+            if (["phone", "emergencyContact", "aadhaarNumber", "accountNumber"].includes(key)) return nextValue.replace(/\D/g, "");
+            if (["panNumber", "ifscCode", "branchCode"].includes(key)) return nextValue.toUpperCase().replace(key === "branchCode" ? /[^A-Z0-9-]/g : /\s/g, "");
+            return nextValue;
+          };
           const props = {
             value: value ?? "",
-            onChange: (event) => onChange(key, event.target.value),
+            onChange: (event) => onChange(key, normalize(event.target.value)),
+            onBlur: () => onBlur?.(key),
             required: isRequired,
+            "aria-invalid": !!errors[key],
+            "aria-describedby": errors[key] ? errorId : undefined,
           };
           let control;
           if (kind === "select") {
-            control = <select {...props}>{options.map((option) => <option key={option || "empty"} value={option}>{option || "Select an option"}</option>)}</select>;
+            const dropdownOptions = key === "state" ? [
+              { key: "state-empty", value: "", label: "Select state or union territory" },
+              { key: "state-heading", value: "__states", label: "States", disabled: true, className: "hr-dropdown-heading" },
+              ...INDIAN_STATES.map((state) => ({ key: `state-${state}`, value: state, label: state })),
+              { key: "territory-heading", value: "__territories", label: "Union Territories", disabled: true, className: "hr-dropdown-heading" },
+              ...INDIAN_UNION_TERRITORIES.map((territory) => ({ key: `territory-${territory}`, value: territory, label: territory })),
+            ] : options.map((option) => ({ key: option || "empty", value: option, label: option || "Select an option" }));
+            control = editing
+              ? <SalesDropdown id={`hr-edit-${key}`} options={dropdownOptions} value={value} onChange={props.onChange} required={isRequired} searchable={key === "state" || dropdownOptions.length > 12} wrapperClassName="hr-form-dropdown" className="hr-form-dropdown-trigger" menuClassName="hr-form-dropdown-menu" aria-label={label} aria-invalid={!!errors[key]} aria-describedby={errors[key] ? errorId : undefined} />
+              : <span className="hr-employee-value">{value || "—"}</span>;
           } else if (kind === "textarea") {
             control = editing
-              ? <textarea {...props} rows={3} />
+              ? <textarea {...props} rows={3} maxLength={500} placeholder="Enter complete address" />
               : <span className="hr-employee-value">{value || "—"}</span>;
           } else if (kind === "photo") {
             control = editing ? (
@@ -586,7 +697,9 @@ function ProfileSection({ section, employee, editing, onChange, onFile, fileErro
                 {employee.photo
                   ? <img className="hr-profile-photo-large" src={employee.photo} alt={`${employee.name} profile`} />
                   : <div className="hr-profile-photo-large hr-profile-placeholder"><UserCircle size={36} /></div>}
-                <input type="file" accept="image/*" required={isRequired} aria-label="Upload profile photo" onChange={(event) => onFile(event, key, true)} />
+                <input id="hr-edit-profile-photo" className="hr-editor-file-input" type="file" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" required={isRequired} aria-label="Upload profile photo" onChange={(event) => onFile(event, key, true)} />
+                <button className="hr-editor-file-button" type="button" onClick={() => document.getElementById("hr-edit-profile-photo")?.click()}><Upload size={15} />{employee.photo ? "Change photo" : "Choose photo"}</button>
+                <span className="hr-editor-file-name">{employee.photo ? "Profile photo selected" : "No photo selected"}</span>
                 {fileErrors[key] && <small className="hr-form-error" role="alert">{fileErrors[key]}</small>}
                 {photoStatus && <small className="hr-uploaded-file" role="status">{photoStatus}</small>}
               </div>
@@ -595,27 +708,34 @@ function ProfileSection({ section, employee, editing, onChange, onFile, fileErro
               : <span className="hr-employee-value">No profile photo uploaded</span>;
           } else if (kind === "readonly" || kind === "calculated") {
             control = editing
-              ? <input {...props} value={calculatedText(key, value)} readOnly />
+              ? <input {...props} value={kind === "calculated" ? calculatedText(key, value) : value} readOnly />
               : <span className="hr-employee-value">{kind === "calculated" ? calculatedText(key, value) : value || "—"}</span>;
+          } else if (editing && kind === "phone") {
+            control = <div className={`hr-profile-phone-control${errors[key] ? " is-invalid" : ""}`}>
+              <span className="hr-profile-phone-prefix" aria-hidden="true"><span className="hr-india-flag" /><b>+91</b></span>
+              <input {...props} type="tel" inputMode="numeric" pattern="[6-9][0-9]{9}" maxLength={10} placeholder="Enter 10-digit mobile number" title="Enter a valid 10-digit Indian mobile number." />
+            </div>;
+          } else if (editing && kind === "date") {
+            control = <CallListDatePicker id={`hr-edit-${key}`} className="hr-form-date-picker" triggerClassName="hr-form-date-trigger" popoverClassName="hr-form-calendar-popover" popoverWidth={350} popoverHeight={370} label={label} hideLabel value={value} min={key === "resignationDate" ? employee.joined || "1900-01-01" : "1900-01-01"} max={TODAY} showToday={key !== "dob"} required={isRequired} ariaInvalid={!!errors[key]} ariaDescribedBy={errors[key] ? errorId : undefined} onChange={(nextValue) => onChange(key, nextValue)} />;
           } else if (editing) {
-            const inputType = kind === "date" ? "date" : kind === "email" ? "email" : kind === "phone" ? "tel" : kind === "number" || kind === "money" ? "number" : "text";
-            const pattern = kind === "phone" ? "[0-9]{10}" : kind === "pan" ? "[A-Za-z]{5}[0-9]{4}[A-Za-z]" : kind === "aadhaar" ? "[0-9]{12}" : kind === "ifsc" ? "[A-Za-z]{4}0[A-Za-z0-9]{6}" : key === "accountNumber" ? "[0-9]{1,16}" : undefined;
+            const inputType = kind === "email" ? "email" : kind === "number" || kind === "money" ? "number" : "text";
+            const pattern = kind === "pan" ? "[A-Za-z]{5}[0-9]{4}[A-Za-z]" : kind === "aadhaar" ? "[0-9]{12}" : kind === "ifsc" ? "[A-Za-z]{4}0[A-Za-z0-9]{6}" : key === "accountNumber" ? "[0-9]{6,18}" : undefined;
             control = <input
               {...props}
               type={inputType}
-              inputMode={kind === "phone" || kind === "aadhaar" || key === "accountNumber" ? "numeric" : undefined}
+              inputMode={kind === "aadhaar" || key === "accountNumber" ? "numeric" : undefined}
               pattern={pattern}
-              maxLength={kind === "phone" ? 10 : kind === "pan" ? 10 : kind === "aadhaar" ? 12 : key === "accountNumber" ? 16 : undefined}
+              maxLength={kind === "pan" ? 10 : kind === "aadhaar" ? 12 : kind === "ifsc" ? 11 : key === "accountNumber" ? 18 : key === "branchCode" ? 20 : key === "name" ? 120 : key === "education" ? 160 : undefined}
               min={kind === "number" || kind === "money" ? 0 : undefined}
               step={kind === "money" ? "0.01" : kind === "number" ? "1" : undefined}
-              placeholder={kind === "pan" ? "ABCDE1234F" : kind === "aadhaar" ? "12-digit Aadhaar number" : kind === "ifsc" ? "ABCD0123456" : key === "accountNumber" ? "Up to 16 digits" : undefined}
-              title={kind === "phone" ? "Enter a 10-digit phone number." : kind === "pan" ? "Enter a valid 10-character PAN." : kind === "aadhaar" ? "Enter a 12-digit Aadhaar number." : kind === "ifsc" ? "Enter a valid IFSC code." : key === "accountNumber" ? "Enter an account number of up to 16 digits." : undefined}
+              placeholder={kind === "pan" ? "ABCDE1234F" : kind === "aadhaar" ? "12-digit Aadhaar number" : kind === "ifsc" ? "ABCD0123456" : key === "accountNumber" ? "6 to 18 digits" : undefined}
+              title={kind === "pan" ? "Enter a valid 10-character PAN." : kind === "aadhaar" ? "Enter a valid 12-digit Aadhaar number." : kind === "ifsc" ? "Enter a valid IFSC code." : key === "accountNumber" ? "Enter an account number containing 6 to 18 digits." : undefined}
               readOnly={kind === "calculated"}
             />;
           } else {
             control = <span className="hr-employee-value">{(kind === "money" ? inr(value) : value) || "—"}</span>;
           }
-          return <F key={key} className={kind === "textarea" || (kind === "photo" && employee.photo) ? "hr-employee-wide" : ""} l={<>{label}{isRequired ? " *" : ""}</>}>{control}</F>;
+          return <F key={key} className={kind === "textarea" || (kind === "photo" && employee.photo) ? "hr-employee-wide" : ""} l={<>{label}{isRequired ? " *" : ""}</>}>{control}{errors[key] && <small className="hr-form-error" id={errorId} role="alert">{errors[key]}</small>}</F>;
         })}
       </div>
     </section>
@@ -624,16 +744,69 @@ function ProfileSection({ section, employee, editing, onChange, onFile, fileErro
 
 function EmployeeProfileEditor({ employee, onBack, onSave, onDocumentUploaded, onPhotoUploaded }) {
   const [form, setForm] = useState(() => employeeProfile(employee));
+  const [errors, setErrors] = useState({});
   const [fileErrors, setFileErrors] = useState({});
   const [photoStatus, setPhotoStatus] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
-  const change = (key, value) => setForm((current) => ({ ...current, [key]: value }));
+  const change = (key, value) => {
+    const next = {
+      ...form,
+      [key]: value,
+      ...(key === "exEmployee" && value !== "Yes" ? { resignationDate: "" } : {}),
+    };
+    setForm(next);
+    setSaveError("");
+    setErrors((current) => {
+      const updated = { ...current };
+      [key, ...(key === "phone" ? ["emergencyContact"] : []), ...(key === "joined" ? ["resignationDate"] : [])].forEach((field) => {
+        if (!updated[field]) return;
+        const message = employeeProfileFieldError(field, next[field], next);
+        if (message) updated[field] = message;
+        else delete updated[field];
+      });
+      if (key === "exEmployee" && value !== "Yes") delete updated.resignationDate;
+      if (key === "priorExperience" && value !== "Yes") ["priorEmployer", "priorDesignation", "priorEmploymentFrom", "priorEmploymentTo"].forEach((field) => delete updated[field]);
+      return updated;
+    });
+  };
+  const validateField = (key) => {
+    const message = employeeProfileFieldError(key, form[key], form);
+    setErrors((current) => {
+      const updated = { ...current };
+      if (message) updated[key] = message;
+      else delete updated[key];
+      return updated;
+    });
+  };
+  const validate = () => {
+    const keys = [
+      ...PROFILE_SECTIONS.flatMap((section) => section.fields.map(([key]) => key)),
+      "priorExperience", "priorEmployer", "priorDesignation", "priorEmploymentFrom", "priorEmploymentTo",
+    ];
+    const nextErrors = {};
+    keys.forEach((key) => {
+      const message = employeeProfileFieldError(key, form[key], form);
+      if (message) nextErrors[key] = message;
+    });
+    setErrors(nextErrors);
+    return Object.keys(nextErrors).length === 0;
+  };
   const upload = async (event, key, isPhoto = false) => {
     const file = event.target.files?.[0];
     if (!file) return;
-    if (isPhoto && !file.type.startsWith("image/")) {
-      setFileErrors((current) => ({ ...current, [key]: "Choose an image file." }));
+    if (isPhoto && !["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+      setFileErrors((current) => ({ ...current, [key]: "Choose a JPG, PNG, or WEBP image." }));
+      event.target.value = "";
+      return;
+    }
+    if (isPhoto && file.size > 5 * 1024 * 1024) {
+      setFileErrors((current) => ({ ...current, [key]: "Profile photo must be 5 MB or smaller." }));
+      event.target.value = "";
+      return;
+    }
+    if (!isPhoto && !["application/pdf", "image/png", "image/jpeg"].includes(file.type)) {
+      setFileErrors((current) => ({ ...current, [key]: "Choose a PDF, PNG, JPG, or JPEG document." }));
       event.target.value = "";
       return;
     }
@@ -673,7 +846,13 @@ function EmployeeProfileEditor({ employee, onBack, onSave, onDocumentUploaded, o
   };
   const save = async (event) => {
     event.preventDefault();
-    if (Object.values(fileErrors).some(Boolean)) return;
+    const formElement = event.currentTarget;
+    const valid = validate();
+    if (!valid || Object.values(fileErrors).some(Boolean)) {
+      if (Object.values(fileErrors).some(Boolean)) setSaveError("Resolve the file upload errors before saving.");
+      window.requestAnimationFrame(() => formElement.querySelector('[aria-invalid="true"]')?.focus());
+      return;
+    }
     setSaveError("");
     const next = { ...form };
     PROFILE_NUMBER_FIELDS.forEach((key) => { next[key] = Math.max(0, Number(next[key]) || 0); });
@@ -694,52 +873,61 @@ function EmployeeProfileEditor({ employee, onBack, onSave, onDocumentUploaded, o
         <h2><Pencil size={19} /> Edit Employee Profile</h2>
         <button className="hr-ghost sm" type="button" onClick={onBack}><ChevronRight size={14} className="hr-back-icon" /> Back to Profiles</button>
       </div>
-      <form onSubmit={save}>
+      <form noValidate onSubmit={save}>
         {saveError && <p className="hr-form-error" role="alert">{saveError}</p>}
+        {Object.keys(errors).length > 0 && <p className="hr-form-error hr-profile-validation-summary" role="alert">Please correct the highlighted fields before updating the employee profile.</p>}
         {PROFILE_SECTIONS.map((section) => (
-          <ProfileSection key={section.title} section={section} employee={form} editing onChange={change} onFile={upload} fileErrors={fileErrors} photoStatus={photoStatus} />
+          <ProfileSection key={section.title} section={section} employee={form} editing onChange={change} onBlur={validateField} onFile={upload} fileErrors={fileErrors} photoStatus={photoStatus} errors={errors} />
         ))}
         <section className="hr-employee-section">
           <h3><FileText size={16} /> 7. Official Documents & Attachments</h3>
           <div className="hr-document-editor-grid">
-            {PROFILE_DOCUMENTS.map(([key, label]) => (
-              <F key={key} l={label}>
-                <input type="file" aria-label={`Upload ${label}`} onChange={(event) => upload(event, key)} />
-                {(form.priorExperienceDocuments?.[key] || form.documents?.[key]) && <small className="hr-uploaded-file">{(form.priorExperienceDocuments?.[key] || form.documents?.[key]).name} · Ready</small>}
+            {PROFILE_DOCUMENTS.map(([key, label]) => {
+              const fileRecord = form.priorExperienceDocuments?.[key] || form.documents?.[key];
+              const inputId = `hr-edit-document-${key}`;
+              return <div className="hr-f" key={key}>
+                <span>{label}</span>
+                <input id={inputId} className="hr-editor-file-input" type="file" accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg" aria-label={`Upload ${label}`} onChange={(event) => upload(event, key)} />
+                <div className="hr-editor-document-picker"><button className="hr-editor-file-button" type="button" onClick={() => document.getElementById(inputId)?.click()}><Upload size={15} />{fileRecord ? "Replace file" : "Choose file"}</button><span className="hr-editor-file-name" title={fileRecord?.name}>{fileRecord?.name || "No file selected"}</span></div>
+                {fileRecord && <small className="hr-uploaded-file">{fileRecord.name} · Ready</small>}
                 {fileErrors[key] && <small className="hr-form-error" role="alert">{fileErrors[key]}</small>}
-              </F>
-            ))}
+              </div>;
+            })}
           </div>
         </section>
         <section className="hr-employee-section">
           <h3><Briefcase size={16} /> 8. Prior Experience Documents</h3>
           <div className="hr-employee-fields">
-            <F l="Prior experience">
-              <select value={form.priorExperience || "No"} onChange={(event) => change("priorExperience", event.target.value)}>
-                <option value="No">No</option><option value="Yes">Yes</option>
-              </select>
+            <div className="hr-f"><span>Prior experience</span><SalesDropdown options={[{ value: "No", label: "No" }, { value: "Yes", label: "Yes" }]} value={form.priorExperience || "No"} onChange={(event) => change("priorExperience", event.target.value)} wrapperClassName="hr-form-dropdown" className="hr-form-dropdown-trigger" menuClassName="hr-form-dropdown-menu" aria-label="Prior experience" aria-invalid={!!errors.priorExperience} /></div>
+            <F l={<>Previous employer{form.priorExperience === "Yes" ? " *" : ""}</>}>
+              <input value={form.priorEmployer || ""} onChange={(event) => change("priorEmployer", event.target.value)} onBlur={() => validateField("priorEmployer")} required={form.priorExperience === "Yes"} disabled={form.priorExperience !== "Yes"} aria-invalid={!!errors.priorEmployer} />
+              {errors.priorEmployer && <small className="hr-form-error" role="alert">{errors.priorEmployer}</small>}
             </F>
-            <F l="Previous employer">
-              <input value={form.priorEmployer || ""} onChange={(event) => change("priorEmployer", event.target.value)} disabled={form.priorExperience !== "Yes"} />
+            <F l={<>Previous designation{form.priorExperience === "Yes" ? " *" : ""}</>}>
+              <input value={form.priorDesignation || ""} onChange={(event) => change("priorDesignation", event.target.value)} onBlur={() => validateField("priorDesignation")} required={form.priorExperience === "Yes"} disabled={form.priorExperience !== "Yes"} aria-invalid={!!errors.priorDesignation} />
+              {errors.priorDesignation && <small className="hr-form-error" role="alert">{errors.priorDesignation}</small>}
             </F>
-            <F l="Previous designation">
-              <input value={form.priorDesignation || ""} onChange={(event) => change("priorDesignation", event.target.value)} disabled={form.priorExperience !== "Yes"} />
-            </F>
-            <F l="Employment from">
-              <input type="date" value={form.priorEmploymentFrom || ""} onChange={(event) => change("priorEmploymentFrom", event.target.value)} disabled={form.priorExperience !== "Yes"} />
-            </F>
-            <F l="Employment to">
-              <input type="date" value={form.priorEmploymentTo || ""} onChange={(event) => change("priorEmploymentTo", event.target.value)} disabled={form.priorExperience !== "Yes"} />
-            </F>
+            <div className="hr-f"><span>Employment from{form.priorExperience === "Yes" ? " *" : ""}</span>
+              <CallListDatePicker id="hr-edit-priorEmploymentFrom" className="hr-form-date-picker" triggerClassName="hr-form-date-trigger" popoverClassName="hr-form-calendar-popover" popoverWidth={350} popoverHeight={370} label="Employment from" hideLabel value={form.priorEmploymentFrom || ""} min="1900-01-01" max={TODAY} disabled={form.priorExperience !== "Yes"} required={form.priorExperience === "Yes"} ariaInvalid={!!errors.priorEmploymentFrom} onChange={(value) => change("priorEmploymentFrom", value)} />
+              {errors.priorEmploymentFrom && <small className="hr-form-error" role="alert">{errors.priorEmploymentFrom}</small>}
+            </div>
+            <div className="hr-f"><span>Employment to{form.priorExperience === "Yes" ? " *" : ""}</span>
+              <CallListDatePicker id="hr-edit-priorEmploymentTo" className="hr-form-date-picker" triggerClassName="hr-form-date-trigger" popoverClassName="hr-form-calendar-popover" popoverWidth={350} popoverHeight={370} label="Employment to" hideLabel value={form.priorEmploymentTo || ""} min={form.priorEmploymentFrom || "1900-01-01"} max={TODAY} disabled={form.priorExperience !== "Yes"} required={form.priorExperience === "Yes"} ariaInvalid={!!errors.priorEmploymentTo} onChange={(value) => change("priorEmploymentTo", value)} />
+              {errors.priorEmploymentTo && <small className="hr-form-error" role="alert">{errors.priorEmploymentTo}</small>}
+            </div>
           </div>
           <div className="hr-document-editor-grid">
-            {PRIOR_EXPERIENCE_DOCUMENTS.map(([key, label]) => (
-              <F key={key} l={label}>
-                <input type="file" aria-label={`Upload ${label}`} disabled={form.priorExperience !== "Yes"} onChange={(event) => upload(event, key)} />
-                {form.documents?.[key] && <small className="hr-uploaded-file">{form.documents[key].name} · Ready to save</small>}
+            {PRIOR_EXPERIENCE_DOCUMENTS.map(([key, label]) => {
+              const fileRecord = form.priorExperienceDocuments?.[key] || form.documents?.[key];
+              const inputId = `hr-edit-prior-document-${key}`;
+              return <div className="hr-f" key={key}>
+                <span>{label}</span>
+                <input id={inputId} className="hr-editor-file-input" type="file" accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg" aria-label={`Upload ${label}`} disabled={form.priorExperience !== "Yes"} onChange={(event) => upload(event, key)} />
+                <div className="hr-editor-document-picker"><button className="hr-editor-file-button" type="button" disabled={form.priorExperience !== "Yes"} onClick={() => document.getElementById(inputId)?.click()}><Upload size={15} />{fileRecord ? "Replace file" : "Choose file"}</button><span className="hr-editor-file-name" title={fileRecord?.name}>{fileRecord?.name || "No file selected"}</span></div>
+                {fileRecord && <small className="hr-uploaded-file">{fileRecord.name} · Ready</small>}
                 {fileErrors[key] && <small className="hr-form-error" role="alert">{fileErrors[key]}</small>}
-              </F>
-            ))}
+              </div>;
+            })}
           </div>
         </section>
         {Object.values(fileErrors).some(Boolean) && <p className="hr-form-error" role="alert">Resolve the file upload errors before saving.</p>}
@@ -1021,6 +1209,7 @@ function CreateProfile({ c: { db, upd, go } }) {
   const [showPassword, setShowPassword] = useState(false);
   const [photoError, setPhotoError] = useState("");
   const [photoFile, setPhotoFile] = useState(null);
+  const [photoName, setPhotoName] = useState("");
   const [errors, setErrors] = useState({});
   const [submitError, setSubmitError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -1038,65 +1227,111 @@ function CreateProfile({ c: { db, upd, go } }) {
     joined: "Select a date of joining.",
     username: "Enter a username.",
     password: "Enter a password.",
-    state: "Enter a state.",
+    state: "Select a state or union territory.",
     branch: "Enter a branch.",
     branchCode: "Enter a branch code.",
     address: "Enter the employee's address.",
   };
-  const getFieldError = (key, value) => {
-    if (requiredFields[key] && !value.trim()) return requiredFields[key];
-    if (key === "email" && value.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim())) {
+  const getFieldError = (key, value, values = form) => {
+    const text = String(value ?? "");
+    const trimmed = text.trim();
+    if (requiredFields[key] && !trimmed) return requiredFields[key];
+    if (key === "name" && trimmed && (trimmed.length < 2 || trimmed.length > 80 || !/^[\p{L}][\p{L}\p{M}.' -]*$/u.test(trimmed))) {
+      return "Enter a valid full name using letters, spaces, apostrophes, periods, or hyphens.";
+    }
+    if (key === "email" && trimmed && (trimmed.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(trimmed))) {
       return "Enter a valid email address.";
     }
-    if (key === "phone" && value.trim() && !/^[6-9]\d{9}$/.test(value.trim())) {
+    if (key === "phone" && trimmed && !/^[6-9]\d{9}$/.test(trimmed)) {
       return "Contact number must be 10 digits and start with 6, 7, 8, or 9.";
     }
-    if (key === "emergencyContact" && value.trim() && !/^[6-9]\d{9}$/.test(value.trim())) {
+    if (key === "emergencyContact" && trimmed && !/^[6-9]\d{9}$/.test(trimmed)) {
       return "Emergency contact must be 10 digits and start with 6, 7, 8, or 9.";
     }
-    if (key === "username" && value.trim() && !/^[a-zA-Z0-9_]+$/.test(value.trim())) {
-      return "Username can only contain letters, numbers, and underscores.";
+    if (key === "emergencyContact" && trimmed && trimmed === String(values.phone || "").trim()) {
+      return "Emergency contact must be different from the employee's contact number.";
     }
-    if (key === "password" && value.length > 0 && value.length < 6) {
-      return "Password must be at least 6 characters.";
+    if (key === "maritalStatus" && trimmed && !["Single", "Married", "Divorced", "Widowed"].includes(trimmed)) {
+      return "Select a valid marital status.";
+    }
+    if (key === "education" && trimmed.length > 120) return "Education must be 120 characters or fewer.";
+    if (key === "dept" && trimmed && !DEPTS.includes(trimmed)) return "Select a valid department.";
+    if (key === "desig" && trimmed && (trimmed.length < 2 || trimmed.length > 80 || /[<>\u0000-\u001f]/.test(trimmed))) {
+      return "Enter a valid position between 2 and 80 characters.";
+    }
+    if (key === "joined" && trimmed && (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed) || trimmed < "1900-01-01" || trimmed > TODAY)) {
+      return "Date of joining must be a valid date up to today.";
+    }
+    if (key === "username" && trimmed && !/^[a-zA-Z][a-zA-Z0-9_]{2,29}$/.test(trimmed)) {
+      return "Username must start with a letter and contain 3–30 letters, numbers, or underscores.";
+    }
+    if (key === "password" && text && (text.length < 8 || text.length > 64 || !/[A-Za-z]/.test(text) || !/\d/.test(text))) {
+      return "Password must contain 8–64 characters with at least one letter and one number.";
+    }
+    if (key === "state" && trimmed && !INDIAN_REGIONS.has(trimmed)) return "Select a valid Indian state or union territory.";
+    if (key === "branch" && trimmed && (trimmed.length < 2 || trimmed.length > 60 || !/^[\p{L}\p{M}0-9.' -]+$/u.test(trimmed))) {
+      return "Enter a valid branch name between 2 and 60 characters.";
+    }
+    if (key === "branchCode" && trimmed && !/^[A-Z0-9][A-Z0-9-]{2,19}$/.test(trimmed)) {
+      return "Branch code must contain 3–20 uppercase letters, numbers, or hyphens.";
+    }
+    if (key === "address" && trimmed && (trimmed.length < 10 || trimmed.length > 300 || /[\u0000-\u001f]/.test(trimmed))) {
+      return "Enter a complete address between 10 and 300 characters.";
+    }
+    if (key === "exEmployee" && !["Yes", "No"].includes(trimmed)) return "Select a valid employment status.";
+    if (key === "resignationDate" && values.exEmployee === "Yes") {
+      if (!trimmed) return "Select the employee's last working day.";
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed) || trimmed > TODAY) return "Last working day must be a valid date up to today.";
+      if (values.joined && trimmed < values.joined) return "Last working day cannot be before the date of joining.";
     }
     return "";
   };
-  const set = (key) => (event) => setForm((current) => ({ ...current, [key]: event.target.value }));
-  const updateField = (key) => (event) => {
-    const { value } = event.target;
+  const updateField = (key, normalize = (nextValue) => nextValue) => (event) => {
+    const value = normalize(event.target.value);
+    const nextForm = { ...form, [key]: value };
     setSubmitError("");
-    setForm((current) => ({ ...current, [key]: value }));
+    setForm(nextForm);
     setErrors((current) => {
       if (!current[key]) return current;
-      const message = getFieldError(key, value);
+      const message = getFieldError(key, value, nextForm);
       return message ? { ...current, [key]: message } : Object.fromEntries(
         Object.entries(current).filter(([field]) => field !== key),
       );
     });
   };
+  const validateField = (key) => {
+    const message = getFieldError(key, form[key], form);
+    setErrors((current) => message
+      ? { ...current, [key]: message }
+      : Object.fromEntries(Object.entries(current).filter(([field]) => field !== key)));
+  };
   const validate = () => {
     const nextErrors = {};
-    Object.keys(requiredFields).forEach((key) => {
-      const message = getFieldError(key, form[key]);
+    [...Object.keys(requiredFields), "maritalStatus", "education", "exEmployee", "resignationDate"].forEach((key) => {
+      const message = getFieldError(key, form[key], form);
       if (message) nextErrors[key] = message;
     });
-    if (form.exEmployee === "Yes" && !form.resignationDate) {
-      nextErrors.resignationDate = "Select the employee's last working day.";
-    }
 
     setErrors(nextErrors);
     return Object.keys(nextErrors).length === 0;
   };
   const fieldError = (key) => errors[key] && (
-    <small className="hr-form-error" id={`hr-profile-${key}-error`}>{errors[key]}</small>
+    <small className="hr-form-error" id={`hr-profile-${key}-error`} role="alert">{errors[key]}</small>
   );
   const selectPhoto = async (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
-    if (!file.type.startsWith("image/")) {
-      setPhotoError("Choose an image file.");
+    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+      setPhotoError("Choose a JPG, PNG, or WEBP image.");
       setPhotoFile(null);
+      setPhotoName("");
+      event.target.value = "";
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setPhotoError("Profile photo must be 5 MB or smaller.");
+      setPhotoFile(null);
+      setPhotoName("");
       event.target.value = "";
       return;
     }
@@ -1109,12 +1344,15 @@ function CreateProfile({ c: { db, upd, go } }) {
           return;
         }
         setPhotoFile(compressedFile);
+        setPhotoName(file.name);
         setForm((current) => ({ ...current, photo: reader.result }));
         setPhotoError("");
       };
       reader.onerror = () => setPhotoError("Unable to read this image. Please choose another file.");
       reader.readAsDataURL(compressedFile);
     } catch (error) {
+      setPhotoFile(null);
+      setPhotoName("");
       setPhotoError(error instanceof Error ? error.message : "Unable to process this image. Please choose another file.");
     }
   };
@@ -1122,7 +1360,13 @@ function CreateProfile({ c: { db, upd, go } }) {
   const saveProfile = async (event) => {
     event.preventDefault();
     setSubmitError("");
-    if (!validate() || saving) return;
+    const formElement = event.currentTarget;
+    const valid = validate();
+    if (!valid || photoError || saving) {
+      if (photoError) setSubmitError("Choose a valid profile photo or clear the invalid file selection.");
+      window.requestAnimationFrame(() => formElement.querySelector('[aria-invalid="true"]')?.focus());
+      return;
+    }
     const profile = { ...form };
     [...Object.keys(requiredFields), "maritalStatus", "education"].forEach((key) => {
       profile[key] = profile[key].trim();
@@ -1201,40 +1445,59 @@ function CreateProfile({ c: { db, upd, go } }) {
       <form className="hr-form hr-profile-form" noValidate onSubmit={saveProfile}>
         {submitError && <p ref={submitErrorRef} className="hr-form-error hr-profile-validation-summary" role="alert">{submitError}</p>}
         {Object.keys(errors).length > 0 && <p className="hr-form-error hr-profile-validation-summary" role="alert">Please correct the highlighted fields before creating the profile.</p>}
-        <F l="Full Name *"><input required autoComplete="name" placeholder="Enter full name" value={form.name} onChange={updateField("name")} aria-invalid={!!errors.name} aria-describedby={errors.name ? "hr-profile-name-error" : undefined} />{fieldError("name")}</F>
-        <F l="Email *"><input required type="email" autoComplete="email" placeholder="example@email.com" value={form.email} onChange={updateField("email")} aria-invalid={!!errors.email} aria-describedby={errors.email ? "hr-profile-email-error" : undefined} />{fieldError("email")}</F>
-        <F l="Contact Number *"><input required type="tel" inputMode="numeric" pattern="[0-9]{10}" maxLength={10} title="Enter a 10-digit phone number." autoComplete="tel" placeholder="Enter 10-digit phone number" value={form.phone} onChange={updateField("phone")} aria-invalid={!!errors.phone} aria-describedby={errors.phone ? "hr-profile-phone-error" : undefined} />{fieldError("phone")}</F>
-        <F l="Emergency Contact *"><input required type="tel" inputMode="numeric" pattern="[0-9]{10}" maxLength={10} title="Enter a 10-digit phone number." placeholder="Enter 10-digit emergency number" value={form.emergencyContact} onChange={updateField("emergencyContact")} aria-invalid={!!errors.emergencyContact} aria-describedby={errors.emergencyContact ? "hr-profile-emergencyContact-error" : undefined} />{fieldError("emergencyContact")}</F>
-        <F l="Marital Status"><select value={form.maritalStatus} onChange={set("maritalStatus")}><option value="">Select status (Optional)</option><option>Single</option><option>Married</option><option>Divorced</option><option>Widowed</option></select></F>
-        <F l="Education"><input placeholder="e.g. B.Tech, MBA, MCA (Optional)" value={form.education} onChange={set("education")} /></F>
-        <F l="Department *"><select required value={form.dept} onChange={updateField("dept")} aria-invalid={!!errors.dept} aria-describedby={errors.dept ? "hr-profile-dept-error" : undefined}><option value="">Select department</option>{DEPTS.map((department) => <option key={department}>{department}</option>)}</select>{fieldError("dept")}</F>
-        <F l="Position *"><input required placeholder="e.g. Manager, Executive" value={form.desig} onChange={updateField("desig")} aria-invalid={!!errors.desig} aria-describedby={errors.desig ? "hr-profile-desig-error" : undefined} />{fieldError("desig")}</F>
-        <F l="Date of Joining *"><input required type="date" value={form.joined} onChange={updateField("joined")} aria-invalid={!!errors.joined} aria-describedby={errors.joined ? "hr-profile-joined-error" : undefined} />{fieldError("joined")}</F>
-        <F l="Ex-Employee"><select value={form.exEmployee} onChange={set("exEmployee")}><option value="No">No</option><option value="Yes">Yes</option></select></F>
-        {form.exEmployee === "Yes" && <F l="Last Working Day (Optional)"><input type="date" value={form.resignationDate} onChange={set("resignationDate")} />{fieldError("resignationDate")}</F>}
-        <F l="Profile Photo">
-          <div className="hr-photo-control">
-            <input type="file" accept="image/*" onChange={selectPhoto} aria-label="Choose profile photo" />
-            {form.photo && <img className="hr-photo-preview" src={form.photo} alt="Selected profile preview" />}
+        <F l="Full Name *"><input required autoComplete="name" maxLength={80} placeholder="Enter full name" value={form.name} onChange={updateField("name")} onBlur={() => validateField("name")} aria-invalid={!!errors.name} aria-describedby={errors.name ? "hr-profile-name-error" : undefined} />{fieldError("name")}</F>
+        <F l="Email *"><input required type="email" autoComplete="email" maxLength={254} placeholder="example@email.com" value={form.email} onChange={updateField("email", (value) => value.replace(/\s/g, ""))} onBlur={() => validateField("email")} aria-invalid={!!errors.email} aria-describedby={errors.email ? "hr-profile-email-error" : undefined} />{fieldError("email")}</F>
+        <F l="Contact Number *">
+          <div className={`hr-profile-phone-control${errors.phone ? " is-invalid" : ""}`}>
+            <span className="hr-profile-phone-prefix" aria-hidden="true"><span className="hr-india-flag" /><b>+91</b></span>
+            <input required type="tel" inputMode="numeric" pattern="[6-9][0-9]{9}" maxLength={10} title="Enter a valid 10-digit Indian mobile number." autoComplete="tel" placeholder="Enter 10-digit mobile number" value={form.phone} onChange={updateField("phone", (value) => value.replace(/\D/g, "").slice(0, 10))} onBlur={() => validateField("phone")} aria-invalid={!!errors.phone} aria-describedby={errors.phone ? "hr-profile-phone-error" : undefined} />
           </div>
-          {photoError && <small className="hr-form-error" role="alert">{photoError}</small>}
+          {fieldError("phone")}
         </F>
-        <F l="Username *"><input required autoComplete="username" placeholder="Enter new username" value={form.username} onChange={updateField("username")} aria-invalid={!!errors.username} aria-describedby={errors.username ? "hr-profile-username-error" : undefined} />{fieldError("username")}</F>
-        <F l="Password *">
-          <div className="hr-password-control">
-            <input required type={showPassword ? "text" : "password"} autoComplete="new-password" minLength={6} aria-describedby={errors.password ? "hr-profile-password-error" : "hr-password-hint"} placeholder="Enter new password (min 6 characters)" value={form.password} onChange={updateField("password")} aria-invalid={!!errors.password} />
-            <button className="hr-password-toggle" type="button" aria-label={showPassword ? "Hide password" : "Show password"} aria-pressed={showPassword} onClick={() => setShowPassword((visible) => !visible)}>
-              {showPassword ? <EyeOff size={17} /> : <Eye size={17} />}
+        <F l="Emergency Contact *">
+          <div className={`hr-profile-phone-control${errors.emergencyContact ? " is-invalid" : ""}`}>
+            <span className="hr-profile-phone-prefix" aria-hidden="true"><span className="hr-india-flag" /><b>+91</b></span>
+            <input required type="tel" inputMode="numeric" pattern="[6-9][0-9]{9}" maxLength={10} title="Enter a valid 10-digit Indian mobile number." autoComplete="tel" placeholder="Enter emergency mobile number" value={form.emergencyContact} onChange={updateField("emergencyContact", (value) => value.replace(/\D/g, "").slice(0, 10))} onBlur={() => validateField("emergencyContact")} aria-invalid={!!errors.emergencyContact} aria-describedby={errors.emergencyContact ? "hr-profile-emergencyContact-error" : undefined} />
+          </div>
+          {fieldError("emergencyContact")}
+        </F>
+        <div className="hr-f"><span>Marital Status</span><SalesDropdown options={[{ value: "", label: "Select status (Optional)" }, ...["Single", "Married", "Divorced", "Widowed"].map((status) => ({ value: status, label: status }))]} value={form.maritalStatus} onChange={updateField("maritalStatus")} wrapperClassName="hr-form-dropdown" className="hr-form-dropdown-trigger" menuClassName="hr-form-dropdown-menu" aria-label="Marital Status" aria-invalid={!!errors.maritalStatus} aria-describedby={errors.maritalStatus ? "hr-profile-maritalStatus-error" : undefined} />{fieldError("maritalStatus")}</div>
+        <F l="Education"><input maxLength={120} placeholder="e.g. B.Tech, MBA, MCA (Optional)" value={form.education} onChange={updateField("education")} onBlur={() => validateField("education")} />{fieldError("education")}</F>
+        <div className="hr-f"><span>Department *</span><SalesDropdown required options={[{ value: "", label: "Select department" }, ...DEPTS.map((department) => ({ value: department, label: department }))]} value={form.dept} onChange={updateField("dept")} wrapperClassName="hr-form-dropdown" className="hr-form-dropdown-trigger" menuClassName="hr-form-dropdown-menu" aria-label="Department" aria-invalid={!!errors.dept} aria-describedby={errors.dept ? "hr-profile-dept-error" : undefined} />{fieldError("dept")}</div>
+        <F l="Position *"><input required maxLength={80} placeholder="e.g. Manager, Executive" value={form.desig} onChange={updateField("desig")} onBlur={() => validateField("desig")} aria-invalid={!!errors.desig} aria-describedby={errors.desig ? "hr-profile-desig-error" : undefined} />{fieldError("desig")}</F>
+        <div className="hr-f"><span>Date of Joining *</span><CallListDatePicker id="hr-profile-joined" className="hr-form-date-picker" triggerClassName="hr-form-date-trigger" popoverClassName="hr-form-calendar-popover" popoverWidth={350} popoverHeight={370} label="Date of Joining" hideLabel value={form.joined} min="1900-01-01" max={TODAY} required ariaInvalid={!!errors.joined} ariaDescribedBy={errors.joined ? "hr-profile-joined-error" : undefined} onChange={(value) => updateField("joined")({ target: { value } })} />{fieldError("joined")}</div>
+        <div className="hr-f"><span>Ex-Employee</span><SalesDropdown options={[{ value: "No", label: "No" }, { value: "Yes", label: "Yes" }]} value={form.exEmployee} onChange={updateField("exEmployee")} wrapperClassName="hr-form-dropdown" className="hr-form-dropdown-trigger" menuClassName="hr-form-dropdown-menu" aria-label="Ex-Employee" aria-invalid={!!errors.exEmployee} />{fieldError("exEmployee")}</div>
+        {form.exEmployee === "Yes" && <div className="hr-f"><span>Last Working Day *</span><CallListDatePicker id="hr-profile-resignationDate" className="hr-form-date-picker" triggerClassName="hr-form-date-trigger" popoverClassName="hr-form-calendar-popover" popoverWidth={350} popoverHeight={370} label="Last Working Day" hideLabel value={form.resignationDate} min={form.joined || "1900-01-01"} max={TODAY} required ariaInvalid={!!errors.resignationDate} ariaDescribedBy={errors.resignationDate ? "hr-profile-resignationDate-error" : undefined} onChange={(value) => updateField("resignationDate")({ target: { value } })} />{fieldError("resignationDate")}</div>}
+        <div className="hr-f">
+          <span>Profile Photo</span>
+          <div className={`hr-photo-control${photoError ? " is-invalid" : ""}`}>
+            {form.photo ? <img className="hr-photo-preview" src={form.photo} alt="Selected profile preview" /> : <div className="hr-photo-placeholder" aria-hidden="true"><UserCircle size={32} /></div>}
+            <div className="hr-photo-picker-copy">
+              <input id="hr-profile-photo" className="hr-photo-input" type="file" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" onChange={selectPhoto} aria-label="Choose profile photo" aria-invalid={!!photoError} aria-describedby={photoError ? "hr-profile-photo-error" : "hr-profile-photo-hint"} />
+              <label className="hr-photo-picker" htmlFor="hr-profile-photo"><Upload size={16} />{photoFile ? "Change photo" : "Choose photo"}</label>
+              <span className="hr-photo-filename" title={photoName || undefined}>{photoName || "No photo selected"}</span>
+              <small id="hr-profile-photo-hint">JPG, PNG or WEBP · maximum 5 MB</small>
+            </div>
+          </div>
+          {photoError && <small className="hr-form-error" id="hr-profile-photo-error" role="alert">{photoError}</small>}
+        </div>
+        <F l="Username *"><input required autoComplete="username" autoCapitalize="none" spellCheck={false} minLength={3} maxLength={30} placeholder="Enter new username" value={form.username} onChange={updateField("username", (value) => value.replace(/\s/g, ""))} onBlur={() => validateField("username")} aria-invalid={!!errors.username} aria-describedby={errors.username ? "hr-profile-username-error" : undefined} />{fieldError("username")}</F>
+        <div className="hr-f">
+          <label htmlFor="hr-profile-password">Password *</label>
+          <div className={`hr-password-control${errors.password ? " is-invalid" : ""}`}>
+            <input id="hr-profile-password" required type={showPassword ? "text" : "password"} autoComplete="new-password" minLength={8} maxLength={64} aria-describedby={errors.password ? "hr-profile-password-error" : "hr-password-hint"} placeholder="Enter a strong password" value={form.password} onChange={updateField("password")} onBlur={() => validateField("password")} aria-invalid={!!errors.password} />
+            <button className={`hr-password-toggle${showPassword ? " is-visible" : ""}`} type="button" title={showPassword ? "Hide password" : "Show password"} aria-label={showPassword ? "Hide password" : "Show password"} aria-pressed={showPassword} onClick={() => setShowPassword((visible) => !visible)}>
+              {showPassword ? <Eye size={18} /> : <EyeOff size={18} />}
             </button>
           </div>
-          {errors.password ? fieldError("password") : <small id="hr-password-hint">Minimum 6 characters required.</small>}
-        </F>
-        <div className="hr-profile-triple">
-          <F l="State *"><input required autoComplete="address-level1" placeholder="Enter state" value={form.state} onChange={updateField("state")} aria-invalid={!!errors.state} aria-describedby={errors.state ? "hr-profile-state-error" : undefined} />{fieldError("state")}</F>
-          <F l="Branch *"><input required value={form.branch} onChange={updateField("branch")} aria-invalid={!!errors.branch} aria-describedby={errors.branch ? "hr-profile-branch-error" : undefined} />{fieldError("branch")}</F>
-          <F l="Branch Code *"><input required value={form.branchCode} onChange={updateField("branchCode")} aria-invalid={!!errors.branchCode} aria-describedby={errors.branchCode ? "hr-profile-branchCode-error" : undefined} />{fieldError("branchCode")}</F>
+          {errors.password ? fieldError("password") : <small id="hr-password-hint">Use 8–64 characters with at least one letter and one number.</small>}
         </div>
-        <F l="Address *"><textarea required autoComplete="street-address" placeholder="Enter complete address" value={form.address} onChange={updateField("address")} aria-invalid={!!errors.address} aria-describedby={errors.address ? "hr-profile-address-error" : undefined} />{fieldError("address")}</F>
+        <div className="hr-profile-triple">
+          <div className="hr-f"><span>State / Union Territory *</span><SalesDropdown required searchable options={[{ key: "state-empty", value: "", label: "Select state or union territory" }, { key: "state-heading", value: "__states", label: "States", disabled: true, className: "hr-dropdown-heading" }, ...INDIAN_STATES.map((state) => ({ key: `state-${state}`, value: state, label: state })), { key: "territory-heading", value: "__territories", label: "Union Territories", disabled: true, className: "hr-dropdown-heading" }, ...INDIAN_UNION_TERRITORIES.map((territory) => ({ key: `territory-${territory}`, value: territory, label: territory }))]} value={form.state} onChange={updateField("state")} wrapperClassName="hr-form-dropdown" className="hr-form-dropdown-trigger" menuClassName="hr-form-dropdown-menu" aria-label="State or Union Territory" aria-invalid={!!errors.state} aria-describedby={errors.state ? "hr-profile-state-error" : undefined} />{fieldError("state")}</div>
+          <F l="Branch *"><input required maxLength={60} value={form.branch} onChange={updateField("branch")} onBlur={() => validateField("branch")} aria-invalid={!!errors.branch} aria-describedby={errors.branch ? "hr-profile-branch-error" : undefined} />{fieldError("branch")}</F>
+          <F l="Branch Code *"><input required autoCapitalize="characters" maxLength={20} value={form.branchCode} onChange={updateField("branchCode", (value) => value.toUpperCase().replace(/[^A-Z0-9-]/g, ""))} onBlur={() => validateField("branchCode")} aria-invalid={!!errors.branchCode} aria-describedby={errors.branchCode ? "hr-profile-branchCode-error" : undefined} />{fieldError("branchCode")}</F>
+        </div>
+        <F l="Address *"><textarea required autoComplete="street-address" minLength={10} maxLength={300} placeholder="Enter complete address" value={form.address} onChange={updateField("address")} onBlur={() => validateField("address")} aria-invalid={!!errors.address} aria-describedby={errors.address ? "hr-profile-address-error" : undefined} />{fieldError("address")}</F>
         <div className="hr-full hr-form-actions"><button className="hr-btn" type="submit" disabled={saving}>{saving ? "Saving to shared directory…" : "Create profile"}</button></div>
       </form>
     </Card>
@@ -1577,6 +1840,9 @@ function SalaryReport({ c: { db } }) {
     && `${employee.id} ${employee.name} ${employee.dept} ${employee.desig} ${employee.bankName || ""} ${employee.accountNumber || ""} ${employee.ifscCode || ""}`.toLowerCase().includes(appliedFilters.query.trim().toLowerCase())
   ));
   const reportMonth = appliedFilters.month || MONTH;
+  const reportMonthStart = `${reportMonth}-01`;
+  const reportMonthEnd = `${reportMonth}-${String(new Date(...reportMonth.split("-").map(Number), 0).getDate()).padStart(2, "0")}`;
+  const { data: salaryAttendanceData, loading: salaryAttendanceLoading, error: salaryAttendanceError } = usePayrollAttendanceMonth(reportMonth);
   const salarySourceDate = P(`${reportMonth}-01`);
   salarySourceDate.setMonth(salarySourceDate.getMonth() - 1);
   const salarySourceMonth = iso(salarySourceDate).slice(0, 7);
@@ -1586,7 +1852,33 @@ function SalaryReport({ c: { db } }) {
     .map((payroll) => [String(payroll.employeeId), payroll]));
   const attendance = attendanceLookup(db);
   const rows = filteredRows.map((employee) => {
-    const days = salaryAttendanceSummary(db, employee, reportMonth, attendance);
+    const reportEmployee = joinDateOf(employee) > reportMonthEnd
+      ? { ...employee, joined: reportMonthStart, joiningDate: reportMonthStart }
+      : employee;
+    const legacyDays = salaryAttendanceSummary(db, reportEmployee, reportMonth, attendance);
+    const attendanceRows = salaryAttendanceData
+      ? employeeAttendanceRows(reportEmployee, reportMonth, salaryAttendanceData, { excludeTestData: true })
+      : [];
+    const yearRows = salaryAttendanceData
+      ? employeeAttendanceYearRows(reportEmployee, reportMonth, salaryAttendanceData, { excludeTestData: true })
+      : [];
+    const payrollDays = salaryAttendanceData
+      ? calculateAttendancePayroll({ employee: reportEmployee, month: reportMonth, rows: attendanceRows, yearRows })
+      : null;
+    const days = payrollDays ? {
+      daysInMonth: payrollDays.daysInMonth,
+      employedDays: payrollDays.employedDays,
+      present: payrollDays.presentDays,
+      absent: payrollDays.absentDays,
+      leaveDays: payrollDays.leaveDays,
+      paidLeaveDays: payrollDays.paidLeaveDays,
+      unpaidLeaveDays: payrollDays.deductedLeaveDays,
+      holidayDays: payrollDays.holidayDays,
+      deductedDays: payrollDays.classifiedUnpaidDays,
+      payableDays: payrollDays.payableDays,
+      paidLeaveBalance: payrollDays.paidLeaveBalance,
+      accruedPaidLeave: payrollDays.accruedPaidLeave,
+    } : legacyDays;
     const previousPayroll = previousMonthPayrolls.get(String(employee.id));
     const baseSalary = Math.max(0, Number(previousPayroll?.salary ?? employee.salary) || 0);
     const hrm = Math.max(0, Number(previousPayroll?.hra ?? employee.hrm) || 0);
@@ -1594,12 +1886,12 @@ function SalaryReport({ c: { db } }) {
     const bonus = Math.max(0, Number(previousPayroll?.bonus ?? employee.bonus) || 0);
     const incentive = Math.max(0, Number(previousPayroll?.incentive ?? employee.incentive) || 0);
     const gross = baseSalary + hrm + otherAllowance + bonus + incentive;
-    const oneDaySalary = days.daysInMonth ? baseSalary / days.daysInMonth : 0;
-    const attendanceDeduction = oneDaySalary * (days.absent + days.unpaidLeaveDays);
-    const nonEmployedDeduction = oneDaySalary * (days.daysInMonth - days.employedDays);
     const pf = Math.max(0, Number(previousPayroll?.pf ?? employee.pf) || 0);
     const tax = Math.max(0, Number(previousPayroll?.tax ?? employee.taxDeduction) || 0);
-    const deductions = attendanceDeduction + nonEmployedDeduction + pf + tax;
+    const salaryPay = calculateSalaryReportPay({ baseSalary, payableDays: days.payableDays, daysInMonth: days.daysInMonth, pf, tax });
+    const attendanceDeduction = salaryPay.basicSalaryDeduction;
+    const nonEmployedDeduction = 0;
+    const deductions = salaryPay.deductions;
     return {
       ...employee,
       ...days,
@@ -1632,7 +1924,7 @@ function SalaryReport({ c: { db } }) {
     "Basic Salary": row.baseSalary,
     "Salary Source": row.salarySourceMonth === "profile" ? "Employee profile" : row.salarySourceMonth,
     Present: `${row.present} days`,
-    "Absent / Leave": `${row.absent + row.leaveDays} days (${row.absent} absent; ${row.paidLeaveDays} paid, ${row.unpaidLeaveDays} deducted)`,
+    "Absent / Leave": `${row.absent + row.leaveDays} days (${row.absent} absent; ${row.paidLeaveDays} paid, ${row.unpaidLeaveDays} deducted; ${row.paidLeaveBalance || 0} balance)`,
     Holiday: row.holidayDays,
     Payable: `${row.payableDays} / ${row.daysInMonth}`,
     Bonus: row.bonus,
@@ -1690,6 +1982,8 @@ function SalaryReport({ c: { db } }) {
         </div>
       </section>
       <Card title="Salary report" right={<span className="hr-count">{rows.length} employees · {reportMonth}</span>}>
+        {salaryAttendanceLoading && <p className="hr-attendance-load-state">Loading attendance and carried paid-leave balances…</p>}
+        {salaryAttendanceError && <p className="hr-form-error" role="status">Live attendance could not be loaded. The report is showing the locally available attendance data.</p>}
         {rows.length ? <div className="hr-tw hr-salary-table-wrap"><table className="hr-t hr-salary-table">
           <thead><tr>{["S.N", "Employee", "Bank details", "Basic salary", "Present", "Absent / Leave", "Holiday", "Payable", "Earnings", "Deductions", "Net payable"].map((heading) => <th key={heading}>{heading}</th>)}</tr></thead>
           <tbody>{rows.map((row, index) => <tr key={row.id}>
@@ -1698,7 +1992,7 @@ function SalaryReport({ c: { db } }) {
             <td data-label="Bank details" className="hr-salary-detail"><strong>{row.bankName || "—"}</strong><small>A/C {row.accountNumber || "—"}</small><small>IFSC {row.ifscCode || "—"}</small></td>
             <td data-label="Basic salary" className="hr-salary-detail"><strong>{money(row.baseSalary)}</strong><small>{row.salarySourceMonth === "profile" ? "Profile salary" : salarySourceLabel}</small></td>
             <td data-label="Present" className="hr-salary-present">{row.present} days</td>
-            <td data-label="Absent / Leave" className="hr-salary-leave"><span>{row.absent + row.leaveDays} days</span><small>{row.absent} absent · {row.paidLeaveDays} paid · {row.unpaidLeaveDays} deducted</small></td>
+            <td data-label="Absent / Leave" className="hr-salary-leave"><span>{row.absent + row.leaveDays} days</span><small>{row.absent} absent · {row.paidLeaveDays} paid · {row.unpaidLeaveDays} deducted</small><small>{row.paidLeaveBalance || 0} paid leave balance</small></td>
             <td data-label="Holiday" className="hr-salary-holiday">{row.holidayDays} days</td>
             <td data-label="Payable">{row.payableDays} / {row.daysInMonth}</td>
             <td data-label="Earnings" className="hr-salary-detail"><small>Bonus {money(row.bonus)}</small><small>Incentive {money(row.incentive)}</small><small>Allowances {money(row.hrm + row.otherAllowance)}</small></td>
@@ -1948,7 +2242,8 @@ function Payroll({ c: { db, upd } }) {
   const calculatePayroll = (employee, month) => {
     if (!attendanceData) throw new Error("Attendance must be loaded before calculating a payroll draft.");
     const attendanceRows = employeeAttendanceRows(employee, month, attendanceData, { excludeTestData: true });
-    const attendancePayroll = calculateAttendancePayroll({ employee, month, rows: attendanceRows });
+    const yearRows = employeeAttendanceYearRows(employee, month, attendanceData, { excludeTestData: true });
+    const attendancePayroll = calculateAttendancePayroll({ employee, month, rows: attendanceRows, yearRows });
     const salary = amount(employee.salary);
     const hra = amount(employee.hrm);
     const allowances = amount(employee.otherAllowance);
@@ -3632,19 +3927,32 @@ function SettingsPage({ c: { db, upd, setDb, user } }) {
 }
 
 /* ================= App shell ================= */
-const NAV = [
-  { label: "Dashboard", icon: LayoutGrid },
-  { label: "Employee Management", icon: Users, kids: [["Create Profile", UserPlus], ["Employee Profiles", Users], ["Ex Employee Profiles", UserX], ["View All Employee", CreditCard], ["Salary Report", FileText], ["ID Card", CreditCard], ["Payroll System", Wallet]] },
-  { label: "Attendance Management", icon: CalendarCheck, kids: [["Mark Attendance", Check], ["Attendance Report", FileText], ["All Attendance Report", Users], ["Mark Attendance All", UserCheck], ["Leave Request", CalendarClock], ["View All Leave Request", Briefcase]] },
-  { label: "Task Management", icon: ListChecks, kids: [["Assign Tasks", Plus], ["Assigned Tasks", ClipboardList], ["My Task", UserCog], ["All Task", ClipboardCheck]] },
-  { label: "Upload CRM Data", icon: Upload },
-  { label: "Leads", icon: UserPlus },
-  { label: "HR Calendar", icon: CalendarDays },
-  { label: "Resignation & Exit", icon: UserX },
-  { label: "Employee Helpdesk", icon: MessageCircle },
-  { label: "HR Notifications", icon: BellRing },
-  { label: "Settings", icon: Settings },
+const NAV_GROUPS = [
+  { label: "Overview", items: [
+    { label: "Dashboard", icon: LayoutGrid },
+  ] },
+  { label: "People Ops", items: [
+    { label: "Employee Management", icon: Users, kids: [["Create Profile", UserPlus], ["Employee Profiles", Users], ["Ex Employee Profiles", UserX], ["View All Employee", CreditCard], ["Salary Report", FileText], ["ID Card", CreditCard], ["Payroll System", Wallet]] },
+    { label: "Attendance Management", icon: CalendarCheck, kids: [["Mark Attendance", Check], ["Attendance Report", FileText], ["All Attendance Report", Users], ["Mark Attendance All", UserCheck], ["Leave Request", CalendarClock], ["View All Leave Request", Briefcase]] },
+  ] },
+  { label: "Work", items: [
+    { label: "Task Management", icon: ListChecks, kids: [["Assign Tasks", Plus], ["Assigned Tasks", ClipboardList], ["My Task", UserCog], ["All Task", ClipboardCheck]] },
+  ] },
+  { label: "HR Operations", items: [
+    { label: "Upload CRM Data", icon: Upload },
+    { label: "Leads", icon: UserPlus },
+    { label: "HR Calendar", icon: CalendarDays },
+    { label: "Resignation & Exit", icon: UserX },
+  ] },
+  { label: "Support", items: [
+    { label: "Employee Helpdesk", icon: MessageCircle },
+    { label: "HR Notifications", icon: BellRing },
+  ] },
+  { label: "Account", items: [
+    { label: "Settings", icon: Settings },
+  ] },
 ];
+const NAV = NAV_GROUPS.flatMap((group) => group.items);
 
 export default function HrDashboard({ user, onLogout } = {}) {
   const [db, setDb] = useState(load);
@@ -3880,27 +4188,37 @@ export default function HrDashboard({ user, onLogout } = {}) {
     </div>);
 
   const q = query.trim().toLowerCase();
-  const nav = q ? NAV.filter((n) => n.label.toLowerCase().includes(q) || n.kids?.some((k) => k[0].toLowerCase().includes(q))) : NAV;
+  const navGroups = NAV_GROUPS.map((group) => ({
+    ...group,
+    items: q
+      ? group.items.filter((item) => item.label.toLowerCase().includes(q) || item.kids?.some((kid) => kid[0].toLowerCase().includes(q)))
+      : group.items,
+  })).filter((group) => group.items.length);
   const today = new Date().toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", year: "numeric" });
 
   return (
     <div className={`hr-shell${darkMode ? " hr-dark-mode" : ""}`}>
       <aside className={`hr-side ${drawer ? "is-open" : ""}`}>
-        <div className="hr-brand"><div className="hr-logo">S/T</div><div><strong>{profile.company.toUpperCase()}</strong><span>{profile.branch} HR Panel</span></div></div>
-        <div className="hr-profile"><div className="hr-avatar">{profile.photo ? <img src={profile.photo} alt="" /> : profile.name.slice(0, 2).toUpperCase()}</div><strong>{profile.name}</strong><span>{profile.role}</span></div>
-        <label className="hr-search"><Search size={16} /><input placeholder="Search modules..." value={query} onChange={(e) => setQuery(e.target.value)} /></label>
-        <nav>{nav.map((it) => {
-          const I = it.icon; const ex = it.kids && (open === it.label || !!q);
-          const on = page === it.label || it.kids?.some((k) => k[0] === page);
-          return (<div key={it.label}>
-            <button className={`hr-nav ${on ? "is-active" : ""}`} onClick={() => (it.kids ? setOpen(open === it.label ? "" : it.label) : go(it.label))}>
-              <I size={18} /><span>{it.label}</span>{it.kids && (ex ? <ChevronDown size={16} /> : <ChevronRight size={16} />)}
-            </button>
-            {ex && <div className="hr-sub">{it.kids.map(([l, KI]) => (
-              <button key={l} className={`hr-subitem ${page === l ? "is-active" : ""}`} onClick={() => go(l)}><KI size={15} /> {l}</button>))}</div>}
-          </div>);
-        })}</nav>
-        <button className="hr-nav hr-logout" onClick={() => onLogout ? onLogout() : setOut(true)}><LogOut size={18} /><span>Logout</span></button>
+        <div className="hr-brand"><div className="hr-side-logo" aria-hidden="true"><span>S</span><span>T</span></div><div><strong>{profile.company}</strong><span>{profile.branch} HR Panel</span></div></div>
+        <div className="hr-profile"><div className="hr-avatar">{profile.photo ? <img src={profile.photo} alt={`${profile.name} profile`} /> : profile.name.slice(0, 1).toUpperCase()}</div><strong>{profile.name}</strong><span>{profile.role}</span></div>
+        <label className="hr-search"><Search size={16} /><input type="search" aria-label="Search sidebar menu" placeholder="Search menu" value={query} onChange={(e) => setQuery(e.target.value)} /></label>
+        <nav className="hr-side-nav">{navGroups.map((group) => (
+          <div className="hr-nav-group" key={group.label}>
+            <p>{group.label}</p>
+            {group.items.map((it) => {
+              const I = it.icon; const ex = it.kids && (open === it.label || !!q);
+              const on = page === it.label || it.kids?.some((k) => k[0] === page);
+              return (<div key={it.label}>
+                <button className={`hr-nav ${on ? "is-active" : ""}`} onClick={() => (it.kids ? setOpen(open === it.label ? "" : it.label) : go(it.label))}>
+                  <I size={18} /><span>{it.label}</span>{it.kids && (ex ? <ChevronDown size={16} /> : <ChevronRight size={16} />)}
+                </button>
+                {ex && <div className="hr-sub">{it.kids.map(([l, KI]) => (
+                  <button key={l} className={`hr-subitem ${page === l ? "is-active" : ""}`} onClick={() => go(l)}><KI size={15} /> {l}</button>))}</div>}
+              </div>);
+            })}
+          </div>
+        ))}</nav>
+        <div className="hr-side-footer"><button className="hr-nav hr-logout" onClick={() => onLogout ? onLogout() : setOut(true)}><LogOut size={18} /><span>Logout</span></button></div>
       </aside>
 
       <main className="hr-main">

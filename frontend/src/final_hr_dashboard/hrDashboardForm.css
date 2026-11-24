@@ -1,12 +1,14 @@
 /* Forms, tables, badges, modal, toast, ID card, cards grid */
 .hr-tools{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-bottom:16px}
+.hr-all-employees{display:flex;min-height:100%;flex-direction:column}
 .hr-all-employees .hr-box{padding:16px;border-radius:18px}
+.hr-all-employees>.hr-box{display:flex;flex:1;min-height:0;flex-direction:column;margin-bottom:0}
 .hr-all-employees .hr-bh{padding:2px 2px 14px;margin-bottom:14px;border-bottom:1px solid var(--line)}
 .hr-all-employees .hr-bh h3{font-size:16px}
 .hr-all-employees-toolbar{margin-bottom:14px}
 .hr-all-employees-toolbar .hr-sbox{width:min(100%,460px);height:40px;border-radius:9px}
 .hr-all-employees-toolbar .hr-sbox input{font-size:13px}
-.hr-all-employees .hr-tw{max-height:calc(100vh - 330px);min-height:220px;overflow:auto;border:1px solid var(--line);border-radius:10px;background:#fff}
+.hr-all-employees .hr-tw{flex:1;min-height:220px;overflow:auto;border:1px solid var(--line);border-radius:10px;background:#fff}
 .hr-all-employees .hr-t{min-width:820px;font-size:13px}
 .hr-all-employees .hr-t th{position:sticky;top:0;z-index:1;padding:12px 14px;background:#824729;color:#fff;font-size:11px;text-transform:uppercase;letter-spacing:.035em}
 .hr-all-employees .hr-t th:first-child,.hr-all-employees .hr-t th:last-child{border-radius:0}
@@ -17,9 +19,9 @@
 .hr-all-employees .hr-t td:nth-child(2) .hr-b{margin-left:5px}
 .hr-all-employees .hr-t td:last-child{width:1%}
 .hr-all-employees .hr-b.ok{background:#B16937;color:#fff}
-@media(max-width:700px){.hr-all-employees .hr-tw{max-height:calc(100vh - 290px)}.hr-all-employees .hr-box{padding:12px}}
+@media(max-width:700px){.hr-all-employees .hr-box{padding:12px}}
 .hr-sbox{display:flex;align-items:center;gap:8px;border:1px solid #e3d8d0;border-radius:12px;padding:0 12px;background:#fff;color:var(--mute);min-width:240px}
-.hr-shell .hr-sbox input{border:0;padding:10px 0;flex:1;outline-offset:6px}
+.hr-shell .hr-sbox input{border:0;border-radius:0;padding:10px 0;flex:1;background:transparent;box-shadow:none;outline-offset:6px}
 .hr-count{color:var(--mute);font-size:13.5px;align-self:center;font-weight:600}
 .hr-form{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px}.hr-full{grid-column:1/-1}
 .hr-f{display:flex;flex-direction:column;gap:6px;font-size:13px;font-weight:600;color:#5a4f49}.hr-f input,.hr-f select{width:100%;font-weight:400}
@@ -167,7 +169,7 @@
 .hr-scroll:has(.hr-salary-report){min-height:0;overflow-x:hidden;overflow-y:auto;padding-bottom:20px}
 .hr-salary-table-wrap{width:100%;min-width:0;max-height:none;overflow:visible}
 .hr-salary-table{width:100%;min-width:0;table-layout:fixed;font-size:12px}
-.hr-salary-table th{position:sticky;top:0;z-index:1;padding:8px 6px;background:linear-gradient(180deg,#8B4F2D,#6B3E2B);color:#fff;font-size:11px;letter-spacing:.025em;text-transform:uppercase;white-space:normal;line-height:1.25}
+.hr-salary-table th{position:sticky;top:calc(0px - var(--hr-space-5,24px));z-index:4;padding:8px 6px;background:linear-gradient(180deg,#8B4F2D,#6B3E2B);color:#fff;font-size:11px;letter-spacing:.025em;text-transform:uppercase;white-space:normal;line-height:1.25;box-shadow:0 3px 7px rgba(58,31,18,.16)}
 .hr-salary-table td{padding:9px 6px;white-space:normal;overflow-wrap:anywhere;font-size:12px;line-height:1.35}
 .hr-salary-table th:nth-child(1),.hr-salary-table td:nth-child(1){width:4%}
 .hr-salary-table th:nth-child(2),.hr-salary-table td:nth-child(2){width:12%}
@@ -359,6 +361,9 @@
   .hr-salary-table .hr-salary-detail>*{width:62%;margin-left:auto;text-align:right}
   .hr-salary-table .hr-salary-name,.hr-salary-table .hr-salary-leave{white-space:normal}
   .hr-salary-table .hr-salary-net{border-radius:7px}
+}
+@media (min-width:761px) and (max-width:900px){
+  .hr-salary-table th{top:calc(0px - var(--hr-space-3,16px))}
 }
 
 .hr-all-attendance{min-width:0}

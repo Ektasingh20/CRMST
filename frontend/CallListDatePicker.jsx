@@ -11,7 +11,7 @@ const displayDate = (value) => value
   ? parseISO(value).toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" })
   : "dd-mm-yyyy";
 
-export default function CallListDatePicker({ label, value, min, max, onChange, hideLabel = false, quickMonthYear = false, showToday = true, ariaInvalid, ariaDescribedBy }) {
+export default function CallListDatePicker({ label, value, min, max, onChange, hideLabel = false, quickMonthYear = false, showToday = true, disabled: controlDisabled = false, required = false, id, className = "", triggerClassName = "", popoverClassName = "", popoverWidth = 280, popoverHeight = 326, ariaInvalid, ariaDescribedBy }) {
   const triggerRef = useRef(null);
   const calendarRef = useRef(null);
   const [open, setOpen] = useState(false);
@@ -26,8 +26,8 @@ export default function CallListDatePicker({ label, value, min, max, onChange, h
     const updatePosition = () => {
       const rect = triggerRef.current?.getBoundingClientRect();
       if (!rect) return;
-      const width = 280;
-      const height = 326;
+      const width = popoverWidth;
+      const height = popoverHeight;
       const top = window.innerHeight - rect.bottom >= height || rect.top >= height
         ? rect.bottom + 5
         : rect.top - height - 5;
@@ -48,7 +48,7 @@ export default function CallListDatePicker({ label, value, min, max, onChange, h
       window.removeEventListener("scroll", updatePosition, true);
       document.removeEventListener("pointerdown", closeOnOutsideClick);
     };
-  }, [open]);
+  }, [open, popoverHeight, popoverWidth]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -58,6 +58,10 @@ export default function CallListDatePicker({ label, value, min, max, onChange, h
     document.addEventListener("keydown", closeOnEscape);
     return () => document.removeEventListener("keydown", closeOnEscape);
   }, [open]);
+
+  useEffect(() => {
+    if (controlDisabled) setOpen(false);
+  }, [controlDisabled]);
 
   const year = visibleMonth.getFullYear();
   const month = visibleMonth.getMonth();
@@ -74,16 +78,16 @@ export default function CallListDatePicker({ label, value, min, max, onChange, h
   );
   const selectDate = (date) => { onChange(toISO(date)); setOpen(false); };
 
-  return <div className="table-date-filter call-list-date-picker">
+  return <div className={`table-date-filter call-list-date-picker${className ? ` ${className}` : ""}`}>
     {!hideLabel && <span>{label}</span>}
-    <button ref={triggerRef} type="button" className="call-list-date-trigger" aria-label={`${label} date: ${value ? displayDate(value) : "not selected"}`} aria-haspopup="dialog" aria-expanded={open} onClick={() => {
+    <button ref={triggerRef} id={id} type="button" className={`call-list-date-trigger${triggerClassName ? ` ${triggerClassName}` : ""}`} disabled={controlDisabled} aria-label={`${label} date: ${value ? displayDate(value) : "not selected"}`} aria-haspopup="dialog" aria-expanded={open} aria-required={required || undefined} onClick={() => {
       if (!open) {
         const date = value ? parseISO(value) : new Date();
         setVisibleMonth(new Date(date.getFullYear(), date.getMonth(), 1));
       }
       setOpen((current) => !current);
     }} aria-invalid={ariaInvalid} aria-describedby={ariaDescribedBy}><span>{displayDate(value)}</span><CalendarDays size={16} aria-hidden="true" /></button>
-    {open && position && createPortal(<div ref={calendarRef} className="call-list-calendar-popover" role="dialog" aria-label={`${label} date picker`} style={{ position: "fixed", top: position.top, left: position.left }}>
+    {open && position && createPortal(<div ref={calendarRef} className={`call-list-calendar-popover${popoverClassName ? ` ${popoverClassName}` : ""}`} role="dialog" aria-label={`${label} date picker`} style={{ position: "fixed", top: position.top, left: position.left }}>
       <div className="call-list-calendar-header"><button type="button" aria-label="Previous month" disabled={monthDisabled(new Date(year, month - 1, 1))} onClick={() => setVisibleMonth(new Date(year, month - 1, 1))}><ChevronLeft size={17} /></button>{quickMonthYear ? <div className="call-list-calendar-jump"><select aria-label="Calendar month" value={month} onChange={(event) => setVisibleMonth(new Date(year, Number(event.target.value), 1))}>{Array.from({ length: 12 }, (_, index) => <option value={index} key={index} disabled={monthDisabled(new Date(year, index, 1))}>{new Date(2000, index, 1).toLocaleDateString("en-US", { month: "long" })}</option>)}</select><select aria-label="Calendar year" value={year} onChange={(event) => setVisibleMonth(new Date(Number(event.target.value), month, 1))}>{years.map((optionYear) => <option value={optionYear} key={optionYear}>{optionYear}</option>)}</select></div> : <strong>{visibleMonth.toLocaleDateString("en-US", { month: "long", year: "numeric" })}</strong>}<button type="button" aria-label="Next month" disabled={monthDisabled(new Date(year, month + 1, 1))} onClick={() => setVisibleMonth(new Date(year, month + 1, 1))}><ChevronRight size={17} /></button></div>
       <div className="call-list-calendar-grid" role="grid" aria-label={visibleMonth.toLocaleDateString("en-US", { month: "long", year: "numeric" })}>
         {["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"].map((day) => <span className="call-list-calendar-weekday" role="columnheader" key={day}>{day}</span>)}

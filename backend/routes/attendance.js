@@ -135,12 +135,19 @@ router.get("/admin/month", async (req, res) => {
   try {
     const month = String(req.query.month || indiaMonthString());
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return res.status(400).json({ error: "A valid attendance month is required." });
-    const [records, leaves, calendar] = await Promise.all([
-      listAdminAttendanceMonth(month),
-      listApprovedLeavesBetween(`${month}-01`, `${month}-31`),
+    const [year, monthNumber] = month.split("-").map(Number);
+    const yearMonths = Array.from({ length: monthNumber }, (_, index) => `${year}-${String(index + 1).padStart(2, "0")}`);
+    const [yearRecordGroups, yearLeaves, calendar] = await Promise.all([
+      Promise.all(yearMonths.map((value) => listAdminAttendanceMonth(value))),
+      listApprovedLeavesBetween(`${year}-01-01`, `${month}-31`),
       getAttendanceCalendar(),
     ]);
-    res.json({ month, records, leaves, calendar });
+    const yearRecords = yearRecordGroups.flat();
+    const records = yearRecordGroups.at(-1) || [];
+    const monthStart = `${month}-01`;
+    const monthEnd = `${month}-31`;
+    const leaves = yearLeaves.filter((leave) => String(leave.from || "") <= monthEnd && String(leave.to || "") >= monthStart);
+    res.json({ month, records, leaves, calendar, yearRecords, yearLeaves });
   } catch (error) {
     sendAttendanceError(res, error, "Unable to load the monthly attendance summary.");
   }

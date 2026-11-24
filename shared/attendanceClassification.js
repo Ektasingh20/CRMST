@@ -113,10 +113,17 @@ function approvedLeaveForDate(leaves, date, employeeId) {
   });
 }
 
-export function classifyAttendanceDate({ date, joinedDate, today, now = new Date(), record, leaves = [], calendar = {}, employeeId = "" }) {
+export function classifyAttendanceDate({ date, joinedDate, today, now = new Date(), record, leaves = [], calendar = {}, employeeId = "", recordedHolidaysOnly = false }) {
   const joined = normalizeAttendanceDate(joinedDate);
   const currentDate = normalizeAttendanceDate(today) || attendanceDateInIndia();
-  const holiday = attendanceHolidayForDate(date, calendar);
+  const status = normalizedStatus(record);
+  const calendarHoliday = attendanceHolidayForDate(date, calendar);
+  const sundayHoliday = recordedHolidaysOnly && new Date(`${date}T00:00:00.000Z`).getUTCDay() === 0
+    ? { date, label: "Sunday holiday", paid: true, kind: "weekly_holiday" }
+    : null;
+  const holiday = recordedHolidaysOnly
+    ? (sundayHoliday || (status === "holiday" ? calendarHoliday : null))
+    : calendarHoliday;
   const base = {
     date,
     id: record?.id || date,
@@ -142,7 +149,6 @@ export function classifyAttendanceDate({ date, joinedDate, today, now = new Date
     };
   }
   if (record?.isTestData === true) {
-    const status = normalizedStatus(record);
     if (status) {
       return {
         ...base,
@@ -154,19 +160,19 @@ export function classifyAttendanceDate({ date, joinedDate, today, now = new Date
     }
   }
   if (holiday) {
+    const payable = recordedHolidaysOnly ? true : holiday.paid;
     return {
       ...base,
       status: "Holiday",
       reason: holiday.kind,
-      payable: holiday.paid,
-      paidHoliday: holiday.paid,
+      payable,
+      paidHoliday: payable,
     };
   }
   if (date > currentDate) {
     return { ...base, status: "Upcoming", reason: "future", payable: false, paidHoliday: false };
   }
 
-  const status = normalizedStatus(record);
   const leave = approvedLeaveForDate(leaves, date, employeeId);
   if (status === "present") {
     return { ...base, status: "Present", reason: "attendance_record", payable: true, paidHoliday: false };
@@ -181,10 +187,12 @@ export function classifyAttendanceDate({ date, joinedDate, today, now = new Date
       payable: !unpaid,
       paidHoliday: false,
       leaveType: leave?.type || "",
+      unpaidLeave: unpaid,
     };
   }
   if (status === "holiday") {
-    return { ...base, status: "Holiday", reason: "attendance_record", payable: record?.payable !== false, paidHoliday: record?.payable !== false };
+    const payable = recordedHolidaysOnly ? true : record?.payable !== false;
+    return { ...base, status: "Holiday", reason: "attendance_record", payable, paidHoliday: payable };
   }
   if (status === "absent") {
     return {
@@ -195,13 +203,72 @@ export function classifyAttendanceDate({ date, joinedDate, today, now = new Date
       paidHoliday: false,
     };
   }
+  if (date < currentDate) {
+    return {
+      ...base,
+      status: "Absent",
+      reason: "missing_attendance",
+      payable: false,
+      paidHoliday: false,
+    };
+  }
   if (date === currentDate && attendanceCutoffPassed(date, now, calendar)) {
     return { ...base, status: "Absent", reason: "cutoff_absence", payable: false, paidHoliday: false };
   }
   return { ...base, status: "Pending", reason: "awaiting_finalization", payable: false, paidHoliday: false };
 }
 
-export function buildAttendanceMonthRows({ attendance = [], leaves = [], month, joinedDate, today, now = new Date(), calendar = {}, employeeId = "" }) {
+function employedLeaveAccrualMonths(employee, month, throughPreviousMonth = false) {
+  if (!/^\d{4}-\d{2}$/.test(String(month || ""))) return 0;
+  const [year, selectedMonth] = month.split("-").map(Number);
+  const joined = normalizeAttendanceDate(employee?.joined || employee?.joiningDate);
+  const exited = normalizeAttendanceDate(employee?.resignationDate || employee?.left);
+  const joinedYear = Number(joined?.slice(0, 4));
+  const exitedYear = Number(exited?.slice(0, 4));
+  if ((joined && joinedYear > year) || (exited && exitedYear < year)) return 0;
+  const firstMonth = joinedYear === year ? Number(joined.slice(5, 7)) : 1;
+  const employmentLastMonth = exitedYear === year ? Number(exited.slice(5, 7)) : 12;
+  const requestedLastMonth = throughPreviousMonth ? selectedMonth - 1 : selectedMonth;
+  const lastMonth = Math.min(employmentLastMonth, requestedLastMonth);
+  return Math.max(0, lastMonth - firstMonth + 1);
+}
+
+function isEligiblePaidLeaveRow(row) {
+  return row?.status === "Leave"
+    && row.reason !== "pre_join"
+    && row.reason !== "future"
+    && row.unpaidLeave !== true
+    && !String(row.leaveType || "").toLowerCase().includes("unpaid");
+}
+
+function isPaidAbsenceOrLeaveRow(row) {
+  if (row?.reason === "pre_join" || row?.reason === "future") return false;
+  return row?.status === "Absent" || isEligiblePaidLeaveRow(row);
+}
+
+export function calculatePaidLeaveBalance({ employee, month, rows = [], yearRows = [] }) {
+  const monthStart = `${month}-01`;
+  const priorAccrued = employedLeaveAccrualMonths(employee, month, true);
+  const accrued = employedLeaveAccrualMonths(employee, month, false);
+  const priorEligibleLeaveDays = new Set(yearRows
+    .filter((row) => row?.date < monthStart && row?.date?.startsWith(`${month.slice(0, 4)}-`) && isPaidAbsenceOrLeaveRow(row))
+    .map((row) => row.date)).size;
+  const previouslyUsedPaidLeave = Math.min(priorAccrued, priorEligibleLeaveDays);
+  const availablePaidLeave = Math.max(0, accrued - previouslyUsedPaidLeave);
+  const eligibleLeaveDays = new Set(rows.filter(isPaidAbsenceOrLeaveRow).map((row) => row.date)).size;
+  const paidLeaveDays = Math.min(eligibleLeaveDays, availablePaidLeave);
+  const paidLeaveBalance = Math.max(0, availablePaidLeave - paidLeaveDays);
+  return {
+    accruedPaidLeave: accrued,
+    previouslyUsedPaidLeave,
+    availablePaidLeave,
+    eligibleLeaveDays,
+    paidLeaveDays,
+    paidLeaveBalance,
+  };
+}
+
+export function buildAttendanceMonthRows({ attendance = [], leaves = [], month, joinedDate, today, now = new Date(), calendar = {}, employeeId = "", recordedHolidaysOnly = false }) {
   const count = attendanceDaysInMonth(month);
   if (!count) return [];
   const monthStart = `${month}-01`;
@@ -225,11 +292,27 @@ export function buildAttendanceMonthRows({ attendance = [], leaves = [], month, 
       leaves,
       calendar,
       employeeId,
+      recordedHolidaysOnly,
     });
   }).reverse();
 }
 
-export function calculateAttendancePayroll({ employee, month, rows = [] }) {
+export function calculateSalaryReportPay({ baseSalary, payableDays, daysInMonth = 30, pf = 0, tax = 0 }) {
+  const salary = Math.max(0, Number(baseSalary) || 0);
+  const divisor = Math.max(1, Number(daysInMonth) || 0);
+  const dailySalary = salary / divisor;
+  const payableBasicSalary = Math.min(salary, Math.round(dailySalary * Math.max(0, Number(payableDays) || 0) * 100) / 100);
+  const basicSalaryDeduction = Math.max(0, Math.round((salary - payableBasicSalary) * 100) / 100);
+  const statutoryDeductions = Math.max(0, Number(pf) || 0) + Math.max(0, Number(tax) || 0);
+  return {
+    dailySalary,
+    payableBasicSalary,
+    basicSalaryDeduction,
+    deductions: basicSalaryDeduction + statutoryDeductions,
+  };
+}
+
+export function calculateAttendancePayroll({ employee, month, rows = [], yearRows = [] }) {
   const salary = Math.max(0, Number(employee?.salary) || 0);
   const daysInMonth = attendanceDaysInMonth(month);
   const [year, monthNumber] = month.split("-").map(Number);
@@ -244,20 +327,38 @@ export function calculateAttendancePayroll({ employee, month, rows = [] }) {
     ? Math.max(0, dayNumber(employedEnd) - dayNumber(employedStart) + 1)
     : 0;
   const dailyJoinExitRate = daysInMonth ? Math.floor(salary / daysInMonth) : 0;
-  const joinExitDeduction = dailyJoinExitRate * Math.max(0, daysInMonth - employedDays);
+  const joinExitDeduction = employedDays === 0
+    ? salary
+    : dailyJoinExitRate * Math.max(0, daysInMonth - employedDays);
   const payrollRows = rows.filter((row) => row.isTestData !== true);
-  const postJoinUnpaidDates = new Set(payrollRows.filter((row) => row.reason !== "pre_join"
-    && row.reason !== "future"
-    && ["Absent", "Leave", "Holiday"].includes(row.status)
-    && row.payable === false).map((row) => row.date));
-  const classifiedUnpaidDays = postJoinUnpaidDates.size;
+  const payrollYearRows = yearRows.filter((row) => row.isTestData !== true);
+  const paidLeave = calculatePaidLeaveBalance({ employee, month, rows: payrollRows, yearRows: payrollYearRows });
+  const absentDays = new Set(payrollRows.filter((row) => row.reason !== "pre_join"
+    && row.reason !== "future" && row.status === "Absent").map((row) => row.date)).size;
+  const leaveDays = new Set(payrollRows.filter((row) => row.reason !== "pre_join"
+    && row.reason !== "future" && row.status === "Leave").map((row) => row.date)).size;
+  const explicitUnpaidLeaveDays = new Set(payrollRows.filter((row) => row.reason !== "pre_join"
+    && row.reason !== "future" && row.status === "Leave" && !isEligiblePaidLeaveRow(row)).map((row) => row.date)).size;
+  const deductedLeaveDays = explicitUnpaidLeaveDays
+    + Math.max(0, paidLeave.eligibleLeaveDays - paidLeave.paidLeaveDays);
+  const classifiedUnpaidDays = deductedLeaveDays;
   const manualUnpaidDays = Math.max(0, Number(employee?.unpaidLeaveDays) || 0);
   const unpaidDays = Math.max(classifiedUnpaidDays, manualUnpaidDays);
   const postJoinUnpaidDeduction = Math.round((salary / 30) * unpaidDays * 100) / 100;
+  const presentDays = new Set(payrollRows.filter((row) => row.status === "Present").map((row) => row.date)).size;
+  const holidayDays = new Set(payrollRows.filter((row) => row.reason !== "pre_join" && row.status === "Holiday").map((row) => row.date)).size;
   return {
     daysInMonth,
     employedDays,
-    payableDays: payrollRows.filter((row) => row.payable).length,
+    presentDays,
+    absentDays,
+    leaveDays,
+    holidayDays,
+    paidLeaveDays: paidLeave.paidLeaveDays,
+    deductedLeaveDays,
+    paidLeaveBalance: paidLeave.paidLeaveBalance,
+    accruedPaidLeave: paidLeave.accruedPaidLeave,
+    payableDays: presentDays + paidLeave.paidLeaveDays + holidayDays,
     dailyJoinExitRate,
     joinExitDeduction,
     classifiedUnpaidDays,
