@@ -5,6 +5,7 @@ import { listUsers, listAssignableUsers, createUser, updateUser, getMyProfile, u
 import { changePassword, requestPasswordResetEmail } from "../controllers/authController.js";
 import { isAdmin, isHrUser, canAccessUserDirectory, canCreateEmployeeUsers } from "../utils/roles.js";
 import User from "../models/User.js";
+import { getITWorkspaceMemberIds } from "../services/itWorkspaceMembership.js";
 import {
   downloadMyProfileDocument,
   downloadPriorExperienceDocument,
@@ -45,9 +46,19 @@ router.get("/it-team", async (req, res) => {
   if (!isAdmin(req.user) && !isITDepartment(req.user)) return res.status(403).json({ error: "Admin or IT access required." });
   try {
     const users = await User.find();
-    res.json(users.filter(req.query.teamOnly === 'true' ? isTeamOnlyITUser : isITDepartment).filter(user => !["inactive", "disabled"].includes(String(user.status || "").toLowerCase())).map(user => ({
-      id: user.id || String(user._id), name: user.name || user.username, role: user.role, dept: user.dept || user.department, canAssignProjects: user.canAssignProjects === true,
-    })));
+    const memberIdByUserId = await getITWorkspaceMemberIds();
+    res.json(users.filter(req.query.teamOnly === 'true' ? isTeamOnlyITUser : isITDepartment)
+      .filter(user => !["inactive", "disabled"].includes(String(user.status || "").toLowerCase()))
+      .map(user => {
+        // Workspace membership is keyed by the Mongo document ID. `user.id`
+        // may be a separate legacy/business ID and would miss newly linked users.
+        const crmId = String(user._id || user.id);
+        const membershipId = memberIdByUserId.get(crmId);
+        return membershipId ? {
+          id: membershipId, crmId, name: user.name || user.username, role: user.role,
+          dept: user.dept || user.department, canAssignProjects: user.canAssignProjects === true,
+        } : null;
+      }).filter(Boolean));
   } catch { res.status(500).json({ error: "Unable to load IT team members." }); }
 });
 router.get("/", async (req, res) => {

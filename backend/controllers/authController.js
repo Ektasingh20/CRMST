@@ -5,6 +5,7 @@ import { getAuth } from "firebase-admin/auth";
 import { getFirestore } from "firebase-admin/firestore";
 import User from "../models/User.js";
 import { isMongoConnected } from "../config/db.js";
+import { ensureITWorkspaceMembership } from "../services/itWorkspaceMembership.js";
 
 const secret = process.env.JWT_SECRET || "crmst-secret";
 
@@ -95,10 +96,16 @@ export async function login(req, res) {
       }
     }
 
+  // Sync IT workspace permissions once per login so legacy IT Head accounts
+  // receive manager access without an extra Firestore lookup on every request.
+  if (String(user.dept || user.department || "").trim().toLowerCase() === "it") {
+    await ensureITWorkspaceMembership(user);
+  }
+
     const token = jwt.sign({ uid: String(user._id), username: user.username, role: user.role, dept: user.dept }, secret, { expiresIn: "12h" });
     return res.json({
       token,
-      user: { id: String(user._id), username: user.username, name: user.name, email: user.email, phone: user.phone, emergencyContact: user.emergencyContact, maritalStatus: user.maritalStatus, education: user.education, role: user.role, dept: user.dept, position: user.position, joined: user.joined, state: user.state, branch: user.branch, branchCode: user.branchCode, address: user.address, imageUrl: user.imageUrl || "", imagePublicId: user.imagePublicId || "" },
+      user: { id: String(user._id), username: user.username, name: user.name, email: user.email, phone: user.phone, emergencyContact: user.emergencyContact, maritalStatus: user.maritalStatus, education: user.education, role: user.role, itWorkspaceRole: user.itWorkspaceRole || "", dept: user.dept, position: user.position, joined: user.joined, state: user.state, branch: user.branch, branchCode: user.branchCode, address: user.address, imageUrl: user.imageUrl || "", imagePublicId: user.imagePublicId || "" },
     });
   } catch (err) {
     console.error("Login error:", err);

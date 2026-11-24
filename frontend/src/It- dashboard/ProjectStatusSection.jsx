@@ -12,7 +12,7 @@ const readFiles = files => Promise.all(files.map(file=>new Promise((resolve,reje
   reader.onerror=()=>reject(new Error('Unable to read the attachment. Please try again.'));
   reader.readAsDataURL(file);
 })));
-export default function ProjectStatusSection({project,onUpdate}) {
+export default function ProjectStatusSection({project,onUpdate,readOnly=false}) {
   const summary=projectStatusSummary(project);
   const [editing,setEditing]=useState(false);
   const [status,setStatus]=useState(summary.status);
@@ -43,7 +43,7 @@ export default function ProjectStatusSection({project,onUpdate}) {
     } catch(err) {setError(err.message);} finally {setBusy(false);}
   }
   return <section className="panel project-status-section" aria-labelledby="project-status-title">
-    <div className="project-status-heading"><div><p className="eyebrow">PROJECT TRACKING</p><h3 id="project-status-title">Project Status</h3></div>{!editing&&<button className="ghost-button" onClick={startEditing}>Update Status</button>}</div>
+    <div className="project-status-heading"><div><p className="eyebrow">PROJECT TRACKING</p><h3 id="project-status-title">Project Status</h3></div>{!editing&&!readOnly&&<button className="ghost-button" onClick={startEditing}>Update Status</button>}</div>
     {summary.status==='Completed'&&<div className="project-completed-banner"><CircleCheck size={21}/><div><strong>?? Project Completed</strong><span>Completion date: {displayDate(project.completionDate)}</span></div></div>}
     <div className="project-status-facts"><div><span>Current Status</span><strong><Clock3 size={16}/>{summary.status}</strong></div><div><span>Project Progress</span><strong>{summary.progress}%</strong><progress max="100" value={summary.progress} aria-label="Project progress"/></div><div><span>Completed Tasks</span><strong>{summary.completedTasks}/{summary.totalTasks}</strong>{!summary.totalTasks&&<small>No assigned tasks</small>}</div></div>
     {project.statusRemarks&&!editing&&<p className="project-status-remarks"><strong>{summary.status==='Completed'?'Completion remarks':'Latest remarks'}:</strong> {project.statusRemarks}</p>}

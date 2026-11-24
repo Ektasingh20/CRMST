@@ -17,6 +17,7 @@ import PasswordResetLink from "../PasswordResetLink.jsx";
 import { HelpdeskIncomingToast } from "../shared/HelpdeskChat.jsx";
 import SalesDropdown from "../../SalesDropdown.jsx";
 import CallListDatePicker from "../../CallListDatePicker.jsx";
+import LogoutConfirmDialog from "../shared/LogoutConfirmDialog.jsx";
 import {
   LayoutGrid, Users, CalendarCheck, ListChecks, Upload, Settings, LogOut, ChevronRight, ChevronDown,
   Search, Calendar, UserPlus, Plus, CalendarClock, Check, UserX, CreditCard, FileText, Wallet,
@@ -1194,6 +1195,7 @@ function CreateProfile({ c: { db, upd, go } }) {
     maritalStatus: "",
     education: "",
     dept: "",
+    itWorkspaceRole: "IT Team",
     desig: "",
     joined: "",
     photo: "",
@@ -1401,6 +1403,7 @@ function CreateProfile({ c: { db, upd, go } }) {
         username: profile.username,
         password: profile.password,
         dept: profile.dept,
+        itWorkspaceRole: profile.dept === "IT" ? profile.itWorkspaceRole || "IT Team" : "",
         position: profile.desig,
         role,
         joined: profile.joined,
@@ -1463,7 +1466,8 @@ function CreateProfile({ c: { db, upd, go } }) {
         </F>
         <div className="hr-f"><span>Marital Status</span><SalesDropdown options={[{ value: "", label: "Select status (Optional)" }, ...["Single", "Married", "Divorced", "Widowed"].map((status) => ({ value: status, label: status }))]} value={form.maritalStatus} onChange={updateField("maritalStatus")} wrapperClassName="hr-form-dropdown" className="hr-form-dropdown-trigger" menuClassName="hr-form-dropdown-menu" aria-label="Marital Status" aria-invalid={!!errors.maritalStatus} aria-describedby={errors.maritalStatus ? "hr-profile-maritalStatus-error" : undefined} />{fieldError("maritalStatus")}</div>
         <F l="Education"><input maxLength={120} placeholder="e.g. B.Tech, MBA, MCA (Optional)" value={form.education} onChange={updateField("education")} onBlur={() => validateField("education")} />{fieldError("education")}</F>
-        <div className="hr-f"><span>Department *</span><SalesDropdown required options={[{ value: "", label: "Select department" }, ...DEPTS.map((department) => ({ value: department, label: department }))]} value={form.dept} onChange={updateField("dept")} wrapperClassName="hr-form-dropdown" className="hr-form-dropdown-trigger" menuClassName="hr-form-dropdown-menu" aria-label="Department" aria-invalid={!!errors.dept} aria-describedby={errors.dept ? "hr-profile-dept-error" : undefined} />{fieldError("dept")}</div>
+        <div className="hr-f"><span>Department *</span><SalesDropdown required options={[{ value: "", label: "Select department" }, ...DEPTS.map((department) => ({ value: department, label: department }))]} value={form.dept} onChange={(event) => { const value = event.target.value; updateField("dept")(event); setForm((current) => ({ ...current, itWorkspaceRole: value === "IT" ? current.itWorkspaceRole || "IT Team" : "" })); }} wrapperClassName="hr-form-dropdown" className="hr-form-dropdown-trigger" menuClassName="hr-form-dropdown-menu" aria-label="Department" aria-invalid={!!errors.dept} aria-describedby={errors.dept ? "hr-profile-dept-error" : undefined} />{fieldError("dept")}</div>
+        {form.dept === "IT" && <div className="hr-f hr-profile-it-access"><span>IT Access *</span><SalesDropdown required options={[{ value: "IT Head", label: "IT Head" }, { value: "IT Team", label: "IT Team" }]} value={form.itWorkspaceRole || "IT Team"} onChange={updateField("itWorkspaceRole")} wrapperClassName="hr-form-dropdown" className="hr-form-dropdown-trigger" menuClassName="hr-form-dropdown-menu" aria-label="IT Access" /></div>}
         <F l="Position *"><input required maxLength={80} placeholder="e.g. Manager, Executive" value={form.desig} onChange={updateField("desig")} onBlur={() => validateField("desig")} aria-invalid={!!errors.desig} aria-describedby={errors.desig ? "hr-profile-desig-error" : undefined} />{fieldError("desig")}</F>
         <div className="hr-f"><span>Date of Joining *</span><CallListDatePicker id="hr-profile-joined" className="hr-form-date-picker" triggerClassName="hr-form-date-trigger" popoverClassName="hr-form-calendar-popover" popoverWidth={350} popoverHeight={370} label="Date of Joining" hideLabel value={form.joined} min="1900-01-01" max={TODAY} required ariaInvalid={!!errors.joined} ariaDescribedBy={errors.joined ? "hr-profile-joined-error" : undefined} onChange={(value) => updateField("joined")({ target: { value } })} />{fieldError("joined")}</div>
         <div className="hr-f"><span>Ex-Employee</span><SalesDropdown options={[{ value: "No", label: "No" }, { value: "Yes", label: "Yes" }]} value={form.exEmployee} onChange={updateField("exEmployee")} wrapperClassName="hr-form-dropdown" className="hr-form-dropdown-trigger" menuClassName="hr-form-dropdown-menu" aria-label="Ex-Employee" aria-invalid={!!errors.exEmployee} />{fieldError("exEmployee")}</div>
@@ -3962,6 +3966,7 @@ export default function HrDashboard({ user, onLogout } = {}) {
   const [open, setOpen] = useState("");
   const [drawer, setDrawer] = useState(false);
   const [out, setOut] = useState(false);
+  const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
   const [toast, setToast] = useState("");
   const [idSel, setIdSel] = useState(1);
   const [query, setQuery] = useState("");
@@ -4151,6 +4156,7 @@ export default function HrDashboard({ user, onLogout } = {}) {
     ...db.me,
     name: db.me.settingsSaved ? db.me.name : user.name || user.username || db.me.name || "HR",
     role: user.position || user.role || "HR",
+    photo: db.me.photo || user.imageUrl || user.photo || user.avatar || "",
     branch: user.branch || db.me.branch,
     crm: String(user.crmId || user.id || user._id || db.me.crm),
   } : db.me;
@@ -4218,7 +4224,7 @@ export default function HrDashboard({ user, onLogout } = {}) {
             })}
           </div>
         ))}</nav>
-        <div className="hr-side-footer"><button className="hr-nav hr-logout" onClick={() => onLogout ? onLogout() : setOut(true)}><LogOut size={18} /><span>Logout</span></button></div>
+        <div className="hr-side-footer"><button className="hr-nav hr-logout" onClick={() => setLogoutConfirmOpen(true)}><LogOut size={18} /><span>Logout</span></button></div>
       </aside>
 
       <main className="hr-main">
@@ -4250,6 +4256,7 @@ export default function HrDashboard({ user, onLogout } = {}) {
       </main>
       {toast && <div className="hr-toast" role="status">{toast}</div>}
       <HelpdeskIncomingToast user={user} onOpen={() => go("Employee Helpdesk")} />
+      <LogoutConfirmDialog open={logoutConfirmOpen} onCancel={() => setLogoutConfirmOpen(false)} onConfirm={() => { setLogoutConfirmOpen(false); if (onLogout) onLogout(); else setOut(true); }} />
     </div>
   );
 }

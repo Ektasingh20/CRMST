@@ -3,6 +3,7 @@ import { getAuth } from "firebase-admin/auth";
 import User from "../models/User.js";
 import { isMongoConnected } from "../config/db.js";
 import { normalizeEmployment } from "../utils/itUserRoles.js";
+import { ensureITWorkspaceMembership } from "../services/itWorkspaceMembership.js";
 import { listProfileDocuments } from "./priorExperienceDocumentsController.js";
 import { isValidAadhaar, isValidBankAccount, isValidBankText, isValidEmail as isValidProfileEmail, isValidIfsc, isValidIndianMobile, isValidPan, isValidPersonName, isValidProfileDob, isValidRelationship } from "../../shared/profileValidation.js";
 
@@ -362,6 +363,10 @@ export async function createUser(req, res) {
       updatedAt: new Date().toISOString(),
     }));
 
+    if (String(user.dept || "").trim().toLowerCase() === "it") {
+      await ensureITWorkspaceMembership(user);
+    }
+
     const { password: _password, ...safeUser } = user.toObject();
     return res.status(201).json({ id: user.id || String(user._id), ...safeUser });
   } catch (err) {
@@ -418,6 +423,9 @@ export async function updateUser(req, res) {
       String(payload.email || existing.email || "").trim().toLowerCase(),
       () => User.findOneAndUpdate({ _id: targetId }, payload, { new: true, upsert: true }),
     );
+    if (String(existing.dept || "").trim().toLowerCase() === "it" || String(item.dept || "").trim().toLowerCase() === "it") {
+      await ensureITWorkspaceMembership(item);
+    }
     const { password: _password, ...safeUser } = item.toObject();
     return res.json({ id: item.id || String(item._id), ...safeUser });
   } catch (err) {

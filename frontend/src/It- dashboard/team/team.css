@@ -7,3 +7,13 @@
 .tm-page [class*="tm-workload-"] progress{accent-color:var(--workload-color)}
 .tm-page [class*="tm-workload-"] progress::-webkit-progress-value{background:var(--workload-color)}
 .tm-page [class*="tm-workload-"] progress::-moz-progress-bar{background:var(--workload-color)}
+
+/* Warm palette filter menus for the team pages. */
+.tm-page .tm-filter-select{position:relative;display:block;width:100%}
+.tm-page .tm-filter-trigger{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;min-height:41px;padding:10px 11px;border:1px solid var(--line);border-radius:10px;background:#fff;color:var(--text);font:inherit;font-size:12px;text-align:left;cursor:pointer;box-sizing:border-box}
+.tm-page .tm-filter-trigger:hover,.tm-page .tm-filter-trigger[aria-expanded=true]{border-color:var(--brand)}
+.tm-page .tm-filter-trigger>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tm-page .tm-filter-options{position:absolute;z-index:40;top:calc(100% + 4px);left:0;right:0;max-height:220px;overflow:auto;padding:4px;border:1px solid var(--line);border-radius:10px;background:#fff;box-shadow:0 12px 28px rgba(58,35,26,.16)}
+.tm-page .tm-filter-option{display:block;width:100%;min-height:34px;padding:8px 10px;border:0;border-radius:7px;background:transparent;color:var(--text);font:inherit;font-size:12px;text-align:left;cursor:pointer}
+.tm-page .tm-filter-option:hover,.tm-page .tm-filter-option:focus-visible{background:var(--brand-soft);color:var(--brand-deep)}
+.tm-page .tm-filter-option.is-selected,.tm-page .tm-filter-option.is-selected:hover{background:var(--brand);color:#fff}

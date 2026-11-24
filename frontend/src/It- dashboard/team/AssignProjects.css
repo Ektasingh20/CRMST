@@ -1,0 +1,132 @@
+.assign-projects-palette {
+  --brand: #B26A3C;
+  --brand-deep: #6B3E2B;
+  --brand-soft: #F1D7C3;
+  --success: #B26A3C;
+  --warning: #6B3E2B;
+  --danger: #3A231A;
+  --text: #3A231A;
+  --text-soft: #6B3E2B;
+  --text-faint: #6B3E2B;
+  --line: rgba(107, 62, 43, .16);
+  --line-soft: rgba(107, 62, 43, .1);
+}
+
+.assign-projects-palette .tm-page .tm-card-heading h3 > span,
+.assign-projects-palette .tm-page .tm-avatar {
+  background: #F1D7C3;
+  color: #6B3E2B;
+}
+
+.assign-projects-palette .tm-page .tm-filters {
+  background: #fff;
+}
+
+.assign-projects-palette .tm-page .tm-table th {
+  background: #6B3E2B;
+  color: #fff;
+  border-bottom-color: #6B3E2B;
+}
+
+.assign-projects-palette .tm-page .tm-table tbody tr:nth-child(even) {
+  background: rgba(241, 215, 195, .2);
+}
+
+.assign-projects-palette .tm-page .tm-table tbody tr:hover {
+  background: rgba(241, 215, 195, .36);
+}
+
+.assign-projects-palette .tm-page .tm-table td {
+  border-bottom-color: rgba(107, 62, 43, .1);
+  color: #6B3E2B;
+}
+
+.assign-projects-palette .tm-page .tm-table strong {
+  color: #3A231A;
+}
+
+.assign-projects-palette .tm-page .tm-pill {
+  background: rgba(241, 215, 195, .58);
+  color: #6B3E2B;
+}
+
+.assign-projects-palette .tm-page .tm-low,
+.assign-projects-palette .tm-page .tm-open {
+  background: rgba(241, 215, 195, .58);
+  color: #6B3E2B;
+}
+
+.assign-projects-palette .tm-page .tm-medium,
+.assign-projects-palette .tm-page .tm-active,
+.assign-projects-palette .tm-page .tm-in-progress {
+  background: #F1D7C3;
+  color: #6B3E2B;
+}
+
+.assign-projects-palette .tm-page .tm-high {
+  background: #B26A3C;
+  color: #fff;
+}
+
+.assign-projects-palette .tm-page .tm-critical,
+.assign-projects-palette .tm-page .tm-urgent {
+  background: #663521;
+  color: #F3F1EF;
+}
+
+.assign-projects-palette .tm-page .tm-completed {
+  background: #6B3E2B;
+  color: #F1D7C3;
+}
+
+.assign-projects-palette .tm-page .tm-stack .tm-avatar:nth-child(even) {
+  background: #6B3E2B;
+  color: #F1D7C3;
+}
+
+.assign-projects-palette .tm-page .tm-progress progress,
+.assign-projects-palette .tm-page .tm-progress progress::-webkit-progress-bar {
+  background: rgba(241, 215, 195, .72);
+}
+
+.assign-projects-palette .tm-page .tm-view {
+  border-color: #F1D7C3;
+  color: #6B3E2B;
+}
+
+.assign-projects-palette .tm-page .tm-view:hover {
+  background: #F1D7C3;
+}
+
+.assign-projects-palette .tm-page .tm-toast {
+  background: #3A231A;
+  color: #F1D7C3;
+}
+
+.assign-projects-drawer {
+  --brand: #B26A3C;
+  --brand-deep: #6B3E2B;
+  --brand-soft: #F1D7C3;
+  --success: #B26A3C;
+  --warning: #6B3E2B;
+  --danger: #3A231A;
+  --text: #3A231A;
+  --text-soft: #6B3E2B;
+  --text-faint: #6B3E2B;
+  --line: rgba(107, 62, 43, .16);
+}
+
+.assign-projects-drawer .tm-pill,
+.assign-projects-drawer .tm-member-option {
+  background: rgba(241, 215, 195, .35);
+  color: #6B3E2B;
+}
+
+.assign-projects-drawer .tm-warning-text {
+  color: #6B3E2B;
+}
+
+.assign-projects-drawer .tm-error {
+  background: #F1D7C3;
+  color: #3A231A;
+}

@@ -844,3 +844,55 @@ export async function uploadProjectPdf(file) {
 }
 
 export const fetchITTeamMembers = () => request("/users/it-team?teamOnly=true");
+export const fetchITProjectDetails = projectId => request(`/it/projects/${encodeURIComponent(projectId)}`);
+export async function fetchITTasks() {
+  const tasks = [];
+  let cursor = "";
+  do {
+    const params = new URLSearchParams({ limit: "100" });
+    if (cursor) params.set("cursor", cursor);
+    const page = await request(`/it/tasks/mine?${params.toString()}`);
+    if (!Array.isArray(page?.items)) throw new Error("The IT task list returned an invalid response.");
+    tasks.push(...page.items);
+    cursor = page.nextCursor || "";
+  } while (cursor);
+  return tasks;
+}
+export const updateITTaskStatus = (taskId, status) => request(`/it/tasks/${encodeURIComponent(taskId)}`, { method: "PATCH", body: JSON.stringify({ status }) });
+export async function fetchITSupportRecords(kind) {
+  const items = [];
+  let cursor = "";
+  do {
+    const params = new URLSearchParams({ limit: "100" });
+    if (cursor) params.set("cursor", cursor);
+    const page = await request(`/it/${kind}?${params.toString()}`);
+    if (!Array.isArray(page?.items)) throw new Error(`The IT ${kind} list returned an invalid response.`);
+    items.push(...page.items);
+    cursor = page.nextCursor || "";
+  } while (cursor);
+  return items;
+}
+export const createITSupportRecord = (kind, record) => request(`/it/${kind}`, { method: "POST", body: JSON.stringify(record) });
+export const fetchITSupportRecord = (kind, id) => request(`/it/${kind}/${encodeURIComponent(id)}`);
+export const updateITSupportRecord = (kind, id, update) => request(`/it/${kind}/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(update) });
+export const addITSupportMessage = (kind, id, text) => request(`/it/${kind}/${encodeURIComponent(id)}/${kind === "bugs" ? "comments" : "replies"}`, { method: "POST", body: JSON.stringify({ text }) });
+export const updateITClarificationAction = (id, type, text) => request(`/it/clarifications/${encodeURIComponent(id)}/actions`, { method: "POST", body: JSON.stringify({ type, ...(text ? { text } : {}) }) });
+export async function fetchITSupportChildren(kind, id, child) {
+  const page = await request(`/it/${kind}/${encodeURIComponent(id)}/${child}?limit=100`);
+  return Array.isArray(page?.items) ? page.items : [];
+}
+export async function fetchITProjects() {
+  const projects = [];
+  let cursor = "";
+  do {
+    const params = new URLSearchParams({ limit: "100" });
+    if (cursor) params.set("cursor", cursor);
+    const page = await request(`/it/projects?${params.toString()}`);
+    if (!Array.isArray(page?.items)) throw new Error("The IT project list returned an invalid response.");
+    projects.push(...page.items);
+    cursor = page.nextCursor || "";
+  } while (cursor);
+  return projects;
+}
+export const updateITProjectTeam = (projectId, assignment) => request(`/it/projects/${encodeURIComponent(projectId)}/team`, { method: "PUT", body: JSON.stringify(assignment) });
+export const syncITProjects = () => request("/it/sync", { method: "POST", body: JSON.stringify({ dryRun: false }) });

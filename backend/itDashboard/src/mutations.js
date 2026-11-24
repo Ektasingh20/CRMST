@@ -40,7 +40,10 @@ export function createMutations(store,cache) {
       requireThat(tasks.length<=400,409,'Team update exceeds atomic task limit.');
       const memberIds=body.team.map(t=>t.memberId);
       for(const task of tasks)if(task.memberId&&!memberIds.includes(task.memberId))tx.update(task.path,{memberId:null,updatedAt:nowISO()});
-      tx.update(p.path,{team:body.team,memberIds,updatedAt:nowISO(),_localFields:[...new Set([...(p._localFields||[]),'team','memberIds'])]});
+      const updates={team:body.team,memberIds,updatedAt:nowISO()};
+      for(const field of ['startDate','dueDate','priority','notes'])if(Object.hasOwn(body,field))updates[field]=body[field];
+      const localFields=Object.keys(updates).filter(field=>field!=='updatedAt');
+      tx.update(p.path,{...updates,_localFields:[...new Set([...(p._localFields||[]),...localFields])]});
       activity(tx,{projectId:id,authorId:member.id,type:'team',text:'Project team updated'});
       return {id,team:body.team};
     });

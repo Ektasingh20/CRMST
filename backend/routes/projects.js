@@ -10,8 +10,9 @@ import { employeeKey, isIT, storedProject, projectResponse, projectFields, scope
 import { applyProjectStatus } from '../../frontend/src/It- dashboard/projectStatus.js';
 import { isDeepStrictEqual } from 'node:util';
 import { ReadCache } from '../itDashboard/src/cache.js';
+import { notifyUser } from '../services/appNotifications.js';
 
-const projectReads = new ReadCache(30000, 250);
+const projectReads = new ReadCache(300000, 250);
 
 const router = express.Router();
 router.use(authenticate);
@@ -81,6 +82,12 @@ router.post('/', async (req, res) => {
     batch.create(employeeRef.collection(projectId).doc('Project Data'), storedProject(project));
     await batch.commit();
     projectReads.clear();
+    await notifyUser(project.assignedEmployeeId, {
+      type: 'project_assigned',
+      source: 'admin_project_assignment',
+      projectId,
+      message: `A new project was assigned to you: ${project.projectName || project.name || projectId}.`,
+    }).catch(error => console.warn('Unable to notify the IT employee about the new project.', error.message || error));
     res.status(201).json(project);
   } catch (error) { res.status(400).json({ error: error.message || 'Unable to save project.' }); }
 });

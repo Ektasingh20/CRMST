@@ -14,7 +14,7 @@ import {HttpError,requireThat} from './errors.js';
 import * as v from './validation.js';
 export function createApp({store,auth,bucket},env=process.env,basePath='/api/it') {
   const app=express();app.disable('x-powered-by');
-  const cache=new ReadCache(Math.min(60000,Math.max(0,Number(env.CACHE_TTL_MS)||15000)));
+  const cache=new ReadCache(Math.min(300000,Math.max(0,Number(env.CACHE_TTL_MS)||300000)));
   const reads=createReads(store,cache,Math.min(5000,Number(env.MAX_SCOPE_RECORDS)||5000));
   const mutations=createMutations(store,cache);const uploads=createUploads(bucket,store,mutations);
   const origins=(env.CORS_ORIGINS||'http://localhost:5174').split(',').map(s=>s.trim());
@@ -30,7 +30,7 @@ export function createApp({store,auth,bucket},env=process.env,basePath='/api/it'
   const page=z.object({limit:z.coerce.number().int().min(1).max(100).default(25),cursor:z.string().max(200).default(''),projectId:v.id.optional(),status:z.string().max(50).optional()}).strict();
   api.get('/dashboard',async(req,res)=>{const {limit}=z.object({limit:z.coerce.number().int().min(1).max(25).default(3)}).strict().parse(req.query);res.json(await reads.dashboard(req.member,limit));});
   api.get('/projects',async(req,res)=>res.json(await reads.list(req.member,'projects',page.parse(req.query))));
-  api.get('/projects/:id',async(req,res)=>res.json(v.publicRecord(authorize(req.member,await store.get(`itd_projects/${validId(req.params.id)}`)))));
+  api.get('/projects/:id',async(req,res)=>res.json(await reads.projectDetails(req.member,validId(req.params.id))));
   api.patch('/projects/:id',async(req,res)=>res.json(await mutations.projectUpdate(req.member,validId(req.params.id),v.projectPatch.parse(req.body))));
   api.put('/projects/:id/team',managersOnly,async(req,res)=>res.json(await mutations.setTeam(req.member,validId(req.params.id),v.team.parse(req.body))));
   api.get('/projects/:id/history',async(req,res)=>{
@@ -39,6 +39,7 @@ export function createApp({store,auth,bucket},env=process.env,basePath='/api/it'
     res.json({items:rows.slice(0,limit).map(v.publicRecord),nextCursor:rows.length>limit?rows[limit-1].id:null});
   });
   api.get('/tasks',async(req,res)=>res.json(await reads.list(req.member,'tasks',page.parse(req.query))));
+  api.get('/tasks/mine',async(req,res)=>res.json(await reads.assignedTasks(req.member,page.parse(req.query))));
   api.post('/tasks',managersOnly,async(req,res)=>res.status(201).json(await mutations.taskCreate(req.member,v.taskCreate.parse(req.body))));
   api.patch('/tasks/:id',async(req,res)=>{const {status}=z.object({status:v.taskStatus}).strict().parse(req.body);res.json(await mutations.taskUpdate(req.member,validId(req.params.id),status));});
   const upload=multer({storage:multer.memoryStorage(),limits:{fileSize:5*1024*1024,files:1,fields:0,parts:2}}).single('file');
@@ -49,7 +50,7 @@ export function createApp({store,auth,bucket},env=process.env,basePath='/api/it'
     const messages=kind==='bugs'?'comments':'replies';
     api.get(`/${kind}`,async(req,res)=>res.json(await reads.list(req.member,kind,page.parse(req.query))));
     api.post(`/${kind}`,async(req,res)=>res.status(201).json(await mutations.ticketCreate(req.member,kind,createSchema.parse(req.body))));
-    api.get(`/${kind}/:id`,async(req,res)=>{const row=await store.get(`itd_${kind}/${validId(req.params.id)}`);requireThat(row,404,'Ticket not found.');authorize(req.member,await store.get(`itd_projects/${row.projectId}`));res.json(v.publicRecord(row));});
+    api.get(`/${kind}/:id`,async(req,res)=>{const row=await store.get(`itd_${kind}/${validId(req.params.id)}`);requireThat(row,404,'Ticket not found.');authorize(req.member,await store.get(`itd_projects/${row.projectId}`));const [messageRows,activity,attachments]=await Promise.all([store.query(`itd_${kind}/${row.id}/${messages}`,{limit:100}),store.query(`itd_${kind}/${row.id}/activity`,{limit:100}),store.query(`itd_${kind}/${row.id}/attachments`,{limit:100})]);res.json({...v.publicRecord(row),[kind==='bugs'?'comments':'replies']:messageRows.map(v.publicRecord),activity:activity.map(v.publicRecord),attachments:attachments.map(v.publicRecord)});});
     api.patch(`/${kind}/:id`,async(req,res)=>res.json(await mutations.ticketUpdate(req.member,kind,validId(req.params.id),patchSchema.parse(req.body))));
     api.post(`/${kind}/:id/${messages}`,async(req,res)=>res.status(201).json(await mutations.comment(req.member,kind,validId(req.params.id),v.message.parse(req.body).text)));
     for(const child of [messages,'activity','attachments']) api.get(`/${kind}/:id/${child}`,async(req,res)=>{

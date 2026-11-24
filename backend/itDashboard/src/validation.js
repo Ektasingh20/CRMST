@@ -7,7 +7,13 @@ export const projectPatch = z.union([
   z.object({ action: z.enum(['accept','reject']) }).strict(),
   z.object({ status: z.enum(['Active','Completed']).optional(), executionStatus: z.enum(['Not Started','In Progress','On Hold','Blocked','Completed']).optional(), progress: z.number().min(0).max(100).optional(), completionDate: date.optional(), remarks: text.optional() }).strict().refine(v => Object.keys(v).length > 0, 'No update supplied'),
 ]);
-export const team = z.object({ team: z.array(z.object({ memberId: id, role: z.enum(['Lead','Developer','Tester','Designer']) }).strict()).max(50) }).strict().refine(v => new Set(v.team.map(t => t.memberId)).size === v.team.length, 'Duplicate member');
+export const team = z.object({
+  team: z.array(z.object({ memberId: id, role: z.enum(['Lead','Developer','Tester','Designer']) }).strict()).max(50),
+  startDate: date.nullable().optional(),
+  dueDate: date.nullable().optional(),
+  priority: z.enum(['Low','Medium','High','Critical','Urgent']).optional(),
+  notes: z.string().max(2000).optional(),
+}).strict().refine(v => new Set(v.team.map(t => t.memberId)).size === v.team.length, 'Duplicate member');
 export const taskCreate = z.object({ projectId: id, memberId: id, title: text, dueDate: date.nullable().default(null) }).strict();
 export const bugCreate = z.object({ title: text, projectId: id, priority: z.enum(['Critical','High','Medium','Low']), assignedTo: id, description: text, steps: z.string().max(5000).default(''), expected: z.string().max(5000).default(''), actual: z.string().max(5000).default('') }).strict();
 export const bugPatch = bugCreate.omit({projectId:true}).partial().extend({status:z.enum(['Open','In Progress','Resolved']).optional()}).strict().refine(v=>Object.keys(v).length>0,'No update supplied');

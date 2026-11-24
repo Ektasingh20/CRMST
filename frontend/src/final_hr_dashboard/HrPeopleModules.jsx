@@ -43,6 +43,7 @@ function HRCalendar({ c: { db, upd } }) {
   const employees = activeEmployees(db.emps);
   const [month, setMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
   const [eventType, setEventType] = useState("All events");
+  const [selectedDate, setSelectedDate] = useState("");
   const [employeeId, setEmployeeId] = useState(String(employees[0]?.id || ""));
   const [appraisalDate, setAppraisalDate] = useState(shiftDate(7));
   const [appraisalNote, setAppraisalNote] = useState("");
@@ -73,10 +74,19 @@ function HRCalendar({ c: { db, upd } }) {
       note: [lead.interviewer, lead.interview_mode].filter(Boolean).join(" · "),
     }));
     return list.filter((event) => event.date && event.date.slice(0, 7) === `${month.getFullYear()}-${String(month.getMonth() + 1).padStart(2, "0")}`)
-      .filter((event) => eventType === "All events" || event.type === eventType)
       .sort((a, b) => a.date.localeCompare(b.date));
-  }, [employees, month, appraisals, eventType, db.emps, interviewLeads]);
+  }, [employees, month, appraisals, db.emps, interviewLeads]);
   const counts = ["Birthday", "Work anniversary", "Probation", "Appraisal", "Interview"].map((type) => [type, events.filter((event) => event.type === type).length]);
+  const firstWeekday = new Date(month.getFullYear(), month.getMonth(), 1).getDay();
+  const daysInMonth = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate();
+  const filteredEvents = eventType === "All events" ? events : events.filter((event) => event.type === eventType);
+  const calendarCells = Array.from({ length: Math.ceil((firstWeekday + daysInMonth) / 7) * 7 }, (_, index) => {
+    const day = index - firstWeekday + 1;
+    if (day < 1 || day > daysInMonth) return null;
+    const date = `${month.getFullYear()}-${String(month.getMonth() + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    return { day, date, events: filteredEvents.filter((event) => event.date === date) };
+  });
+  const visibleEvents = selectedDate ? filteredEvents.filter((event) => event.date === selectedDate) : filteredEvents;
   const addAppraisal = (event) => {
     event.preventDefault();
     if (!employeeId || !appraisalDate) return;
@@ -86,23 +96,40 @@ function HRCalendar({ c: { db, upd } }) {
     }, "Appraisal added to HR calendar");
     setAppraisalNote("");
   };
-  const moveMonth = (amount) => setMonth((current) => new Date(current.getFullYear(), current.getMonth() + amount, 1));
+  const moveMonth = (amount) => { setMonth((current) => new Date(current.getFullYear(), current.getMonth() + amount, 1)); setSelectedDate(""); };
   return <div className="hr-new-module">
     <ModuleHeader icon={CalendarDays} eyebrow="KEY PEOPLE DATES" title="HR Calendar" description="Keep important employee milestones and review schedules on everyone’s radar." />
-    <div className="hr-module-metrics">{counts.map(([label, value]) => <div className="hr-card hr-module-metric" key={label}>
-      <span><CalendarDays size={17} /></span><div><small>This month · {label}</small><strong>{value}</strong></div>
-    </div>)}</div>
-    <Panel title={month.toLocaleDateString("en-US", { month: "long", year: "numeric" })} action={<div className="hr-module-month-nav">
-      <button aria-label="Previous month" type="button" onClick={() => moveMonth(-1)}><ChevronLeft size={17} /></button>
-      <button aria-label="Next month" type="button" onClick={() => moveMonth(1)}><ChevronRight size={17} /></button>
-    </div>}>
-      <div className="hr-module-toolbar"><p className="hr-module-muted">{events.length} event{events.length === 1 ? "" : "s"} scheduled</p>
-        <Field label="Show"><select value={eventType} onChange={(event) => setEventType(event.target.value)}>{["All events", "Birthday", "Work anniversary", "Probation", "Appraisal", "Interview"].map((type) => <option key={type}>{type}</option>)}</select></Field>
+    <div className="hr-calendar-overview">
+      <div className="hr-module-metrics hr-calendar-metrics">{counts.map(([label, value]) => <button
+        className={`hr-card hr-module-metric hr-calendar-metric${eventType === label ? " is-active" : ""}`}
+        type="button" aria-pressed={eventType === label} key={label}
+        onClick={() => setEventType((current) => current === label ? "All events" : label)}>
+        <span><CalendarDays size={16} /></span><div><small>This month · {label}</small><strong>{value}</strong></div>
+      </button>)}</div>
+      <Panel title={month.toLocaleDateString("en-US", { month: "long", year: "numeric" })} action={<div className="hr-module-month-nav">
+        <button aria-label="Previous month" type="button" onClick={() => moveMonth(-1)}><ChevronLeft size={17} /></button>
+        <button aria-label="Next month" type="button" onClick={() => moveMonth(1)}><ChevronRight size={17} /></button>
+      </div>}>
+        <div className="hr-calendar-tools"><span>{filteredEvents.length} event{filteredEvents.length === 1 ? "" : "s"}</span><button type="button" onClick={() => setEventType("All events")} disabled={eventType === "All events"}>Show all</button></div>
+      <div className="hr-calendar-grid" role="group" aria-label={`${month.toLocaleDateString("en-US", { month: "long", year: "numeric" })} calendar`}>
+        {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((weekday) => <span className="hr-calendar-weekday" key={weekday}>{weekday}</span>)}
+        {calendarCells.map((cell, index) => cell ? <button
+          className={`hr-calendar-day${cell.events.length ? " has-events" : ""}${today() === cell.date ? " is-today" : ""}${selectedDate === cell.date ? " is-selected" : ""}`}
+          type="button" key={cell.date} aria-pressed={selectedDate === cell.date}
+          aria-label={`${month.toLocaleDateString("en-US", { month: "long" })} ${cell.day}${cell.events.length ? `, ${cell.events.length} events` : ""}`}
+          title={cell.events.map((event) => `${event.type}: ${event.title}`).join("\n") || undefined}
+          onClick={() => setSelectedDate((current) => current === cell.date ? "" : cell.date)}>
+          <span>{cell.day}</span>{cell.events.length > 0 && <i aria-hidden="true">{cell.events.length > 9 ? "9+" : cell.events.length}</i>}
+        </button> : <span className="hr-calendar-day is-empty" key={`empty-${index}`} aria-hidden="true" />)}
       </div>
-      {events.length ? <div className="hr-module-event-list">{events.map((event) => <article className="hr-module-event" key={event.id}>
+      </Panel>
+    </div>
+    <Panel title={selectedDate ? `Events · ${new Date(`${selectedDate}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : "Scheduled events"}>
+      {selectedDate && <p className="hr-calendar-selection">Showing selected date · <button type="button" onClick={() => setSelectedDate("")}>Clear date</button></p>}
+      {visibleEvents.length ? <div className="hr-module-event-list">{visibleEvents.map((event) => <article className="hr-module-event" key={event.id}>
         <time dateTime={event.date}><strong>{new Date(`${event.date}T00:00:00`).getDate()}</strong><span>{new Date(`${event.date}T00:00:00`).toLocaleDateString("en-US", { month: "short" })}</span></time>
         <div><strong>{event.title}</strong><span>{event.type}{event.note ? ` · ${event.note}` : ""}</span></div><span className="hr-module-tag">{event.type}</span>
-      </article>)}</div> : <p className="hr-module-empty">No matching events this month.</p>}
+      </article>)}</div> : <p className="hr-module-empty">{selectedDate ? "No matching events on this date." : "No matching events this month."}</p>}
     </Panel>
     <Panel title="Schedule an appraisal">
       <form className="hr-module-form" onSubmit={addAppraisal}>
