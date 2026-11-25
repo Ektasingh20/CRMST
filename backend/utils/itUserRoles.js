@@ -17,9 +17,11 @@ export function normalizeEmployment(payload) {
   const itWorkspaceRole = requestedWorkspace || (legacyTeamRole ? 'IT Team' : 'IT Head');
   if (!['IT Head', 'IT Team'].includes(itWorkspaceRole)) throw new Error('Choose IT Head or IT Team workspace access.');
   const standardRole = IT_ROLES.find(value => value.toLowerCase() === role.toLowerCase());
+  const canAssignProjects = itWorkspaceRole === 'IT Head'
+    && (payload.canAssignProjects ?? defaultProjectEligibility(standardRole || role));
   return {
     role: standardRole || role,
     itWorkspaceRole,
-    canAssignProjects: itWorkspaceRole === 'IT Head' ? true : false,
+    canAssignProjects,
   };
 }

@@ -7,9 +7,10 @@ export function defaultProjectEligibility(role) {
 export function canReceiveProject(user) {
   if (!isITDepartment(user) || ['inactive', 'disabled'].includes(normalize(user?.status))) return false;
   if (normalize(user?.itWorkspaceRole) === 'it team') return false;
-  if (normalize(user?.itWorkspaceRole) === 'it head') return true;
   if (['junior developer', 'intern'].includes(normalize(user?.role))) return false;
-  return typeof user?.canAssignProjects === 'boolean' ? user.canAssignProjects : defaultProjectEligibility(user?.role);
+  if (typeof user?.canAssignProjects === 'boolean') return user.canAssignProjects;
+  if (normalize(user?.itWorkspaceRole) === 'it head') return true;
+  return defaultProjectEligibility(user?.role);
 }
 
 export function isTeamOnlyITUser(user) {

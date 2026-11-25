@@ -4,7 +4,9 @@ import { isDeepStrictEqual } from "node:util";
 const ROOT_COLLECTION = "tasks";
 const USER_TASKS_COLLECTION = "assignedTasks";
 const originals = new WeakMap();
-const READ_CACHE_TTL_MS = 15 * 1000;
+// Task writes invalidate this cache immediately, so readers can safely reuse the
+// expensive legacy + collection-group result instead of rescanning it every few seconds.
+const READ_CACHE_TTL_MS = 60 * 1000;
 const readCache = new Map();
 const readRequests = new Map();
 let readGeneration = 0;

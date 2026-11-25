@@ -2014,7 +2014,7 @@ function App() {
     let active = true;
     fetchProjects().then(rows => { if (active) setAdminPreviewProjects(rows); }).catch(error => { if (active) setToast(error.message); });
     return () => { active = false; };
-  }, [currentUser, activePage]);
+  }, [currentUser]);
 
   const navResults = useMemo(() => {
     const availableSections = sidebarSections.filter((section) => section.heading !== "IT" || isAdminUser(currentUser));

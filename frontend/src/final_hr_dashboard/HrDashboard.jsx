@@ -7,7 +7,7 @@ import HrLeads from "./HrLeads";
 import MarkAttendance from "./HrMarkAttendance.jsx";
 import { formatAttendanceTime as formatTime, formatAttendanceDuration } from "./attendanceFormatting.js";
 import { fetchAdminAttendanceMonth } from "../../backendApi.js";
-import { buildAttendanceMonthRows, attendanceDateInIndia, calculateAttendancePayroll, calculateSalaryReportPay } from "../../../shared/attendanceClassification.js";
+import { buildAttendanceMonthRows, attendanceDateInIndia, calculateAttendancePayroll, calculateSalaryReportPay, clampPayrollMonth, payrollMonthsForEmploymentYear, payrollYearsForEmployment } from "../../../shared/attendanceClassification.js";
 import { isValidAadhaar, isValidBankAccount, isValidBankText, isValidEmail as isValidProfileEmail, isValidIfsc, isValidIndianMobile, isValidPan, isValidPersonName, isValidProfileDob } from "../../../shared/profileValidation.js";
 import { usePageLoading, getPageTitle } from "./hrPageLoading";
 import { compressImageFile } from "../../imageUpload.js";
@@ -17,6 +17,7 @@ import PasswordResetLink from "../PasswordResetLink.jsx";
 import { HelpdeskIncomingToast } from "../shared/HelpdeskChat.jsx";
 import SalesDropdown from "../../SalesDropdown.jsx";
 import CallListDatePicker from "../../CallListDatePicker.jsx";
+import HrMonthPicker from "./HrMonthPicker.jsx";
 import LogoutConfirmDialog from "../shared/LogoutConfirmDialog.jsx";
 import {
   LayoutGrid, Users, CalendarCheck, ListChecks, Upload, Settings, LogOut, ChevronRight, ChevronDown,
@@ -354,11 +355,18 @@ const PRIOR_EXPERIENCE_DOCUMENTS = [
   ["priorPayslips", "Prior Employer Payslips"],
   ["priorEmploymentProof", "Other Employment Proof"],
 ];
+const SALARY_MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+const PROFILE_DERIVED_COMPENSATION_FIELDS = new Set([
+  "leaveDaysThisMonth", "unpaidLeaveDays", "oneDayBasicSalary", "grossSalary",
+  "unpaidLeaveCalculation", "pendingNonPayableAmount", "currentMonthLeaveDeduction", "joiningExitDateDeduction",
+  "statutoryDeductions", "totalDeductions", "netSalary",
+]);
+const profileSourceFields = (profile) => Object.fromEntries(Object.entries(profile || {}).filter(([key]) => !PROFILE_DERIVED_COMPENSATION_FIELDS.has(key)));
 const profileForBackend = (profile) => {
   const { documents = {}, priorExperienceDocuments, ...existing } = profile;
   const priorDocumentKeys = new Set(PRIOR_EXPERIENCE_DOCUMENTS.map(([key]) => key));
   return {
-    ...existing,
+    ...profileSourceFields(existing),
     documents: Object.fromEntries(Object.entries(documents).filter(([key]) => !priorDocumentKeys.has(key))),
   };
 };
@@ -422,17 +430,26 @@ const PROFILE_SECTIONS = [
     title: "5. Salary & Compensation Details",
     icon: Wallet,
     fields: [
-      ["previewMonth", "Salary Month", "select", false, ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]],
+      ["previewMonth", "Salary Month", "select", false, SALARY_MONTH_NAMES],
       ["previewYear", "Salary Year", "select", false, Array.from({ length: 8 }, (_, i) => String(new Date().getFullYear() - 2 + i))],
-      ["leaveDaysThisMonth", "Leave Days This Month", "number"],
-      ["unpaidLeaveDays", "Unpaid Leave Days (First Day Paid)", "number"],
+      ["leaveDaysThisMonth", "Absent / Leave Days", "calculated"],
+      ["unpaidLeaveDays", "Deducted Absence / Leave Days", "calculated"],
       ["salary", "Basic Salary (₹)", "money"],
+      ["hrm", "HRA (₹)", "money"],
+      ["otherAllowance", "Other Allowances (₹)", "money"],
+      ["bonus", "Bonus (₹)", "money"],
+      ["incentive", "Incentive (₹)", "money"],
+      ["pf", "PF Deduction (₹)", "money"],
+      ["taxDeduction", "Tax Deduction (₹)", "money"],
       ["oneDayBasicSalary", "One-Day Basic Salary (whole rupees)", "calculated"],
       ["grossSalary", "Gross Salary (₹)", "calculated"],
-      ["unpaidLeaveCalculation", "Unpaid Leave Calculation", "calculated"],
-      ["currentMonthLeaveDeduction", "Current Month Leave Deduction", "calculated"],
+      ["unpaidLeaveCalculation", "Deducted Absence / Leave Calculation", "calculated"],
+      ["pendingNonPayableAmount", "Pending / Other Non-Payable Amount", "calculated"],
+      ["currentMonthLeaveDeduction", "Total Attendance Deduction", "calculated"],
       ["joiningExitDateDeduction", "Joining / Exit Date Deduction", "calculated"],
-      ["netSalary", "Net Take-Home Salary (₹)", "calculated"],
+      ["statutoryDeductions", "PF + Tax Deductions", "calculated"],
+      ["totalDeductions", "Total Deductions", "calculated"],
+      ["netSalary", "Net Payable Salary (₹)", "calculated"],
     ],
   },
   {
@@ -452,10 +469,11 @@ const PROFILE_DEFAULTS = {
   panNumber: "", aadhaarNumber: "", bankName: "", accountNumber: "", ifscCode: "", bankBranch: "",
   accountHolder: "", previewMonth: new Date().toLocaleString("en-US", { month: "long" }),
   previewYear: String(new Date().getFullYear()), leaveDaysThisMonth: "0", unpaidLeaveDays: "0",
+  hrm: 0, otherAllowance: 0, bonus: 0, incentive: 0, pf: 0, taxDeduction: 0,
   currentMonthLeaveDeduction: "0", address: "", photo: "",
 };
 const PROFILE_NUMBER_FIELDS = [
-  "salary", "leaveDaysThisMonth", "unpaidLeaveDays",
+  "salary", "hrm", "otherAllowance", "bonus", "incentive", "pf", "taxDeduction",
 ];
 const PROFILE_REQUIRED_FIELDS = {
   name: "Enter the employee's full name.",
@@ -508,7 +526,7 @@ const employeeProfileFieldError = (key, value, values) => {
     const bankKeys = ["bankName", "accountNumber", "ifscCode", "bankBranch", "accountHolder"];
     if (bankKeys.some((field) => String(values[field] || "").trim()) && bankKeys.some((field) => !String(values[field] || "").trim())) return "Complete all bank account fields or leave all of them blank.";
   }
-  if (["salary", "leaveDaysThisMonth", "unpaidLeaveDays"].includes(key) && trimmed && (!Number.isFinite(Number(trimmed)) || Number(trimmed) < 0)) return "Enter a number equal to or greater than zero.";
+  if (PROFILE_NUMBER_FIELDS.includes(key) && trimmed && (!Number.isFinite(Number(trimmed)) || Number(trimmed) < 0)) return "Enter a number equal to or greater than zero.";
   if (values.priorExperience === "Yes" && ["priorEmployer", "priorDesignation", "priorEmploymentFrom", "priorEmploymentTo"].includes(key) && !trimmed) return "This field is required when prior experience is Yes.";
   if (["priorEmploymentFrom", "priorEmploymentTo"].includes(key) && trimmed && (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed) || trimmed > TODAY)) return "Select a valid date up to today.";
   if (key === "priorEmploymentTo" && trimmed && values.priorEmploymentFrom && trimmed < values.priorEmploymentFrom) return "Employment end date cannot be before the start date.";
@@ -626,6 +644,109 @@ function employeeAttendanceYearRows(employee, month, data, { excludeTestData = t
       recordedHolidaysOnly: true,
     }));
 }
+const moneyRound = (value) => Math.round((Number(value) || 0) * 100) / 100;
+function employeePreviewMonth(employee) {
+  const monthIndex = SALARY_MONTH_NAMES.indexOf(String(employee?.previewMonth || ""));
+  const month = monthIndex >= 0 ? monthIndex + 1 : Number(MONTH.slice(5, 7));
+  const year = /^\d{4}$/.test(String(employee?.previewYear || "")) ? Number(employee.previewYear) : Number(MONTH.slice(0, 4));
+  return clampPayrollMonth(employee?.joined, `${year}-${String(month).padStart(2, "0")}`, TODAY);
+}
+function normalizeEmployeePreviewPeriod(employee) {
+  const month = employeePreviewMonth(employee);
+  const [year, monthNumber] = month.split("-").map(Number);
+  return { ...employee, previewYear: String(year), previewMonth: SALARY_MONTH_NAMES[monthNumber - 1] };
+}
+function calculateEmployeeCompensation(db, employee, month, attendanceData) {
+  const attendance = attendanceLookup(db);
+  const legacyDays = salaryAttendanceSummary(db, employee, month, attendance);
+  const attendanceRows = attendanceData
+    ? employeeAttendanceRows(employee, month, attendanceData, { excludeTestData: true })
+    : [];
+  const yearRows = attendanceData
+    ? employeeAttendanceYearRows(employee, month, attendanceData, { excludeTestData: true })
+    : [];
+  const payrollDays = attendanceData
+    ? calculateAttendancePayroll({ employee, month, rows: attendanceRows, yearRows })
+    : null;
+  const days = payrollDays ? {
+    daysInMonth: payrollDays.daysInMonth,
+    employedDays: payrollDays.employedDays,
+    present: payrollDays.presentDays,
+    absent: payrollDays.absentDays,
+    leaveDays: payrollDays.leaveDays,
+    paidLeaveDays: payrollDays.paidLeaveDays,
+    unpaidLeaveDays: payrollDays.deductedLeaveDays,
+    holidayDays: payrollDays.holidayDays,
+    paidHolidayDays: payrollDays.paidHolidayDays,
+    deductedDays: payrollDays.classifiedUnpaidDays,
+    payableDays: payrollDays.payableDays,
+    paidLeaveBalance: payrollDays.paidLeaveBalance,
+    accruedPaidLeave: payrollDays.accruedPaidLeave,
+  } : legacyDays;
+  // The employee profile is the canonical salary source. Saved payroll records
+  // are historical snapshots and must not silently override a profile edit.
+  const baseSalary = Math.max(0, Number(employee.salary) || 0);
+  const hrm = Math.max(0, Number(employee.hrm) || 0);
+  const otherAllowance = Math.max(0, Number(employee.otherAllowance) || 0);
+  const bonus = Math.max(0, Number(employee.bonus) || 0);
+  const incentive = Math.max(0, Number(employee.incentive) || 0);
+  const gross = baseSalary + hrm + otherAllowance + bonus + incentive;
+  const pf = Math.max(0, Number(employee.pf) || 0);
+  const tax = Math.max(0, Number(employee.taxDeduction) || 0);
+  const salaryPay = calculateSalaryReportPay({ baseSalary, payableDays: days.payableDays, daysInMonth: days.daysInMonth, pf, tax });
+  const dailySalary = days.daysInMonth ? baseSalary / days.daysInMonth : 0;
+  const nonEmployedDays = Math.max(0, days.daysInMonth - days.employedDays);
+  const joiningExitDateDeduction = Math.min(baseSalary, moneyRound(dailySalary * nonEmployedDays));
+  const unpaidLeaveCalculation = moneyRound(dailySalary * days.unpaidLeaveDays);
+  const pendingNonPayableAmount = Math.max(0, moneyRound(salaryPay.basicSalaryDeduction - joiningExitDateDeduction - unpaidLeaveCalculation));
+  return {
+    ...employee,
+    ...days,
+    salarySourceMonth: "profile",
+    baseSalary,
+    hrm,
+    otherAllowance,
+    bonus,
+    incentive,
+    gross,
+    pf,
+    tax,
+    dailySalary,
+    oneDayBasicSalary: Math.floor(dailySalary),
+    unpaidLeaveCalculation,
+    pendingNonPayableAmount,
+    joiningExitDateDeduction,
+    attendanceDeduction: salaryPay.basicSalaryDeduction,
+    nonEmployedDeduction: joiningExitDateDeduction,
+    deductions: salaryPay.deductions,
+    net: Math.max(0, moneyRound(gross - salaryPay.deductions)),
+  };
+}
+function compensationProfileValues(summary, month) {
+  const [year, monthNumber] = month.split("-").map(Number);
+  return {
+    previewMonth: SALARY_MONTH_NAMES[monthNumber - 1],
+    previewYear: String(year),
+    dailySalary: summary.dailySalary,
+    leaveDaysThisMonth: summary.absent + summary.leaveDays,
+    unpaidLeaveDays: summary.unpaidLeaveDays,
+    oneDayBasicSalary: summary.oneDayBasicSalary,
+    grossSalary: summary.gross,
+    unpaidLeaveCalculation: summary.unpaidLeaveCalculation,
+    pendingNonPayableAmount: summary.pendingNonPayableAmount,
+    currentMonthLeaveDeduction: summary.attendanceDeduction,
+    joiningExitDateDeduction: summary.joiningExitDateDeduction,
+    statutoryDeductions: summary.pf + summary.tax,
+    totalDeductions: summary.deductions,
+    netSalary: summary.net,
+  };
+}
+function useEmployeeCompensation(employee, db) {
+  const month = employeePreviewMonth(employee);
+  const attendance = usePayrollAttendanceMonth(month);
+  const summary = calculateEmployeeCompensation(db, employee, month, attendance.data);
+  return { ...attendance, month, summary, values: compensationProfileValues(summary, month) };
+}
 function legacyPayrollPreview(employee, month, attendanceState = {}) {
   const amount = (value) => Math.max(0, Number(value) || 0);
   const absences = Object.entries(attendanceState).filter(([key, status]) => key.startsWith(`${month}-`)
@@ -644,12 +765,13 @@ const readUploadedFile = (file) => new Promise((resolve, reject) => {
   reader.readAsDataURL(file);
 });
 
-function ProfileSection({ section, employee, editing, onChange, onFile, fileErrors = {}, photoStatus = "", errors = {}, onBlur }) {
-  const totals = profileTotals(employee);
+function ProfileSection({ section, employee, editing, onChange, onFile, fileErrors = {}, photoStatus = "", errors = {}, onBlur, compensationValues }) {
+  const totals = compensationValues || profileTotals(employee);
   const calculatedText = (key, value) => {
     if (key === "oneDayBasicSalary") return String(value);
+    if (["leaveDaysThisMonth", "unpaidLeaveDays"].includes(key)) return `${Number(value) || 0} days`;
     if (key === "unpaidLeaveCalculation") {
-      return `${totals.oneDayBasicSalary} × ${Number(employee.unpaidLeaveDays) || 0} days = ${Number(value).toFixed(2)}`;
+      return `${Number(totals.dailySalary || totals.oneDayBasicSalary).toFixed(2)} × ${Number(totals.unpaidLeaveDays) || 0} days = ${Number(value).toFixed(2)}`;
     }
     return inr(value);
   };
@@ -678,13 +800,18 @@ function ProfileSection({ section, employee, editing, onChange, onFile, fileErro
           };
           let control;
           if (kind === "select") {
+            const salaryOptions = key === "previewYear"
+              ? payrollYearsForEmployment(employee.joined, TODAY)
+              : key === "previewMonth"
+                ? payrollMonthsForEmploymentYear(employee.joined, employee.previewYear, TODAY).map((month) => SALARY_MONTH_NAMES[month - 1])
+                : options;
             const dropdownOptions = key === "state" ? [
               { key: "state-empty", value: "", label: "Select state or union territory" },
               { key: "state-heading", value: "__states", label: "States", disabled: true, className: "hr-dropdown-heading" },
               ...INDIAN_STATES.map((state) => ({ key: `state-${state}`, value: state, label: state })),
               { key: "territory-heading", value: "__territories", label: "Union Territories", disabled: true, className: "hr-dropdown-heading" },
               ...INDIAN_UNION_TERRITORIES.map((territory) => ({ key: `territory-${territory}`, value: territory, label: territory })),
-            ] : options.map((option) => ({ key: option || "empty", value: option, label: option || "Select an option" }));
+            ] : (salaryOptions || []).map((option) => ({ key: option || "empty", value: option, label: option || "Select an option" }));
             control = editing
               ? <SalesDropdown id={`hr-edit-${key}`} options={dropdownOptions} value={value} onChange={props.onChange} required={isRequired} searchable={key === "state" || dropdownOptions.length > 12} wrapperClassName="hr-form-dropdown" className="hr-form-dropdown-trigger" menuClassName="hr-form-dropdown-menu" aria-label={label} aria-invalid={!!errors[key]} aria-describedby={errors[key] ? errorId : undefined} />
               : <span className="hr-employee-value">{value || "—"}</span>;
@@ -743,19 +870,23 @@ function ProfileSection({ section, employee, editing, onChange, onFile, fileErro
   );
 }
 
-function EmployeeProfileEditor({ employee, onBack, onSave, onDocumentUploaded, onPhotoUploaded }) {
-  const [form, setForm] = useState(() => employeeProfile(employee));
+function EmployeeProfileEditor({ employee, db, onBack, onSave, onDocumentUploaded, onPhotoUploaded }) {
+  const [form, setForm] = useState(() => normalizeEmployeePreviewPeriod(employeeProfile(employee)));
   const [errors, setErrors] = useState({});
   const [fileErrors, setFileErrors] = useState({});
   const [photoStatus, setPhotoStatus] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
+  const compensation = useEmployeeCompensation(form, db);
   const change = (key, value) => {
-    const next = {
+    const changed = {
       ...form,
       [key]: value,
       ...(key === "exEmployee" && value !== "Yes" ? { resignationDate: "" } : {}),
     };
+    const next = ["joined", "previewYear", "previewMonth"].includes(key)
+      ? normalizeEmployeePreviewPeriod(changed)
+      : changed;
     setForm(next);
     setSaveError("");
     setErrors((current) => {
@@ -860,7 +991,8 @@ function EmployeeProfileEditor({ employee, onBack, onSave, onDocumentUploaded, o
     next.salary = Number(next.salary) || 0;
     setSaving(true);
     try {
-      await onSave({ ...next, ...profileTotals(next), currentMonthLeaveDeduction: next.currentMonthLeaveDeduction });
+      const sourceValues = profileSourceFields(next);
+      await onSave(sourceValues);
     } catch (error) {
       setSaveError(error.message || "Unable to save this employee profile.");
     } finally {
@@ -876,9 +1008,11 @@ function EmployeeProfileEditor({ employee, onBack, onSave, onDocumentUploaded, o
       </div>
       <form noValidate onSubmit={save}>
         {saveError && <p className="hr-form-error" role="alert">{saveError}</p>}
+        {compensation.loading && <p className="hr-attendance-load-state">Loading attendance-based compensation…</p>}
+        {compensation.error && <p className="hr-form-error" role="status">Live attendance could not be loaded. Compensation is using locally available attendance until refresh.</p>}
         {Object.keys(errors).length > 0 && <p className="hr-form-error hr-profile-validation-summary" role="alert">Please correct the highlighted fields before updating the employee profile.</p>}
         {PROFILE_SECTIONS.map((section) => (
-          <ProfileSection key={section.title} section={section} employee={form} editing onChange={change} onBlur={validateField} onFile={upload} fileErrors={fileErrors} photoStatus={photoStatus} errors={errors} />
+          <ProfileSection key={section.title} section={section} employee={form} compensationValues={compensation.values} editing onChange={change} onBlur={validateField} onFile={upload} fileErrors={fileErrors} photoStatus={photoStatus} errors={errors} />
         ))}
         <section className="hr-employee-section">
           <h3><FileText size={16} /> 7. Official Documents & Attachments</h3>
@@ -941,13 +1075,15 @@ function EmployeeProfileEditor({ employee, onBack, onSave, onDocumentUploaded, o
   );
 }
 
-function EmployeeDetailsModal({ employee, onClose }) {
+function EmployeeDetailsModal({ employee, db, onClose }) {
   const [preview, setPreview] = useState(null);
   const [documentError, setDocumentError] = useState("");
   const [officialDocuments, setOfficialDocuments] = useState(employee.documents || {});
   const [documentsLoading, setDocumentsLoading] = useState(true);
   const previewRef = useRef(null);
-  const details = employeeProfile(employee);
+  const profileDetails = employeeProfile(employee);
+  const compensation = useEmployeeCompensation(profileDetails, db);
+  const details = { ...profileDetails, ...compensation.values };
   const resignation = details.resignationRecord;
   useEffect(() => {
     let active = true;
@@ -985,7 +1121,7 @@ function EmployeeDetailsModal({ employee, onClose }) {
     let y = 76;
     PROFILE_SECTIONS.forEach((section) => {
       const fields = section.fields.filter(([key]) => key !== "photo");
-      const moneyKeys = new Set(["salary", "oneDayBasicSalary", "grossSalary", "unpaidLeaveCalculation", "currentMonthLeaveDeduction", "joiningExitDateDeduction", "netSalary"]);
+      const moneyKeys = new Set(["salary", "hrm", "otherAllowance", "bonus", "incentive", "pf", "taxDeduction", "oneDayBasicSalary", "grossSalary", "unpaidLeaveCalculation", "pendingNonPayableAmount", "currentMonthLeaveDeduction", "joiningExitDateDeduction", "statutoryDeductions", "totalDeductions", "netSalary"]);
       const labelOverrides = { salary: "Basic Salary (INR)", grossSalary: "Gross Salary (INR)", netSalary: "Net Take-Home Salary (INR)" };
       const rows = fields.map(([key, label]) => {
         const value = details[key];
@@ -1086,12 +1222,14 @@ function EmployeeDetailsModal({ employee, onClose }) {
           <button type="button" aria-label="Close employee details" onClick={onClose}><X size={18} /></button>
         </header>
         <div className="hr-employee-detail-content">
+          {compensation.loading && <p className="hr-attendance-load-state">Loading attendance-based compensation…</p>}
+          {compensation.error && <p className="hr-form-error" role="status">Live attendance could not be loaded. Compensation is using locally available attendance until refresh.</p>}
           <div className="hr-employee-detail-profile">
             {details.photo ? <img className="hr-profile-photo-large" src={details.photo} alt={`${details.name} profile`} /> : <div className="hr-profile-photo-large hr-profile-placeholder"><UserCircle size={38} /></div>}
             <div><h3>{details.name}</h3><p>{details.desig || "Employee"} | {details.dept}</p></div>
           </div>
           {PROFILE_SECTIONS.map((section) => (
-            <ProfileSection key={section.title} section={section} employee={details} editing={false} />
+            <ProfileSection key={section.title} section={section} employee={details} compensationValues={compensation.values} editing={false} />
           ))}
           <section className="hr-employee-section">
             <h3><FileText size={16} /> 7. Official Documents & Attachments</h3>
@@ -1181,7 +1319,7 @@ function EmpForm({ init = blank, onSave, label }) {
       <F l="Department"><select value={f.dept} onChange={s("dept")}>{DEPTS.map((d) => <option key={d}>{d}</option>)}</select></F>
       <F l="Designation"><input required value={f.desig} onChange={s("desig")} /></F>
       <F l="Monthly salary (₹)"><input required type="number" min="0" value={f.salary} onChange={s("salary")} /></F>
-      <F l="Joining date"><input required type="date" value={f.joined} onChange={s("joined")} /></F>
+      <F l="Joining date"><CallListDatePicker id="hr-legacy-joining-date" className="hr-form-date-picker" triggerClassName="hr-form-date-trigger" popoverClassName="hr-form-calendar-popover" popoverWidth={350} popoverHeight={370} label="Joining date" hideLabel value={f.joined} min="1900-01-01" max={TODAY} required onChange={(value) => setF({ ...f, joined: value })} /></F>
       <div className="hr-full"><button className="hr-btn" type="submit" disabled={saving}>{saving ? "Saving…" : label}</button></div>
     </form>
   );
@@ -1569,6 +1707,7 @@ function EmpList({ c: { db, upd, go, employeeRosterStatus }, cards, setId }) {
   if (cards && edit) {
     return <EmployeeProfileEditor
       employee={edit}
+      db={db}
       onBack={() => setEdit(null)}
       onPhotoUploaded={(imageUrl, imagePublicId) => upd((d) => ({ emps: d.emps.map((item) => item.backendId === edit.backendId ? { ...item, photo: imageUrl, imageUrl, imagePublicId } : item) }))}
       onDocumentUploaded={(key, document) => upd((d) => ({
@@ -1600,7 +1739,7 @@ function EmpList({ c: { db, upd, go, employeeRosterStatus }, cards, setId }) {
         }
         upd((d) => ({
           emps: d.emps.map((x) => (x.id === edit.id ? {
-            ...x,
+            ...profileSourceFields(x),
             ...profile,
             status: profile.exEmployee === "Yes" ? "ex" : "active",
             employeeStatus: profile.exEmployee === "Yes" ? "Inactive" : (profile.employeeStatus || "Active"),
@@ -1620,7 +1759,7 @@ function EmpList({ c: { db, upd, go, employeeRosterStatus }, cards, setId }) {
         <div className="hr-department-tabs" role="group" aria-label="Filter employees by department">
           {["All", ...departments].map((name) => <button key={name} type="button" className={`hr-department-tab${dept === name ? " is-active" : ""}`} aria-pressed={dept === name} onClick={() => setDept(name)}>{name}</button>)}
         </div>
-        <label className="hr-profile-search"><Search size={16} /><input type="search" placeholder="Search Employee..." aria-label="Search employees" value={q} onChange={(e) => setQ(e.target.value)} /></label>
+        <label className="hr-profile-search hr-employee-search"><Search size={16} /><input type="search" placeholder="Search Employee..." aria-label="Search employees" value={q} onChange={(e) => setQ(e.target.value)} /></label>
         <span className="hr-count">{rows.length} {rows.length === 1 ? "employee" : "employees"}</span>
       </div>
       {actionError && <p className="hr-form-error" role="alert">{actionError}</p>}
@@ -1641,7 +1780,7 @@ function EmpList({ c: { db, upd, go, employeeRosterStatus }, cards, setId }) {
       )) : <Empty t="No employees match your search." />}
     </> : <>
       <div className="hr-tools">
-        <label className="hr-sbox"><Search size={16} /><input placeholder="Search name, email, phone..." value={q} onChange={(e) => setQ(e.target.value)} /></label>
+        <label className="hr-sbox hr-employee-search"><Search size={16} /><input type="search" placeholder="Search Employee..." aria-label="Search employees" value={q} onChange={(e) => setQ(e.target.value)} /></label>
         <select value={dept} onChange={(e) => setDept(e.target.value)}>{["All", ...DEPTS].map((d) => <option key={d}>{d}</option>)}</select>
         <span className="hr-count">{rows.length} employees</span>
       </div>
@@ -1654,12 +1793,12 @@ function EmpList({ c: { db, upd, go, employeeRosterStatus }, cards, setId }) {
       <EmpForm init={edit} label="Save changes" onSave={async (f) => {
         if (edit.backendId) {
           const role = f.dept === "IT" ? (String(edit.dept).toLowerCase() === "it" ? (edit.role || f.desig) : f.desig) : PROFILE_DEPARTMENT_ROLES[f.dept] || f.dept;
-          await updateUser(edit.backendId, { name: f.name, email: f.email, phone: f.phone, emergencyContact: edit.emergencyContact || "", maritalStatus: edit.maritalStatus || "", education: edit.education || "", dept: f.dept, position: f.desig, role, joined: f.joined, state: edit.state || "", branch: edit.branch || "", branchCode: edit.branchCode || "", address: edit.address || "", imageUrl: edit.imageUrl || edit.photo || "", imagePublicId: edit.imagePublicId || "" });
+          await updateUser(edit.backendId, { name: f.name, email: f.email, phone: f.phone, emergencyContact: edit.emergencyContact || "", maritalStatus: edit.maritalStatus || "", education: edit.education || "", dept: f.dept, position: f.desig, role, joined: f.joined, salary: Number(f.salary) || 0, state: edit.state || "", branch: edit.branch || "", branchCode: edit.branchCode || "", address: edit.address || "", imageUrl: edit.imageUrl || edit.photo || "", imagePublicId: edit.imagePublicId || "" });
         }
-        upd((d) => ({ emps: d.emps.map((x) => (x.id === edit.id ? { ...x, ...f } : x)) }), `Updated ${f.name}`);
+        upd((d) => ({ emps: d.emps.map((x) => (x.id === edit.id ? { ...profileSourceFields(x), ...f } : x)) }), `Updated ${f.name}`);
         setEdit(null);
       }} /></Modal>}
-    {view && <EmployeeDetailsModal employee={view} onClose={() => setView(null)} />}
+    {view && <EmployeeDetailsModal employee={view} db={db} onClose={() => setView(null)} />}
   </>);
 }
 function ExEmployees({ c: { db, upd } }) {
@@ -1694,6 +1833,7 @@ function ExEmployees({ c: { db, upd } }) {
   if (edit) {
     return <EmployeeProfileEditor
       employee={edit.exEmployee === "Yes" ? edit : { ...edit, exEmployee: "Yes" }}
+      db={db}
       onBack={() => setEdit(null)}
       onPhotoUploaded={(imageUrl, imagePublicId) => upd((d) => ({ emps: d.emps.map((item) => item.backendId === edit.backendId ? { ...item, photo: imageUrl, imageUrl, imagePublicId } : item) }))}
       onDocumentUploaded={(key, document) => upd((d) => ({
@@ -1719,7 +1859,7 @@ function ExEmployees({ c: { db, upd } }) {
         }
         upd((d) => ({
           emps: d.emps.map((e) => (e.id === edit.id ? {
-            ...e,
+            ...profileSourceFields(e),
             ...profile,
             status: profile.exEmployee === "Yes" ? "ex" : "active",
             employeeStatus: profile.exEmployee === "Yes" ? "Inactive" : (profile.employeeStatus || "Active"),
@@ -1736,7 +1876,7 @@ function ExEmployees({ c: { db, upd } }) {
       <div className="hr-department-tabs" role="group" aria-label="Filter ex-employees by department">
         {["All", ...departments].map((name) => <button key={name} type="button" className={`hr-department-tab${dept === name ? " is-active" : ""}`} aria-pressed={dept === name} onClick={() => setDept(name)}>{name}</button>)}
       </div>
-      <label className="hr-profile-search"><Search size={16} /><input type="search" placeholder="Search Ex-Employee..." aria-label="Search ex-employees" value={q} onChange={(e) => setQ(e.target.value)} /></label>
+      <label className="hr-profile-search hr-employee-search"><Search size={16} /><input type="search" placeholder="Search Ex-Employee..." aria-label="Search ex-employees" value={q} onChange={(e) => setQ(e.target.value)} /></label>
       <span className="hr-count">{rows.length} {rows.length === 1 ? "ex-employee" : "ex-employees"}</span>
     </div>
     {actionError && <p className="hr-form-error" role="alert">{actionError}</p>}
@@ -1760,7 +1900,7 @@ function ExEmployees({ c: { db, upd } }) {
         ))}</div>
       </section>
     )) : <Empty t="No ex-employees match your search. Employees moved from Employee Profiles will appear here." />}
-    {view && <EmployeeDetailsModal employee={view} onClose={() => setView(null)} />}
+    {view && <EmployeeDetailsModal employee={view} db={db} onClose={() => setView(null)} />}
   </>);
 }
 function AllEmployees({ c: { db, setDb } }) {
@@ -1817,7 +1957,7 @@ function AllEmployees({ c: { db, setDb } }) {
     <div className="hr-all-employees">
     <Card title="Employee directory" right={<span className="hr-count">{rows.length} {rows.length === 1 ? "employee" : "employees"}</span>}>
       <div className="hr-tools hr-all-employees-toolbar">
-        <label className="hr-sbox"><Search size={16} /><input type="search" placeholder="Search by name, email or contact" aria-label="Search all employees" value={q} onChange={(event) => setQ(event.target.value)} /></label>
+        <label className="hr-sbox hr-employee-search"><Search size={16} /><input type="search" placeholder="Search Employee..." aria-label="Search all employees" value={q} onChange={(event) => setQ(event.target.value)} /></label>
           <button className="hr-ghost" type="button" onClick={refreshDirectory} disabled={syncing}><RotateCcw size={14} />{syncing ? "Refreshing…" : "Refresh"}</button>
       </div>
         {syncError && <p className="hr-form-error" role="status">{syncError}</p>}
@@ -1832,88 +1972,24 @@ function AllEmployees({ c: { db, setDb } }) {
       ]} />
     </Card>
     </div>
-    {view && <EmployeeDetailsModal employee={view} onClose={() => setView(null)} />}
+    {view && <EmployeeDetailsModal employee={view} db={db} onClose={() => setView(null)} />}
   </>);
 }
 function SalaryReport({ c: { db } }) {
   const initialFilters = { month: MONTH, department: "All", query: "" };
   const [filters, setFilters] = useState(initialFilters);
   const [appliedFilters, setAppliedFilters] = useState(initialFilters);
+  const reportMinMonth = act(db)
+    .map(joinDateOf)
+    .filter((date) => date && date.slice(0, 7) <= MONTH)
+    .sort()[0]?.slice(0, 7) || MONTH;
   const filteredRows = act(db).filter((employee) => (
     (appliedFilters.department === "All" || employee.dept === appliedFilters.department)
     && `${employee.id} ${employee.name} ${employee.dept} ${employee.desig} ${employee.bankName || ""} ${employee.accountNumber || ""} ${employee.ifscCode || ""}`.toLowerCase().includes(appliedFilters.query.trim().toLowerCase())
   ));
   const reportMonth = appliedFilters.month || MONTH;
-  const reportMonthStart = `${reportMonth}-01`;
-  const reportMonthEnd = `${reportMonth}-${String(new Date(...reportMonth.split("-").map(Number), 0).getDate()).padStart(2, "0")}`;
   const { data: salaryAttendanceData, loading: salaryAttendanceLoading, error: salaryAttendanceError } = usePayrollAttendanceMonth(reportMonth);
-  const salarySourceDate = P(`${reportMonth}-01`);
-  salarySourceDate.setMonth(salarySourceDate.getMonth() - 1);
-  const salarySourceMonth = iso(salarySourceDate).slice(0, 7);
-  const salarySourceLabel = salarySourceDate.toLocaleString("en-IN", { month: "long", year: "numeric" });
-  const previousMonthPayrolls = new Map((db.payrolls || [])
-    .filter((payroll) => payroll.month === salarySourceMonth && !payroll.deleted)
-    .map((payroll) => [String(payroll.employeeId), payroll]));
-  const attendance = attendanceLookup(db);
-  const rows = filteredRows.map((employee) => {
-    const reportEmployee = joinDateOf(employee) > reportMonthEnd
-      ? { ...employee, joined: reportMonthStart, joiningDate: reportMonthStart }
-      : employee;
-    const legacyDays = salaryAttendanceSummary(db, reportEmployee, reportMonth, attendance);
-    const attendanceRows = salaryAttendanceData
-      ? employeeAttendanceRows(reportEmployee, reportMonth, salaryAttendanceData, { excludeTestData: true })
-      : [];
-    const yearRows = salaryAttendanceData
-      ? employeeAttendanceYearRows(reportEmployee, reportMonth, salaryAttendanceData, { excludeTestData: true })
-      : [];
-    const payrollDays = salaryAttendanceData
-      ? calculateAttendancePayroll({ employee: reportEmployee, month: reportMonth, rows: attendanceRows, yearRows })
-      : null;
-    const days = payrollDays ? {
-      daysInMonth: payrollDays.daysInMonth,
-      employedDays: payrollDays.employedDays,
-      present: payrollDays.presentDays,
-      absent: payrollDays.absentDays,
-      leaveDays: payrollDays.leaveDays,
-      paidLeaveDays: payrollDays.paidLeaveDays,
-      unpaidLeaveDays: payrollDays.deductedLeaveDays,
-      holidayDays: payrollDays.holidayDays,
-      deductedDays: payrollDays.classifiedUnpaidDays,
-      payableDays: payrollDays.payableDays,
-      paidLeaveBalance: payrollDays.paidLeaveBalance,
-      accruedPaidLeave: payrollDays.accruedPaidLeave,
-    } : legacyDays;
-    const previousPayroll = previousMonthPayrolls.get(String(employee.id));
-    const baseSalary = Math.max(0, Number(previousPayroll?.salary ?? employee.salary) || 0);
-    const hrm = Math.max(0, Number(previousPayroll?.hra ?? employee.hrm) || 0);
-    const otherAllowance = Math.max(0, Number(previousPayroll?.allowances ?? employee.otherAllowance) || 0);
-    const bonus = Math.max(0, Number(previousPayroll?.bonus ?? employee.bonus) || 0);
-    const incentive = Math.max(0, Number(previousPayroll?.incentive ?? employee.incentive) || 0);
-    const gross = baseSalary + hrm + otherAllowance + bonus + incentive;
-    const pf = Math.max(0, Number(previousPayroll?.pf ?? employee.pf) || 0);
-    const tax = Math.max(0, Number(previousPayroll?.tax ?? employee.taxDeduction) || 0);
-    const salaryPay = calculateSalaryReportPay({ baseSalary, payableDays: days.payableDays, daysInMonth: days.daysInMonth, pf, tax });
-    const attendanceDeduction = salaryPay.basicSalaryDeduction;
-    const nonEmployedDeduction = 0;
-    const deductions = salaryPay.deductions;
-    return {
-      ...employee,
-      ...days,
-      salarySourceMonth: previousPayroll ? salarySourceMonth : "profile",
-      baseSalary,
-      hrm,
-      otherAllowance,
-      bonus,
-      incentive,
-      gross,
-      pf,
-      tax,
-      attendanceDeduction,
-      nonEmployedDeduction,
-      deductions,
-      net: Math.max(0, gross - deductions),
-    };
-  });
+  const rows = filteredRows.map((employee) => calculateEmployeeCompensation(db, employee, reportMonth, salaryAttendanceData));
   const totalNet = rows.reduce((total, row) => total + row.net, 0);
   const totalGross = rows.reduce((total, row) => total + row.gross, 0);
   const totalDeductions = rows.reduce((total, row) => total + row.deductions, 0);
@@ -1926,7 +2002,7 @@ function SalaryReport({ c: { db } }) {
     "A/C No": row.accountNumber || "-",
     IFSC: row.ifscCode || "-",
     "Basic Salary": row.baseSalary,
-    "Salary Source": row.salarySourceMonth === "profile" ? "Employee profile" : row.salarySourceMonth,
+    "Salary Source": "Employee profile",
     Present: `${row.present} days`,
     "Absent / Leave": `${row.absent + row.leaveDays} days (${row.absent} absent; ${row.paidLeaveDays} paid, ${row.unpaidLeaveDays} deducted; ${row.paidLeaveBalance || 0} balance)`,
     Holiday: row.holidayDays,
@@ -1975,14 +2051,21 @@ function SalaryReport({ c: { db } }) {
   return (
     <div className="hr-salary-report">
       <section className="hr-card hr-box hr-salary-filter-panel">
+        <header className="hr-salary-filter-heading">
+          <div><h2>Salary Report</h2><p>Review monthly employee compensation and payroll deductions</p></div>
+          <div className="hr-salary-export-actions" role="group" aria-label="Export salary report">
+            <button type="button" className="hr-report-export excel" onClick={exportExcel} disabled={!rows.length}><FileSpreadsheet size={16} /> Export Excel</button>
+            <button type="button" className="hr-report-export csv" onClick={exportCsv} disabled={!rows.length}><Download size={16} /> Export CSV</button>
+            <button type="button" className="hr-report-export pdf" onClick={exportPdf} disabled={!rows.length}><Download size={16} /> Export PDF ({rows.length})</button>
+          </div>
+        </header>
         <div className="hr-salary-filter-grid">
-          <label className="hr-f"><span>Month</span><input type="month" max={MONTH} value={filters.month} onChange={(event) => setFilters((current) => ({ ...current, month: event.target.value }))} /></label>
-          <label className="hr-f"><span>Department</span><select value={filters.department} onChange={(event) => setFilters((current) => ({ ...current, department: event.target.value }))}>{["All", ...DEPTS].map((department) => <option key={department}>{department}</option>)}</select></label>
-          <label className="hr-f hr-salary-search"><span>Search employees</span><div className="hr-sbox"><Search size={16} /><input type="search" placeholder="Name, ID, bank..." value={filters.query} onChange={(event) => setFilters((current) => ({ ...current, query: event.target.value }))} /></div></label>
+          <div className="hr-f"><span>Month</span><HrMonthPicker id="hr-salary-report-month" label="Salary report month" value={filters.month} min={reportMinMonth} max={MONTH} onChange={(month) => setFilters((current) => ({ ...current, month }))} /></div>
+          <div className="hr-f"><span>Department</span><SalesDropdown id="hr-salary-report-department" options={["All", ...DEPTS].map((department) => ({ value: department, label: department }))} value={filters.department} onChange={(event) => setFilters((current) => ({ ...current, department: event.target.value }))} wrapperClassName="hr-salary-dropdown" className="hr-salary-dropdown-trigger" menuClassName="hr-form-dropdown-menu hr-salary-dropdown-menu" aria-label="Department" /></div>
+          <label className="hr-f hr-salary-search"><span>Search employees</span><div className="hr-sbox hr-employee-search"><Search size={16} /><input type="search" placeholder="Search Employee..." aria-label="Search salary report employees" value={filters.query} onChange={(event) => setFilters((current) => ({ ...current, query: event.target.value }))} /></div></label>
         </div>
         <div className="hr-salary-filter-actions">
           <div><button type="button" className="hr-ghost" onClick={() => setAppliedFilters({ ...filters })}><Filter size={15} /> Apply filters</button><button type="button" className="hr-ghost" onClick={reset}><RotateCcw size={15} /> Reset</button></div>
-          <div><button type="button" className="hr-ghost" onClick={exportExcel} disabled={!rows.length}><FileSpreadsheet size={15} /> Export to Excel</button><button type="button" className="hr-ghost" onClick={exportCsv} disabled={!rows.length}><FileSpreadsheet size={15} /> Export to CSV</button><button type="button" className="hr-ghost" onClick={exportPdf} disabled={!rows.length}><FileText size={15} /> Export to PDF</button></div>
         </div>
       </section>
       <Card title="Salary report" right={<span className="hr-count">{rows.length} employees · {reportMonth}</span>}>
@@ -1994,7 +2077,7 @@ function SalaryReport({ c: { db } }) {
             <td data-label="S.N">{index + 1}</td>
             <td data-label="Employee" className="hr-salary-name"><strong>{row.name}</strong><small>ID {row.id} · {row.dept || "—"}</small></td>
             <td data-label="Bank details" className="hr-salary-detail"><strong>{row.bankName || "—"}</strong><small>A/C {row.accountNumber || "—"}</small><small>IFSC {row.ifscCode || "—"}</small></td>
-            <td data-label="Basic salary" className="hr-salary-detail"><strong>{money(row.baseSalary)}</strong><small>{row.salarySourceMonth === "profile" ? "Profile salary" : salarySourceLabel}</small></td>
+            <td data-label="Basic salary" className="hr-salary-detail"><strong>{money(row.baseSalary)}</strong><small>Profile salary</small></td>
             <td data-label="Present" className="hr-salary-present">{row.present} days</td>
             <td data-label="Absent / Leave" className="hr-salary-leave"><span>{row.absent + row.leaveDays} days</span><small>{row.absent} absent · {row.paidLeaveDays} paid · {row.unpaidLeaveDays} deducted</small><small>{row.paidLeaveBalance || 0} paid leave balance</small></td>
             <td data-label="Holiday" className="hr-salary-holiday">{row.holidayDays} days</td>
@@ -2028,6 +2111,46 @@ function IDCard({ c: { db, employeeRosterStatus } }) {
   const employees = act(db).filter((employee) =>
     `${employee.id} ${employee.name} ${employee.phone} ${employee.dept} ${employee.desig} ${employee.joined}`.toLowerCase().includes(search));
   const cardId = (employee) => `ST-${String(employee.id).padStart(4, "0")}`;
+  const exportRows = employees.map((employee, index) => ({
+    "S.N": index + 1,
+    "Employee ID": cardId(employee),
+    Name: employee.name || "-",
+    Contact: employee.phone || "-",
+    Department: employee.dept || "-",
+    Position: employee.desig || "-",
+    "Date of Joining": employee.joined || "-",
+  }));
+  const exportExcel = () => {
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(exportRows), "ID Card List");
+    XLSX.writeFile(workbook, "employee-id-card-list.xlsx");
+  };
+  const exportCsv = () => {
+    const csv = XLSX.utils.sheet_to_csv(XLSX.utils.json_to_sheet(exportRows));
+    const url = URL.createObjectURL(new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "employee-id-card-list.csv";
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+  const exportPdf = () => {
+    const pdf = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
+    pdf.setFontSize(16);
+    pdf.text("Employee ID Card List", 32, 34);
+    pdf.setFontSize(9);
+    pdf.text(`${employees.length} employee${employees.length === 1 ? "" : "s"}`, 32, 50);
+    autoTable(pdf, {
+      startY: 62,
+      head: [["S.N", "Employee ID", "Name", "Contact", "Department", "Position", "Date of Joining"]],
+      body: exportRows.map((row) => Object.values(row)),
+      styles: { fontSize: 8, cellPadding: 5 },
+      headStyles: { fillColor: [139, 79, 45] },
+      alternateRowStyles: { fillColor: [251, 247, 242] },
+      margin: { left: 32, right: 32 },
+    });
+    pdf.save("employee-id-card-list.pdf");
+  };
   const cardDetails = selected ? [
     ["Emp ID", cardId(selected)],
     ["Department", selected.dept || "-"],
@@ -2165,7 +2288,12 @@ function IDCard({ c: { db, employeeRosterStatus } }) {
   return (<>
     <Card title="ID Card List" right={<span className="hr-count">{employees.length} employees</span>}>
       <div className="hr-tools hr-id-card-toolbar">
-        <label className="hr-sbox"><Search size={16} /><input type="search" placeholder="Search name, ID, department..." aria-label="Search ID cards" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
+        <label className="hr-sbox hr-employee-search"><Search size={16} /><input type="search" placeholder="Search Employee..." aria-label="Search ID cards" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
+        <div className="hr-id-card-export-actions" role="group" aria-label="Export ID card list">
+          <button type="button" className="hr-report-export excel" onClick={exportExcel} disabled={!employees.length}><FileSpreadsheet size={16} /> Export Excel</button>
+          <button type="button" className="hr-report-export csv" onClick={exportCsv} disabled={!employees.length}><Download size={16} /> Export CSV</button>
+          <button type="button" className="hr-report-export pdf" onClick={exportPdf} disabled={!employees.length}><Download size={16} /> Export PDF ({employees.length})</button>
+        </div>
       </div>
       <Table rows={employees} empty="No ID cards match your search." cols={[
         ["Emp ID", (employee) => `ST-${String(employee.id).padStart(4, "0")}`],
@@ -2245,18 +2373,16 @@ function Payroll({ c: { db, upd } }) {
   const { data: attendanceData, loading: attendanceLoading, error: attendanceError } = usePayrollAttendanceMonth(selectedMonth);
   const calculatePayroll = (employee, month) => {
     if (!attendanceData) throw new Error("Attendance must be loaded before calculating a payroll draft.");
-    const attendanceRows = employeeAttendanceRows(employee, month, attendanceData, { excludeTestData: true });
-    const yearRows = employeeAttendanceYearRows(employee, month, attendanceData, { excludeTestData: true });
-    const attendancePayroll = calculateAttendancePayroll({ employee, month, rows: attendanceRows, yearRows });
-    const salary = amount(employee.salary);
-    const hra = amount(employee.hrm);
-    const allowances = amount(employee.otherAllowance);
-    const bonus = amount(employee.bonus);
-    const incentive = amount(employee.incentive);
-    const pf = amount(employee.pf);
-    const tax = amount(employee.taxDeduction);
-    const otherDeductions = attendancePayroll.otherDeductions;
-    const gross = salary + hra + allowances + bonus + incentive;
+    const compensation = calculateEmployeeCompensation(db, employee, month, attendanceData);
+    const salary = compensation.baseSalary;
+    const hra = compensation.hrm;
+    const allowances = compensation.otherAllowance;
+    const bonus = compensation.bonus;
+    const incentive = compensation.incentive;
+    const pf = compensation.pf;
+    const tax = compensation.tax;
+    const otherDeductions = compensation.attendanceDeduction;
+    const gross = compensation.gross;
     return {
       employeeId: employee.id,
       employeeName: employee.name,
@@ -2273,7 +2399,7 @@ function Payroll({ c: { db, upd } }) {
       tax,
       otherDeductions,
       gross,
-      net: Math.max(0, gross - pf - tax - otherDeductions),
+      net: compensation.net,
     };
   };
   const monthPayrolls = savedPayrolls.filter((payroll) => payroll.month === selectedMonth);
@@ -2463,8 +2589,8 @@ function Payroll({ c: { db, upd } }) {
     </section>}
     <Card title="Payroll Management" right={<span className="hr-count">{rows.length} payroll records · {monthName(appliedFilters.month)}</span>}>
       <div className="hr-tools hr-payroll-toolbar">
-        <label className="hr-sbox"><Search size={16} /><input type="search" placeholder="Search Employee..." aria-label="Search payroll records" value={filters.query} onChange={(event) => setFilters((current) => ({ ...current, query: event.target.value }))} /></label>
-        <label className="hr-f hr-payroll-month"><span>Filter by month</span><input type="month" value={filters.month} onChange={(event) => setFilters((current) => ({ ...current, month: event.target.value }))} /></label>
+        <label className="hr-sbox hr-employee-search"><Search size={16} /><input type="search" placeholder="Search Employee..." aria-label="Search payroll records" value={filters.query} onChange={(event) => setFilters((current) => ({ ...current, query: event.target.value }))} /></label>
+        <label className="hr-f hr-payroll-month"><span>Filter by month</span><HrMonthPicker id="hr-payroll-month" label="Filter by month" value={filters.month} min="2020-01" max={MONTH} onChange={(month) => setFilters((current) => ({ ...current, month }))} /></label>
         <button className="hr-btn" type="button" onClick={() => setAppliedFilters({ ...filters })}><Search size={15} /> Search</button>
       </div>
       <div className="hr-payroll-summary"><span>Gross payroll <strong>{formatMoney(totals.gross)}</strong></span><span>Net salary payable <strong>{formatMoney(totals.net)}</strong></span></div>
@@ -2656,15 +2782,15 @@ function AttendanceReport({ c: { db, user } }) {
           {["Present", "Absent", "Leave", "Holiday", "Pending"].map((status) => <div className="hr-attendance-history-stat" key={status}><span>{status}</span><strong>{filteredRows.filter((row) => row.status === status).length}</strong></div>)}
         </div>
         <form className="hr-attendance-report-filters" onSubmit={(event) => event.preventDefault()}>
-          <F l="Month"><input type="month" value={filters.month} onChange={updateFilter("month")} /></F>
+          <F l="Month"><HrMonthPicker id="hr-attendance-history-month" label="Month" value={filters.month} min="2020-01" max={MONTH} onChange={(month) => setFilters((current) => ({ ...current, month }))} /></F>
           <F l="Status">
             <select value={filters.status} onChange={updateFilter("status")}>
               <option value="">All statuses</option>
               {["Present", "Absent", "Leave", "Holiday", "Pending"].map((status) => <option key={status}>{status}</option>)}
             </select>
           </F>
-          <F l="From"><input type="date" value={filters.dateFrom} onChange={updateFilter("dateFrom")} /></F>
-          <F l="To"><input type="date" value={filters.dateTo} onChange={updateFilter("dateTo")} /></F>
+          <F l="From"><CallListDatePicker id="hr-attendance-history-from" className="hr-form-date-picker" triggerClassName="hr-form-date-trigger" popoverClassName="hr-form-calendar-popover" popoverWidth={350} popoverHeight={370} label="From" hideLabel value={filters.dateFrom} min="1900-01-01" max={filters.dateTo || TODAY} onChange={(value) => setFilters((current) => ({ ...current, dateFrom: value }))} /></F>
+          <F l="To"><CallListDatePicker id="hr-attendance-history-to" className="hr-form-date-picker" triggerClassName="hr-form-date-trigger" popoverClassName="hr-form-calendar-popover" popoverWidth={350} popoverHeight={370} label="To" hideLabel value={filters.dateTo} min={filters.dateFrom || "1900-01-01"} max={TODAY} onChange={(value) => setFilters((current) => ({ ...current, dateTo: value }))} /></F>
           <button className="hr-ghost hr-attendance-history-reset" type="button" onClick={resetFilters}>Reset</button>
         </form>
         {error && <p className="hr-form-error hr-attendance-report-error" role="alert">{error}</p>}
@@ -2811,9 +2937,9 @@ function AllAttendance({ c: { db } }) {
         <F l="Select Department"><select value={filters.department} onChange={updateFilter("department")}><option value="">Select Department</option>{departments.map((department) => <option key={department}>{department}</option>)}</select></F>
         <F l="Select Branch"><select value={filters.branch} onChange={updateFilter("branch")}><option value="">Select Branch</option>{branches.map((branch) => <option key={branch}>{branch}</option>)}</select></F>
         <F l="Select Day"><select value={filters.day} onChange={updateFilter("day")}><option value="">Select Day</option>{days.map((day) => <option key={day}>{day}</option>)}</select></F>
-        <F l="From Date"><input type="date" value={filters.dateFrom} onChange={updateFilter("dateFrom")} /></F>
-        <F l="To Date"><input type="date" value={filters.dateTo} onChange={updateFilter("dateTo")} /></F>
-        <F l="Select Month"><input type="month" value={filters.month} onChange={updateFilter("month")} /></F>
+        <F l="From Date"><CallListDatePicker id="hr-all-attendance-from" className="hr-form-date-picker" triggerClassName="hr-form-date-trigger" popoverClassName="hr-form-calendar-popover" popoverWidth={350} popoverHeight={370} label="From date" hideLabel value={filters.dateFrom} min="1900-01-01" max={filters.dateTo || TODAY} onChange={(value) => setFilters((current) => ({ ...current, dateFrom: value }))} /></F>
+        <F l="To Date"><CallListDatePicker id="hr-all-attendance-to" className="hr-form-date-picker" triggerClassName="hr-form-date-trigger" popoverClassName="hr-form-calendar-popover" popoverWidth={350} popoverHeight={370} label="To date" hideLabel value={filters.dateTo} min={filters.dateFrom || "1900-01-01"} max={TODAY} onChange={(value) => setFilters((current) => ({ ...current, dateTo: value }))} /></F>
+        <F l="Select Month"><HrMonthPicker id="hr-all-attendance-month" label="Select month" value={filters.month} min="2020-01" max={MONTH} onChange={(month) => setFilters((current) => ({ ...current, month }))} /></F>
         <F l="Select Year"><select value={filters.year} onChange={updateFilter("year")}><option value="">Select Year</option>{years.map((year) => <option key={year}>{year}</option>)}</select></F>
         <F l="Select Status"><select value={filters.status} onChange={updateFilter("status")}><option value="">Select Status</option>{["Present", "Absent", "Leave", "Holiday", "Pending", "Upcoming"].map((status) => <option key={status}>{status}</option>)}</select></F>
         <div className="hr-all-attendance-actions">
@@ -2957,7 +3083,7 @@ function MarkAll({ c: { db, upd } }) {
     <section className="hr-mark-all">
       <h2 className="hr-mark-all-title"><CalendarCheck size={22} /> Mark Attendance (All Employees)</h2>
       <form className="hr-mark-all-toolbar" onSubmit={applyDate}>
-        <F l="Attendance date"><input type="date" max={TODAY} value={date} onChange={(event) => setDate(event.target.value)} /></F>
+        <F l="Attendance date"><CallListDatePicker id="hr-mark-attendance-date" className="hr-form-date-picker" triggerClassName="hr-form-date-trigger" popoverClassName="hr-form-calendar-popover" popoverWidth={350} popoverHeight={370} label="Attendance date" hideLabel value={date} min="1900-01-01" max={TODAY} onChange={setDate} /></F>
         <F l="Department">
           <select value={dept} onChange={(event) => setDept(event.target.value)}>
             {["All", ...DEPTS].map((department) => <option key={department}>{department}</option>)}
@@ -3055,8 +3181,8 @@ function LeaveRequest({ c: { db, upd } }) {
         <div className="hr-leave-section-heading"><div><h2>Apply for Leave</h2><p>Select your dates and see the total before submitting</p></div></div>
         <form className="hr-leave-request-form" onSubmit={submitRequest}>
           <F l="Leave Type"><select value={f.type} onChange={setField("type")}>{["Casual Leave", "Sick Leave", "Earned Leave", "Unpaid Leave"].map((type) => <option key={type}>{type}</option>)}</select></F>
-          <F l="From"><input type="date" required value={f.from} onChange={setField("from")} /></F>
-          <F l="To"><input type="date" min={f.from} required value={f.to} onChange={setField("to")} /></F>
+          <F l="From"><CallListDatePicker id="hr-leave-from" className="hr-form-date-picker" triggerClassName="hr-form-date-trigger" popoverClassName="hr-form-calendar-popover" popoverWidth={350} popoverHeight={370} label="Leave from" hideLabel value={f.from} min="1900-01-01" max={f.to || TODAY} required onChange={(value) => setF((current) => ({ ...current, from: value }))} /></F>
+          <F l="To"><CallListDatePicker id="hr-leave-to" className="hr-form-date-picker" triggerClassName="hr-form-date-trigger" popoverClassName="hr-form-calendar-popover" popoverWidth={350} popoverHeight={370} label="Leave to" hideLabel value={f.to} min={f.from || "1900-01-01"} max={TODAY} required onChange={(value) => setF((current) => ({ ...current, to: value }))} /></F>
           <div className="hr-leave-duration"><CalendarClock size={15} /><span>Leave duration</span><strong>{duration} {duration === 1 ? "day" : "days"}</strong></div>
           <F l="Reason" className="hr-leave-reason"><textarea required rows={2} value={f.reason} onChange={setField("reason")} /></F>
           <div className="hr-leave-request-submit"><button className="hr-btn" type="submit"><Check size={15} /> Submit Request</button></div>
@@ -3069,8 +3195,8 @@ function LeaveRequest({ c: { db, upd } }) {
         <div className="hr-leave-filters">
           <label><span>Leave type</span><select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)}><option>All types</option>{[...new Set(mine.map((leave) => leave.type))].map((type) => <option key={type}>{type}</option>)}</select></label>
           <label><span>Status</span><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>{["All statuses", "Pending", "Approved", "Rejected"].map((status) => <option key={status}>{status}</option>)}</select></label>
-          <label><span>Leave from</span><input type="date" value={fromFilter} onChange={(event) => setFromFilter(event.target.value)} /></label>
-          <label><span>Leave to</span><input type="date" value={toFilter} onChange={(event) => setToFilter(event.target.value)} /></label>
+          <label><span>Leave from</span><CallListDatePicker id="hr-leave-history-from" className="hr-form-date-picker" triggerClassName="hr-form-date-trigger" popoverClassName="hr-form-calendar-popover" popoverWidth={350} popoverHeight={370} label="Leave from" hideLabel value={fromFilter} min="1900-01-01" max={toFilter || TODAY} onChange={setFromFilter} /></label>
+          <label><span>Leave to</span><CallListDatePicker id="hr-leave-history-to" className="hr-form-date-picker" triggerClassName="hr-form-date-trigger" popoverClassName="hr-form-calendar-popover" popoverWidth={350} popoverHeight={370} label="Leave to" hideLabel value={toFilter} min={fromFilter || "1900-01-01"} max={TODAY} onChange={setToFilter} /></label>
           <button className="hr-ghost sm" type="button" onClick={() => { setTypeFilter("All types"); setStatusFilter("All statuses"); setFromFilter(""); setToFilter(""); }}>Reset</button>
         </div>
         <div className="hr-tw hr-leave-request-table-wrap">
@@ -3684,7 +3810,7 @@ function UploadCRM({ c: { db, upd } }) {
       <Card>
         <div className="hr-crm-panel-heading"><ClipboardList size={16} /> Call List Records Directory</div>
         <div className="hr-crm-directory-tools">
-          <F l="Filter by Date"><input type="date" value={dateFilter} onChange={(event) => setDateFilter(event.target.value)} /></F>
+          <F l="Filter by Date"><CallListDatePicker id="hr-crm-directory-date" className="hr-form-date-picker" triggerClassName="hr-form-date-trigger" popoverClassName="hr-form-calendar-popover" popoverWidth={350} popoverHeight={370} label="Filter by date" hideLabel value={dateFilter} min="1900-01-01" max={TODAY} onChange={setDateFilter} /></F>
           <F l="Filter by CRM Employee">
             <select value={employeeFilter} onChange={(event) => setEmployeeFilter(event.target.value)}>
               <option value="">All CRM Employees</option>
@@ -3855,7 +3981,7 @@ function SettingsPage({ c: { db, upd, setDb, user } }) {
               </div>
               <div className="hr-settings-fields">
                 <F l="Full Name *"><input required value={form.name || ""} onChange={setField("name")} /></F>
-                <F l="Date of Birth"><input type="date" value={form.dob} onChange={setField("dob")} /></F>
+                <F l="Date of Birth"><CallListDatePicker id="hr-settings-dob" className="hr-form-date-picker" triggerClassName="hr-form-date-trigger" popoverClassName="hr-form-calendar-popover" popoverWidth={350} popoverHeight={370} label="Date of Birth" hideLabel value={form.dob} min="1900-01-01" max={TODAY} onChange={(value) => setForm((current) => ({ ...current, dob: value }))} /></F>
                 <F l="Gender"><select value={form.gender} onChange={setField("gender")}><option value="">Select Gender</option>{["Female", "Male", "Non-binary", "Prefer not to say"].map((value) => <option key={value}>{value}</option>)}</select></F>
                 <F l="Personal Email"><input type="email" value={form.personalEmail} onChange={setField("personalEmail")} placeholder="e.g. name@gmail.com" /></F>
                 <F l="Work / Official Email"><input type="email" value={form.email} onChange={setField("email")} /></F>
@@ -4014,22 +4140,27 @@ export default function HrDashboard({ user, onLogout } = {}) {
     if (!user) return undefined;
     let active = true;
     let pending = false;
+    let leavesFetchedAt = 0;
     const refreshNotifications = () => {
       if (pending || document.visibilityState === "hidden") return;
       pending = true;
-      Promise.all([fetchAppNotifications(), fetchLeavesApi()])
+      const refreshLeaves = !leavesFetchedAt || Date.now() - leavesFetchedAt >= 5 * 60_000;
+      Promise.all([fetchAppNotifications(), refreshLeaves ? fetchLeavesApi() : Promise.resolve(null)])
         .then(([notifications, records]) => {
           if (!active) return;
           if (Array.isArray(notifications)) setAppNotifications(notifications);
           setNotificationsLoaded(true);
-          if (Array.isArray(records)) setDb((current) => ({
-            ...current,
-            leaves: records.map((leave) => {
-              const employee = current.emps.find((item) => String(item.backendId || item.id) === String(leave.employeeId)
-                || (leave.employeeName && String(item.name).trim().toLowerCase() === String(leave.employeeName).trim().toLowerCase()));
-              return { ...leave, empId: employee?.id ?? leave.employeeId, appliedAt: leave.appliedAt || leave.createdAt || leave.appliedOn };
-            }),
-          }));
+          if (Array.isArray(records)) {
+            leavesFetchedAt = Date.now();
+            setDb((current) => ({
+              ...current,
+              leaves: records.map((leave) => {
+                const employee = current.emps.find((item) => String(item.backendId || item.id) === String(leave.employeeId)
+                  || (leave.employeeName && String(item.name).trim().toLowerCase() === String(leave.employeeName).trim().toLowerCase()));
+                return { ...leave, empId: employee?.id ?? leave.employeeId, appliedAt: leave.appliedAt || leave.createdAt || leave.appliedOn };
+              }),
+            }));
+          }
         })
         .catch((error) => { console.warn("Unable to refresh HR notifications.", error.message || error); if (active) setNotificationsLoaded(true); })
         .finally(() => { pending = false; });

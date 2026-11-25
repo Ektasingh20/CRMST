@@ -14,10 +14,12 @@ import {
   helpdeskThreads,
 } from "../services/hrHelpdeskPaths.js";
 
-// Polling still checks access and the conversation version on every request.
-// Unchanged histories need not reread hundreds of message documents.
-const messageCache = new ReadCache(60000, 250);
-const conversationCache = new ReadCache(3000, 250);
+// Helpdesk clients use slow, visibility-aware polling. These mutation-aware
+// caches coalesce warm-instance reads and keep unchanged inboxes/threads from
+// repeatedly billing the same Firestore documents.
+const messageCache = new ReadCache(5 * 60_000, 250);
+const conversationCache = new ReadCache(60_000, 250);
+const conversationAccessCache = new ReadCache(30_000, 500);
 let staffIndexRetryAt = 0;
 
 const router = express.Router();
@@ -53,7 +55,7 @@ function safeConversation(snapshot) {
   return { id: snapshot.id, ...snapshot.data() };
 }
 
-async function accessibleConversation(req, res) {
+async function accessibleConversation(req, res, { cache = false } = {}) {
   const id = String(req.params.id || "");
   if (!/^[a-f0-9-]{36}$/i.test(id)) {
     res.status(400).json({ error: "Invalid helpdesk conversation ID." });
@@ -64,7 +66,21 @@ async function accessibleConversation(req, res) {
     res.status(400).json({ error: "Invalid helpdesk employee ID." });
     return null;
   }
-  let snapshot = ownerId ? await helpdeskThreadRef(ownerId, id).get() : null;
+  let ref = ownerId ? helpdeskThreadRef(ownerId, id) : null;
+  let conversation = null;
+  let snapshot = null;
+  if (ref) {
+    if (cache) {
+      const cached = await conversationAccessCache.get(ref.path, async () => {
+        const current = await ref.get();
+        return current.exists ? { exists: true, data: current.data() } : { exists: false, data: null };
+      });
+      if (cached.exists) conversation = { id, ...cached.data };
+    } else {
+      snapshot = await ref.get();
+      if (snapshot.exists) conversation = safeConversation(snapshot);
+    }
+  }
   if (!ownerId) {
     // Older open tabs only send the conversation ID. Keep them working after migration.
     let matches;
@@ -72,15 +88,18 @@ async function accessibleConversation(req, res) {
       matches = await helpdeskThreadGroup().where("conversationId", "==", id).limit(1).get();
     } catch (error) {
       if (error?.code !== 9 && error?.code !== "failed-precondition") throw error;
-      matches = await helpdeskThreadGroup().get();
+      matches = await helpdeskThreadGroup().limit(200).get();
     }
     snapshot = matches.docs.find((doc) => doc.id === id) || null;
+    if (snapshot?.exists) {
+      ref = snapshot.ref;
+      conversation = safeConversation(snapshot);
+    }
   }
-  if (!snapshot?.exists) {
+  if (!conversation || !ref) {
     res.status(404).json({ error: "Helpdesk conversation not found." });
     return null;
   }
-  const conversation = safeConversation(snapshot);
   const hiddenFor = Array.isArray(conversation.hiddenFor) ? conversation.hiddenFor.map(String) : [];
   if (hiddenFor.includes(userId(req.user))) {
     res.status(404).json({ error: "Helpdesk conversation not found." });
@@ -91,7 +110,7 @@ async function accessibleConversation(req, res) {
     res.status(403).json({ error: "You can only access your own helpdesk conversations." });
     return null;
   }
-  return { ref: snapshot.ref, conversation };
+  return { ref, conversation };
 }
 
 router.use(authenticate);
@@ -112,10 +131,10 @@ router.get("/conversations", async (req, res) => {
           }
         }
         if (!newSnapshot) {
-          newSnapshot = await helpdeskThreadGroup().get();
+          newSnapshot = await helpdeskThreadGroup().limit(200).get();
         }
       } else {
-        newSnapshot = await helpdeskThreads(userId(req.user)).get();
+        newSnapshot = await helpdeskThreads(userId(req.user)).orderBy("updatedAt", "desc").limit(200).get();
       }
       return newSnapshot.docs.map(safeConversation)
         .sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")))
@@ -179,6 +198,7 @@ router.post("/conversations", async (req, res) => {
     });
     if (isHelpdeskStaff(req.user)) await notifyEmployeeOfHelpdeskMessage(employeeId, id, subject);
     conversationCache.clear();
+    conversationAccessCache.clear();
     return res.status(201).json({ id, ...conversation, messages: [message] });
   } catch (error) {
     return res.status(400).json({ error: error.message || "Unable to start a helpdesk conversation." });
@@ -187,7 +207,7 @@ router.post("/conversations", async (req, res) => {
 
 router.get("/conversations/:id/messages", async (req, res) => {
   try {
-    const access = await accessibleConversation(req, res);
+    const access = await accessibleConversation(req, res, { cache: true });
     if (!access) return;
     const version = access.conversation.lastMessageAt || access.conversation.updatedAt || "";
     const messages = await messageCache.get(`${access.ref.path}:${version}`, async () => {
@@ -229,6 +249,7 @@ router.post("/conversations/:id/messages", async (req, res) => {
       await notifyEmployeeOfHelpdeskMessage(access.conversation.employeeId, access.conversation.id, access.conversation.subject);
     }
     conversationCache.clear();
+    conversationAccessCache.clear();
     messageCache.clear();
     return res.status(201).json({ id: messageRef.id, ...message });
   } catch (error) {
@@ -242,6 +263,7 @@ router.delete("/conversations/:id", async (req, res) => {
     if (!access) return;
     await access.ref.update({ hiddenFor: FieldValue.arrayUnion(userId(req.user)) });
     conversationCache.clear();
+    conversationAccessCache.clear();
     messageCache.clear();
     return res.json({ ok: true });
   } catch (error) {

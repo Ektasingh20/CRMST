@@ -41,7 +41,10 @@ export function HelpdeskIncomingToast({ user, onOpen }) {
       finally { pending = false; }
     };
     refresh();
-    const timer = window.setInterval(refresh, 3000);
+    // Inbox polling used to run every three seconds and reread every thread.
+    // A one-minute background check plus focus refresh keeps notifications
+    // useful without turning an idle dashboard into a Firestore read loop.
+    const timer = window.setInterval(refresh, 60_000);
     const onFocus = () => refresh();
     window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", onFocus);
@@ -134,7 +137,7 @@ export default function HelpdeskChat({ user, displayName }) {
       }
     };
     refresh();
-    const timer = window.setInterval(refresh, 7000);
+    const timer = window.setInterval(refresh, 60_000);
     const onFocus = () => refresh();
     window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", onFocus);
@@ -156,8 +159,10 @@ export default function HelpdeskChat({ user, displayName }) {
       } finally { pending = false; }
     };
     refresh();
-    const timer = window.setInterval(refresh, 3000);
-    return () => { active = false; window.clearInterval(timer); };
+    const timer = window.setInterval(refresh, 15_000);
+    const onVisibility = () => { if (document.visibilityState === "visible") refresh(); };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => { active = false; window.clearInterval(timer); document.removeEventListener("visibilitychange", onVisibility); };
   }, [selected?.id, newConversation]);
 
   useEffect(() => { messageEndRef.current?.scrollIntoView({ block: "end", behavior: "smooth" }); }, [messages, selected?.id]);

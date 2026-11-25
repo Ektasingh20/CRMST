@@ -30,6 +30,37 @@ export function attendanceDateInIndia(now = new Date()) {
   return `${values.year}-${values.month}-${values.day}`;
 }
 
+export function payrollYearsForEmployment(joinedDate, today = attendanceDateInIndia()) {
+  const currentDate = normalizeAttendanceDate(today) || attendanceDateInIndia();
+  const joined = normalizeAttendanceDate(joinedDate);
+  const currentYear = Number(currentDate.slice(0, 4));
+  const joinedYear = joined && joined <= currentDate ? Number(joined.slice(0, 4)) : currentYear;
+  return Array.from({ length: currentYear - joinedYear + 1 }, (_, index) => String(joinedYear + index));
+}
+
+export function payrollMonthsForEmploymentYear(joinedDate, year, today = attendanceDateInIndia()) {
+  const currentDate = normalizeAttendanceDate(today) || attendanceDateInIndia();
+  const joined = normalizeAttendanceDate(joinedDate);
+  const currentYear = Number(currentDate.slice(0, 4));
+  const selectedYear = Number(year);
+  const firstYear = joined && joined <= currentDate ? Number(joined.slice(0, 4)) : currentYear;
+  if (!Number.isInteger(selectedYear) || selectedYear < firstYear || selectedYear > currentYear) return [];
+  const startMonth = selectedYear === firstYear && joined && joined <= currentDate ? Number(joined.slice(5, 7)) : 1;
+  const endMonth = selectedYear === currentYear ? Number(currentDate.slice(5, 7)) : 12;
+  return Array.from({ length: Math.max(0, endMonth - startMonth + 1) }, (_, index) => startMonth + index);
+}
+
+export function clampPayrollMonth(joinedDate, requestedMonth, today = attendanceDateInIndia()) {
+  const currentDate = normalizeAttendanceDate(today) || attendanceDateInIndia();
+  const currentMonth = currentDate.slice(0, 7);
+  const joined = normalizeAttendanceDate(joinedDate);
+  const firstMonth = joined && joined <= currentDate ? joined.slice(0, 7) : currentMonth;
+  const requested = /^\d{4}-(0[1-9]|1[0-2])$/.test(String(requestedMonth || "")) ? String(requestedMonth) : currentMonth;
+  if (requested < firstMonth) return firstMonth;
+  if (requested > currentMonth) return currentMonth;
+  return requested;
+}
+
 export function attendanceCutoffPassed(date, now = new Date(), calendar = {}) {
   const normalized = normalizeAttendanceDate(date);
   if (!normalized || attendanceDateInIndia(now) !== normalized || attendanceHolidayForDate(normalized, calendar)) return false;
@@ -159,6 +190,12 @@ export function classifyAttendanceDate({ date, joinedDate, today, now = new Date
       };
     }
   }
+  // A holiday is payable only after that calendar date is reached. Checking
+  // this before the holiday branch prevents a future Sunday/company holiday
+  // from inflating a current-month salary report.
+  if (date > currentDate) {
+    return { ...base, status: "Upcoming", reason: "future", payable: false, paidHoliday: false };
+  }
   if (holiday) {
     const payable = recordedHolidaysOnly ? true : holiday.paid;
     return {
@@ -168,9 +205,6 @@ export function classifyAttendanceDate({ date, joinedDate, today, now = new Date
       payable,
       paidHoliday: payable,
     };
-  }
-  if (date > currentDate) {
-    return { ...base, status: "Upcoming", reason: "future", payable: false, paidHoliday: false };
   }
 
   const leave = approvedLeaveForDate(leaves, date, employeeId);
@@ -347,6 +381,8 @@ export function calculateAttendancePayroll({ employee, month, rows = [], yearRow
   const postJoinUnpaidDeduction = Math.round((salary / 30) * unpaidDays * 100) / 100;
   const presentDays = new Set(payrollRows.filter((row) => row.status === "Present").map((row) => row.date)).size;
   const holidayDays = new Set(payrollRows.filter((row) => row.reason !== "pre_join" && row.status === "Holiday").map((row) => row.date)).size;
+  const paidHolidayDays = new Set(payrollRows.filter((row) => row.reason !== "pre_join"
+    && row.status === "Holiday" && row.payable !== false).map((row) => row.date)).size;
   return {
     daysInMonth,
     employedDays,
@@ -354,11 +390,12 @@ export function calculateAttendancePayroll({ employee, month, rows = [], yearRow
     absentDays,
     leaveDays,
     holidayDays,
+    paidHolidayDays,
     paidLeaveDays: paidLeave.paidLeaveDays,
     deductedLeaveDays,
     paidLeaveBalance: paidLeave.paidLeaveBalance,
     accruedPaidLeave: paidLeave.accruedPaidLeave,
-    payableDays: presentDays + paidLeave.paidLeaveDays + holidayDays,
+    payableDays: presentDays + paidLeave.paidLeaveDays + paidHolidayDays,
     dailyJoinExitRate,
     joinExitDeduction,
     classifiedUnpaidDays,

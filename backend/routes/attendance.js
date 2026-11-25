@@ -14,6 +14,7 @@ import { formatIndiaClock, indiaDateString, indiaMonthString } from "../services
 import {
   checkInEmployee,
   checkOutEmployee,
+  clearAttendanceReadCaches,
   correctNestedAttendance,
   getAdminAttendanceSummary,
   getEmployeeAttendanceMonth,
@@ -298,6 +299,7 @@ router.patch("/:id", verifyAppCheckIfConfigured, async (req, res) => {
       correctedBy: record.correctedBy,
     };
     await record.save();
+    clearAttendanceReadCaches();
     return res.json({ id: record.id || record._id, ...record.toObject() });
   } catch (error) {
     return sendAttendanceError(res, error, "Unable to correct attendance.");

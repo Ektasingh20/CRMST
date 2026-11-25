@@ -12,6 +12,7 @@ import {
   normalizeAttendanceDate,
 } from "../../shared/attendanceClassification.js";
 import { getAttendanceCalendar } from "./attendanceCalendar.js";
+import { ReadCache } from "../itDashboard/src/cache.js";
 
 const ROOT_COLLECTION = "attendance";
 const MONTHS_COLLECTION = "months";
@@ -20,6 +21,21 @@ const MAX_REMARK_LENGTH = 500;
 const DEFAULT_ADMIN_PAGE_SIZE = 50;
 const MAX_ADMIN_PAGE_SIZE = 50;
 let warnedMissingTestSummaryIndex = false;
+const employeeMonthReads = new ReadCache(60_000, 500);
+const adminMonthReads = new ReadCache(2 * 60_000, 48);
+const adminSummaryReads = new ReadCache(30_000, 90);
+const attendanceDatabaseIds = new WeakMap();
+let nextAttendanceDatabaseId = 1;
+function attendanceDatabaseKey(db) {
+  if (!attendanceDatabaseIds.has(db)) attendanceDatabaseIds.set(db, nextAttendanceDatabaseId++);
+  return attendanceDatabaseIds.get(db);
+}
+
+export function clearAttendanceReadCaches() {
+  employeeMonthReads.clear();
+  adminMonthReads.clear();
+  adminSummaryReads.clear();
+}
 
 function clean(value) {
   return String(value ?? "").trim();
@@ -217,23 +233,25 @@ export async function getEmployeeAttendanceMonth(user, month, db = getFirestore(
   if (!/^\d{4}-\d{2}$/.test(clean(month))) throw attendanceError("A valid attendance month is required.");
   const today = indiaDateString();
   if (month > today.slice(0, 7)) return [];
-  const endDate = month === today.slice(0, 7) ? today : `${month}-31`;
-  const nestedRef = db.collection(ROOT_COLLECTION).doc(employeeId)
-    .collection(MONTHS_COLLECTION).doc(month)
-    .collection(DAYS_COLLECTION);
-  const [nested, legacy] = await Promise.all([
-    nestedRef
-      .where(FieldPath.documentId(), ">=", `${month}-01`)
-      .where(FieldPath.documentId(), "<=", endDate)
-      .get(),
-    readLegacyEmployeeMonth(employeeId, month, endDate, db),
-  ]);
-  const byDate = new Map(legacy.map((record) => [record.workDate, record]));
-  nested.docs.forEach((doc) => {
-    const record = nestedSnapshotJson(doc);
-    if (record && record.workDate <= endDate) byDate.set(doc.id, record);
+  return employeeMonthReads.get(`${attendanceDatabaseKey(db)}:${employeeId}:${month}:${today}`, async () => {
+    const endDate = month === today.slice(0, 7) ? today : `${month}-31`;
+    const nestedRef = db.collection(ROOT_COLLECTION).doc(employeeId)
+      .collection(MONTHS_COLLECTION).doc(month)
+      .collection(DAYS_COLLECTION);
+    const [nested, legacy] = await Promise.all([
+      nestedRef
+        .where(FieldPath.documentId(), ">=", `${month}-01`)
+        .where(FieldPath.documentId(), "<=", endDate)
+        .get(),
+      readLegacyEmployeeMonth(employeeId, month, endDate, db),
+    ]);
+    const byDate = new Map(legacy.map((record) => [record.workDate, record]));
+    nested.docs.forEach((doc) => {
+      const record = nestedSnapshotJson(doc);
+      if (record && record.workDate <= endDate) byDate.set(doc.id, record);
+    });
+    return [...byDate.values()].sort((left, right) => right.workDate.localeCompare(left.workDate));
   });
-  return [...byDate.values()].sort((left, right) => right.workDate.localeCompare(left.workDate));
 }
 
 export async function getEmployeeTodayAttendance(user, now = new Date(), db = getFirestore()) {
@@ -286,7 +304,7 @@ export async function checkInEmployee(user, { remark = "", now = Timestamp.now()
     throw attendanceError("Attendance is already marked for today.", 409, "already_marked");
   }
 
-  return db.runTransaction(async (transaction) => {
+  const result = await db.runTransaction(async (transaction) => {
     const snapshot = await transaction.get(ref);
     if (snapshot.exists) {
       const existing = snapshotJson(snapshot);
@@ -307,6 +325,8 @@ export async function checkInEmployee(user, { remark = "", now = Timestamp.now()
     transaction.create(ref, data);
     return { record: syntheticJson(ref, data), idempotent: false };
   });
+  if (!result.idempotent) clearAttendanceReadCaches();
+  return result;
 }
 
 export async function markEmployeeAbsent(user, { remark = "", now = Timestamp.now() } = {}, db = getFirestore()) {
@@ -322,7 +342,7 @@ export async function markEmployeeAbsent(user, { remark = "", now = Timestamp.no
   const cleanRemark = normalizedRemark(remark);
   const legacy = await legacyAttendanceRef(employeeId, workDate, db).get();
   if (legacy.exists) return { record: snapshotJson(legacy), idempotent: true };
-  return db.runTransaction(async (transaction) => {
+  const result = await db.runTransaction(async (transaction) => {
     const snapshot = await transaction.get(ref);
     if (snapshot.exists) return { record: snapshotJson(snapshot), idempotent: true };
     const data = {
@@ -339,6 +359,8 @@ export async function markEmployeeAbsent(user, { remark = "", now = Timestamp.no
     transaction.create(ref, data);
     return { record: syntheticJson(ref, data), idempotent: false };
   });
+  if (!result.idempotent) clearAttendanceReadCaches();
+  return result;
 }
 
 function timestampMillis(value) {
@@ -362,7 +384,7 @@ export async function checkOutEmployee(user, { now = Timestamp.now() } = {}, db 
   const refs = [attendanceDayRef(employeeId, today, db), attendanceDayRef(employeeId, yesterday, db)];
   const maxShiftHours = Math.max(1, Math.min(48, Number(process.env.ATTENDANCE_MAX_SHIFT_HOURS) || 24));
 
-  return db.runTransaction(async (transaction) => {
+  const result = await db.runTransaction(async (transaction) => {
     const snapshots = await Promise.all(refs.map((ref) => transaction.get(ref)));
     const todaySnapshot = snapshots[0];
     if (todaySnapshot.exists && todaySnapshot.data()?.checkOutAt) {
@@ -385,12 +407,14 @@ export async function checkOutEmployee(user, { now = Timestamp.now() } = {}, db 
     transaction.update(selected.ref, update);
     return { record: syntheticJson(selected.ref, { ...data, ...update }), idempotent: false };
   });
+  if (!result.idempotent) clearAttendanceReadCaches();
+  return result;
 }
 
 export async function createAutomaticAbsence(user, workDate, now = Timestamp.now(), db = getFirestore()) {
   assertCompletedAbsenceDate(workDate, now);
   const ref = attendanceDayRef(userId(user), workDate, db);
-  return db.runTransaction(async (transaction) => {
+  const result = await db.runTransaction(async (transaction) => {
     const snapshot = await transaction.get(ref);
     if (snapshot.exists) return { created: false, record: snapshotJson(snapshot) };
     const data = {
@@ -409,6 +433,8 @@ export async function createAutomaticAbsence(user, workDate, now = Timestamp.now
     transaction.create(ref, data);
     return { created: true, record: syntheticJson(ref, data) };
   });
+  if (result.created) clearAttendanceReadCaches();
+  return result;
 }
 
 export async function createAutomaticAbsences(users, workDate, now = Timestamp.now(), db = getFirestore()) {
@@ -445,7 +471,9 @@ export async function createAutomaticAbsences(users, workDate, now = Timestamp.n
   const results = await Promise.all(writes);
   const failure = results.find((result) => result.error)?.error;
   if (failure) throw failure;
-  return results.filter((result) => result.created).length;
+  const created = results.filter((result) => result.created).length;
+  if (created) clearAttendanceReadCaches();
+  return created;
 }
 
 export async function createSyncedAttendanceAbsences(user, workDates, now = Timestamp.now(), db = getFirestore()) {
@@ -483,7 +511,9 @@ export async function createSyncedAttendanceAbsences(user, workDates, now = Time
   const results = await Promise.all(writes);
   const failure = results.find((result) => result.error)?.error;
   if (failure) throw failure;
-  return results.filter((result) => result.created).length;
+  const created = results.filter((result) => result.created).length;
+  if (created) clearAttendanceReadCaches();
+  return created;
 }
 
 function assertCompletedAbsenceDate(workDate, now) {
@@ -549,27 +579,29 @@ export async function listAttendanceForDate(workDate, db = getFirestore(), fallb
 export async function listAdminAttendanceMonth(month, db = getFirestore()) {
   const selectedMonth = clean(month);
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(selectedMonth)) throw attendanceError("A valid attendance month is required.");
-  const start = `${selectedMonth}-01`;
-  const end = `${selectedMonth}-31`;
-  const [nested, legacy] = await Promise.all([
-    db.collectionGroup(DAYS_COLLECTION).where("month", "==", selectedMonth).get(),
-    db.collection(ROOT_COLLECTION).where("date", ">=", start).where("date", "<=", end).get(),
-  ]);
-  const byKey = new Map();
-  legacy.docs.forEach((doc) => {
-    if (!isOfficialAttendanceRecord(doc.data()) || !isValidAttendanceDate(doc.data()?.date)) return;
-    const record = legacySnapshotJson(doc);
-    if (record?.employeeId) byKey.set(`${record.employeeId}:${record.date}`, record);
+  return adminMonthReads.get(`${attendanceDatabaseKey(db)}:${selectedMonth}`, async () => {
+    const start = `${selectedMonth}-01`;
+    const end = `${selectedMonth}-31`;
+    const [nested, legacy] = await Promise.all([
+      db.collectionGroup(DAYS_COLLECTION).where("month", "==", selectedMonth).get(),
+      db.collection(ROOT_COLLECTION).where("date", ">=", start).where("date", "<=", end).get(),
+    ]);
+    const byKey = new Map();
+    legacy.docs.forEach((doc) => {
+      if (!isOfficialAttendanceRecord(doc.data()) || !isValidAttendanceDate(doc.data()?.date)) return;
+      const record = legacySnapshotJson(doc);
+      if (record?.employeeId) byKey.set(`${record.employeeId}:${record.date}`, record);
+    });
+    nested.docs.forEach((doc) => {
+      if (!isOfficialAttendanceRecord(doc.data())) return;
+      const record = nestedSnapshotJson(doc);
+      if (record?.employeeId && record.date?.startsWith(`${selectedMonth}-`)) {
+        byKey.set(`${record.employeeId}:${record.date}`, record);
+      }
+    });
+    return [...byKey.values()].sort((left, right) => left.date.localeCompare(right.date)
+      || left.employeeId.localeCompare(right.employeeId));
   });
-  nested.docs.forEach((doc) => {
-    if (!isOfficialAttendanceRecord(doc.data())) return;
-    const record = nestedSnapshotJson(doc);
-    if (record?.employeeId && record.date?.startsWith(`${selectedMonth}-`)) {
-      byKey.set(`${record.employeeId}:${record.date}`, record);
-    }
-  });
-  return [...byKey.values()].sort((left, right) => left.date.localeCompare(right.date)
-    || left.employeeId.localeCompare(right.employeeId));
 }
 
 function encodeCursor(path) {
@@ -650,8 +682,7 @@ export async function listLegacyAdminAttendance({ month = "", date = "", employe
     .map(snapshotJson);
 }
 
-export async function getAdminAttendanceSummary(workDate, db = getFirestore()) {
-  if (!isValidAttendanceDate(workDate)) throw attendanceError("A valid attendance date is required.");
+async function loadAdminAttendanceSummary(workDate, db) {
   const base = db.collectionGroup(DAYS_COLLECTION).where("workDate", "==", workDate);
   let testSnapshot;
   try {
@@ -692,6 +723,11 @@ export async function getAdminAttendanceSummary(workDate, db = getFirestore()) {
   };
 }
 
+export async function getAdminAttendanceSummary(workDate, db = getFirestore()) {
+  if (!isValidAttendanceDate(workDate)) throw attendanceError("A valid attendance date is required.");
+  return adminSummaryReads.get(`${attendanceDatabaseKey(db)}:${workDate}`, () => loadAdminAttendanceSummary(workDate, db));
+}
+
 function summarizeAttendanceRecords(workDate, records) {
   const count = (status) => records.filter((record) => clean(record.status).toLowerCase() === status).length;
   const presentCount = count("present");
@@ -723,7 +759,7 @@ export async function correctNestedAttendance(recordId, admin, { status, remark 
   if (!["present", "absent"].includes(nextStatus)) throw attendanceError("Choose Present or Absent.");
   const ref = attendanceDayRef(identity.employeeId, identity.workDate, db);
   const now = Timestamp.now();
-  return db.runTransaction(async (transaction) => {
+  const result = await db.runTransaction(async (transaction) => {
     const snapshot = await transaction.get(ref);
     if (!snapshot.exists) throw attendanceError("Attendance record not found.", 404, "not_found");
     const current = snapshot.data();
@@ -755,6 +791,8 @@ export async function correctNestedAttendance(recordId, admin, { status, remark 
     transaction.update(ref, update);
     return syntheticJson(ref, { ...current, ...update });
   });
+  clearAttendanceReadCaches();
+  return result;
 }
 
 export { DAYS_COLLECTION };

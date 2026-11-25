@@ -1,6 +1,6 @@
 import { createRequestCoalescer } from "./requestCoalescer.js";
 
-const concurrentReads = createRequestCoalescer();
+const concurrentReads = createRequestCoalescer({ maxEntries: 300 });
 const TOKEN_KEY = "crmst-api-token";
 const SESSION_KEY = "crmst-current-user";
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "/api";
@@ -169,7 +169,20 @@ async function request(path, options = {}) {
   // Caller-owned abort signals must remain independent.
   if (options.signal) return performRequest(path, options);
   const key = JSON.stringify([getToken(), path, options]);
-  return concurrentReads.read(key, () => performRequest(path, options));
+  return concurrentReads.read(key, () => performRequest(path, options), readCacheTtl(path));
+}
+
+function readCacheTtl(path) {
+  const value = String(path || "");
+  if (/[?&]fresh=1(?:&|$)/.test(value) || value.includes("/calling/list-data")) return 0;
+  if (value.startsWith("/hr-helpdesk/conversations/") && value.includes("/messages")) return 8_000;
+  if (value.startsWith("/hr-helpdesk/")) return 30_000;
+  if (value === "/attendance/today") return 8_000;
+  if (value.startsWith("/attendance/") || value === "/attendance") return 30_000;
+  if (value.startsWith("/notifications/")) return 30_000;
+  if (value.startsWith("/users") || value === "/employees" || value === "/hr/dashboard") return 60_000;
+  if (value.startsWith("/courses") || value.startsWith("/services") || value.startsWith("/trainings")) return 60_000;
+  return 20_000;
 }
 
 async function performRequest(path, options = {}) {

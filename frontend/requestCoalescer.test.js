@@ -31,3 +31,15 @@ test('failed reads can be retried', async () => {
   await assert.rejects(cache.read('key', async () => { throw new Error('offline'); }));
   assert.equal(await cache.read('key', async () => 'online'), 'online');
 });
+
+test('short-lived snapshots avoid duplicate sequential reads and remain isolated', async () => {
+  const cache = createRequestCoalescer();
+  let loads = 0;
+  const load = async () => ({ rows: [++loads] });
+  const first = await cache.read('key', load, 1000);
+  first.rows.push(99);
+  assert.deepEqual((await cache.read('key', load, 1000)).rows, [1]);
+  assert.equal(loads, 1);
+  cache.clear();
+  assert.deepEqual((await cache.read('key', load, 1000)).rows, [2]);
+});

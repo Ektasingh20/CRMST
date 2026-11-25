@@ -4,6 +4,9 @@ import {
   buildAttendanceMonthRows,
   calculateAttendancePayroll,
   calculateSalaryReportPay,
+  clampPayrollMonth,
+  payrollMonthsForEmploymentYear,
+  payrollYearsForEmployment,
 } from "../../shared/attendanceClassification.js";
 import {
   attendanceReportStatusLabel,
@@ -20,6 +23,18 @@ test("attendance report months begin with the joining month and include the curr
     ["2026-11", "2026-10", "2026-09"],
   );
   assert.deepEqual(getAttendanceReportMonths("2026-12-01", "2026-11-14"), []);
+});
+
+test("payroll month and year choices stay between joining and the current month", () => {
+  const today = "2026-11-24";
+  assert.deepEqual(payrollYearsForEmployment("2025-10-15", today), ["2025", "2026"]);
+  assert.deepEqual(payrollMonthsForEmploymentYear("2025-10-15", "2025", today), [10, 11, 12]);
+  assert.deepEqual(payrollMonthsForEmploymentYear("2025-10-15", "2026", today), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+  assert.deepEqual(payrollMonthsForEmploymentYear("2025-10-15", "2027", today), []);
+  assert.equal(clampPayrollMonth("2025-10-15", "2025-04", today), "2025-10");
+  assert.equal(clampPayrollMonth("2025-10-15", "2026-12", today), "2026-11");
+  assert.deepEqual(payrollYearsForEmployment("2026-11-04", today), ["2026"]);
+  assert.deepEqual(payrollMonthsForEmploymentYear("2026-11-04", "2026", today), [11]);
 });
 
 test("report keeps all pre-join dates visible but excludes dates after today", () => {
@@ -207,7 +222,9 @@ test("payroll prorates pre-joining dates once and only deducts post-joining unpa
   assert.equal(result.joinExitDeduction, 16065);
   assert.equal(result.paidLeaveDays, 1);
   assert.equal(result.deductedLeaveDays, 3);
-  assert.equal(result.holidayDays, 2);
+  assert.equal(result.holidayDays, 1);
+  assert.equal(result.paidHolidayDays, 0);
+  assert.equal(result.payableDays, 1);
   assert.equal(result.classifiedUnpaidDays, 3);
   assert.equal(result.postJoinUnpaidDeduction, 3000);
   assert.equal(result.otherDeductions, 19065);
@@ -317,6 +334,43 @@ test("a fully absent past month pays recorded holidays plus one paid absence", (
   assert.equal(result.paidLeaveDays, 1);
   assert.equal(result.deductedLeaveDays, 26);
   assert.equal(result.payableDays, 5);
+});
+
+test("current-month payroll does not pay future Sundays", () => {
+  const rows = buildAttendanceMonthRows({
+    month: "2026-11",
+    joinedDate: "2026-11-04",
+    employeeId: "crm_05",
+    today: "2026-11-24",
+    attendance: [],
+    calendar: { weeklyHolidays: [0], weeklyHolidayPaid: true },
+    recordedHolidaysOnly: true,
+  });
+  const payroll = calculateAttendancePayroll({
+    employee: { salary: 10000, joined: "2026-11-04" },
+    month: "2026-11",
+    rows,
+    yearRows: rows,
+  });
+  const salary = calculateSalaryReportPay({
+    baseSalary: 10000,
+    payableDays: payroll.payableDays,
+    daysInMonth: payroll.daysInMonth,
+  });
+  const byDate = new Map(rows.map((row) => [row.date, row]));
+
+  assert.equal(byDate.get("2026-11-01").reason, "pre_join");
+  assert.equal(byDate.get("2026-11-01").payable, false);
+  assert.equal(byDate.get("2026-11-29").status, "Upcoming");
+  assert.equal(byDate.get("2026-11-29").payable, false);
+  assert.equal(payroll.absentDays, 18);
+  assert.equal(payroll.holidayDays, 3);
+  assert.equal(payroll.paidHolidayDays, 3);
+  assert.equal(payroll.paidLeaveDays, 1);
+  assert.equal(payroll.deductedLeaveDays, 17);
+  assert.equal(payroll.payableDays, 4);
+  assert.equal(salary.payableBasicSalary, 1333.33);
+  assert.equal(salary.basicSalaryDeduction, 8666.67);
 });
 
 test("payroll pays Sundays, ignores unrecorded extra holidays, and uses the selected month's day count", () => {
